@@ -16,6 +16,8 @@ class GameServer {
   int _direction = 1; 
   List<List<CardModel>> _playerHands = []; 
   CardModel? _topCard;
+  List<Map<String, dynamic>> _musicQueue = [];
+  String? _currentMusicId;
   
   // --- RULE VARIABLES ---
   int _bombStack = 0;           
@@ -64,7 +66,22 @@ class GameServer {
             "message": data['message'],
             "isSystem": false
           });
-        }
+        }else if (data['type'] == 'ADD_TO_QUEUE') {
+          // Assuming you added _musicQueue and _currentMusicId to GameServer class
+          String id = data['data']['videoId'];
+          String title = data['data']['title'];
+          
+          _musicQueue.add({'videoId': id, 'title': title});
+          
+          if (_currentMusicId == null) {
+              _playNextLanSong();
+          } else {
+              _broadcast("QUEUE_UPDATE", {'queue': _musicQueue});
+          }
+      }
+      else if (data['type'] == 'SONG_ENDED') {
+          _playNextLanSong();
+      }
       }, onDone: () {
         _clients.remove(webSocket);
         _hasSaidNikoKadi.remove(playerIndex);
@@ -74,6 +91,20 @@ class GameServer {
 
     _server = await shelf_io.serve(handler, '0.0.0.0', 8080);
     print("Server running on ws://${_server!.address.host}:${_server!.port}");
+  }
+
+void _playNextLanSong() {
+      if (_musicQueue.isNotEmpty) {
+          var next = _musicQueue.removeAt(0);
+          _currentMusicId = next['videoId'];
+          String title = next['title']; // Get title
+          
+          // Broadcast with Title
+          _broadcast("MUSIC_UPDATE", {'videoId': _currentMusicId, 'title': title});
+          _broadcast("QUEUE_UPDATE", {'queue': _musicQueue});
+      } else {
+          _currentMusicId = null;
+      }
   }
 
   void _startGame(int decks) {
@@ -90,6 +121,12 @@ class GameServer {
     }
 
     _topCard = _deckService.drawCards(1).first;
+    // Ensure top card isn't a power card to start
+    while (['2','3','8','jack','queen','king','ace','joker'].contains(_topCard!.rank)) {
+       _deckService.addCardToBottom(_topCard!);
+       _topCard = _deckService.drawCards(1).first;
+    }
+    
     _discardPile.clear();
     _jokerColorConstraint = null;
     _broadcast("UPDATE_TABLE", _topCard);
@@ -104,10 +141,11 @@ class GameServer {
     _broadcastTurn();
   }
 
-void _handlePlayCard(int playerIndex, int cardIndex, String? requestedSuit, String? requestedRank, bool saidNikoKadi) {
+  void _handlePlayCard(int playerIndex, int cardIndex, String? requestedSuit, String? requestedRank, bool saidNikoKadi) {
     if (playerIndex != _currentPlayerIndex) return;
 
     List<CardModel> hand = _playerHands[playerIndex];
+    if (cardIndex >= hand.length) return; // Safety check
     CardModel card = hand[cardIndex];
 
     if (!_isValidMove(card)) {
@@ -127,27 +165,43 @@ void _handlePlayCard(int playerIndex, int cardIndex, String? requestedSuit, Stri
     else if (card.rank == '3') _bombStack += 3;
     else if (card.rank == 'joker') _bombStack += 5;
 
+    // --- ACE LOGIC (Includes Spades Lock) ---
     if (card.rank == 'ace') {
        if (_bombStack > 0 && !isBomb) {
           _bombStack = 0; 
           _forcedSuit = null; 
           _forcedRank = null;
+          _broadcast("CHAT", {"sender": "System", "message": "Bomb Blocked!"});
        } else {
-          _forcedSuit = requestedSuit ?? card.suit;
-          _forcedRank = requestedRank;
           _bombStack = 0; 
           
-          String msg = "New Suit: $_forcedSuit";
-          if (_forcedRank != null) msg += " | Target: $_forcedRank";
-          _broadcast("CHAT", {"sender": "System", "message": msg});
+          // SPECIAL: Ace of Spades Strategy (Lock & Key)
+          // If you play Ace of Spades and have exactly 1 card left, you lock the game to that specific card.
+          if (card.suit == 'spades' && hand.length == 1) {
+             CardModel winningCard = hand[0]; 
+             _forcedSuit = winningCard.suit;
+             _forcedRank = winningCard.rank;
+             _broadcast("CHAT", {"sender": "System", "message": "🔒 LOCKED: ${_forcedRank} of ${_forcedSuit}"});
+          } 
+          // Normal Ace Request
+          else {
+             _forcedSuit = requestedSuit ?? card.suit;
+             _forcedRank = requestedRank;
+             
+             String msg = "New Suit: $_forcedSuit";
+             if (_forcedRank != null) msg += " | Target: $_forcedRank";
+             _broadcast("CHAT", {"sender": "System", "message": msg});
+          }
        }
     } else {
+       // Clear constraints if non-Ace played
        if (_forcedSuit != null) {
           _forcedSuit = null;
           _forcedRank = null;
        }
     }
 
+    // --- NIKO KADI PENALTY ---
     bool isWinningHand = hand.isNotEmpty && hand.every((c) => c.rank == hand[0].rank);
     if (hand.length == 1) {
       if (_hasSaidNikoKadi[playerIndex] != true) {
@@ -160,6 +214,7 @@ void _handlePlayCard(int playerIndex, int cardIndex, String? requestedSuit, Stri
         }
       }
     }
+    // If player broke a combo or picked cards, reset Niko Kadi status
     if (hand.length > 1 && !isWinningHand) _hasSaidNikoKadi[playerIndex] = false;
 
     _playerHands[playerIndex] = hand; 
@@ -167,26 +222,35 @@ void _handlePlayCard(int playerIndex, int cardIndex, String? requestedSuit, Stri
     bool turnEnds = true;
     int skipCount = 0;
 
-    if (card.rank == 'king') {
+    // --- UPDATED TURN LOGIC (Chaining & Self-Answering) ---
+    
+    // 1. Question (Q/8): Player retains turn to Chain or Answer
+    if (card.rank == 'queen' || card.rank == '8') {
+      _waitingForAnswer = true;
+      turnEnds = false; 
+      _broadcast("CHAT", {"sender": "System", "message": "Question placed! Answer or Chain."});
+    } 
+    // 2. Answering: If waiting and play was valid (checked in isValidMove), turn ends
+    else if (_waitingForAnswer) {
+      _waitingForAnswer = false;
+      turnEnds = true;
+      _broadcast("CHAT", {"sender": "System", "message": "Question Answered."});
+    }
+    
+    // 3. King
+    else if (card.rank == 'king') {
        if (_bombStack > 0) _direction *= -1; 
        else _direction *= -1;
     }
+    // 4. Jack
     else if (card.rank == 'jack') {
        if (_bombStack > 0) skipCount = 0; 
        else {
           if (_clients.length > 2) skipCount = 1; 
        }
     }
-    else if (card.rank == 'queen' || card.rank == '8') {
-      _waitingForAnswer = true;
-      turnEnds = false; 
-    } 
-    else if (_waitingForAnswer) {
-      _waitingForAnswer = false;
-      turnEnds = true;
-    }
     
-    // Multi-drop
+    // 5. Multi-drop (Only if not already retaining turn for Question)
     if (turnEnds && skipCount == 0 && hand.isNotEmpty) {
       if (hand.any((c) => c.rank == card.rank)) {
          turnEnds = false;
@@ -194,13 +258,17 @@ void _handlePlayCard(int playerIndex, int cardIndex, String? requestedSuit, Stri
       }
     }
 
-    // --- CARDLESS LOGIC ---
+    // --- WIN CHECK ---
     if (hand.isEmpty) {
       bool powerCardFinish = ['2','3','joker','king','jack','queen','8'].contains(card.rank);
+      // Explicitly fail if Ace is last card (unless it was Spades Lock scenario which leaves 1 card, so this handles immediate win attempts)
+      if (card.rank == 'ace') powerCardFinish = true; 
+
       bool anyoneElseCardless = _playerHands.any((h) => h.isEmpty);
       
       if (powerCardFinish || anyoneElseCardless) {
-         if (powerCardFinish) _broadcast("CHAT", {"sender": "System", "message": "Player ${playerIndex + 1} is Cardless!"});
+         if (powerCardFinish) _broadcast("CHAT", {"sender": "System", "message": "Cannot win with Power Card!"});
+         else _broadcast("CHAT", {"sender": "System", "message": "Win Blocked by Cardless Player!"});
          _updateGameState();
          if (turnEnds) _advanceTurn(skip: skipCount);
          return;
@@ -225,28 +293,34 @@ void _handlePlayCard(int playerIndex, int cardIndex, String? requestedSuit, Stri
     return !nonWinningRanks.contains(card.rank);
   }
 
-void _handlePickCard(int playerIndex) {
-  if (playerIndex != _currentPlayerIndex) return;
+  void _handlePickCard(int playerIndex) {
+    if (playerIndex != _currentPlayerIndex) return;
 
-  int count = (_bombStack > 0) ? _bombStack : 1;
-  
-  if (_bombStack > 0 && _topCard != null && _topCard!.rank == 'joker') {
-      if (_topCard!.suit == 'red') _jokerColorConstraint = 'red';
-      else if (_topCard!.suit == 'black') _jokerColorConstraint = 'black';
-      _broadcast("CHAT", {"sender": "System", "message": "Constraint: $_jokerColorConstraint"});
+    int count = (_bombStack > 0) ? _bombStack : 1;
+    
+    if (_bombStack > 0 && _topCard != null && _topCard!.rank == 'joker') {
+        if (_topCard!.suit == 'red') _jokerColorConstraint = 'red';
+        else if (_topCard!.suit == 'black') _jokerColorConstraint = 'black';
+        _broadcast("CHAT", {"sender": "System", "message": "Constraint: $_jokerColorConstraint"});
+    }
+
+    _drawCardsForPlayer(playerIndex, count);
+
+    _bombStack = 0;
+    _forcedSuit = null;
+    _forcedRank = null;
+    
+    // UPDATED: If picking during Question mode, question is voided
+    if (_waitingForAnswer) {
+        _waitingForAnswer = false;
+        _broadcast("CHAT", {"sender": "System", "message": "Player picked. Question voided."});
+    }
+    
+    _hasSaidNikoKadi[playerIndex] = false;
+
+    _updateGameState();
+    _advanceTurn();
   }
-
-  _drawCardsForPlayer(playerIndex, count);
-
-  _bombStack = 0;
-  _forcedSuit = null;
-  _forcedRank = null;
-  _waitingForAnswer = false;
-  _hasSaidNikoKadi[playerIndex] = false;
-
-  _updateGameState();
-  _advanceTurn();
-}
 
   void _drawCardsForPlayer(int playerIndex, int count) {
       List<CardModel> drawn = [];
@@ -279,6 +353,7 @@ void _handlePickCard(int playerIndex) {
   }
 
   bool _isValidMove(CardModel card) {
+    // 1. Joker Constraint
     if (_jokerColorConstraint != null) {
       bool isBomb = ['2', '3', 'joker'].contains(card.rank);
       if (isBomb) return true;
@@ -286,33 +361,46 @@ void _handlePickCard(int playerIndex) {
       return cardColor == _jokerColorConstraint;
     }
 
-    if (['2', '3', 'joker'].contains(card.rank)) return true;
-
+    // 2. Bomb Stack
     if (_bombStack > 0) {
-      return ['ace', 'king', 'jack'].contains(card.rank);
+      if (['2', '3', 'joker'].contains(card.rank)) return true;
+      if (card.rank == 'ace') return true; 
+      if (card.rank == 'king') return true; 
+      if (card.rank == 'jack') return true; 
+      return false; 
     }
 
+    // 3. Question Mode (Self-Answering & Chaining)
     if (_waitingForAnswer) {
-       if (card.suit != _topCard!.suit) return false;
-       return ['4','5','6','7','9','10'].contains(card.rank);
+       // Chain Q/8 (Match Suit OR Rank)
+       if (card.rank == 'queen' || card.rank == '8') {
+           return card.suit == _topCard!.suit || card.rank == _topCard!.rank;
+       }
+       // Answer (Must be non-power card matching SUIT)
+       if (['4','5','6','7','9','10'].contains(card.rank)) {
+           return card.suit == _topCard!.suit;
+       }
+       return false;
     }
 
+    // 4. Ace Counter-Play (Ace overrides any forced Suit/Rank)
+    if (card.rank == 'ace') return true;
+
+    // 5. Forced Requests (The Lock)
     if (_forcedRank != null && _forcedSuit != null) {
       return card.rank == _forcedRank && card.suit == _forcedSuit;
     }
 
     if (_forcedSuit != null) {
-      if (card.rank == 'ace') return true; 
       return card.suit == _forcedSuit;
     }
 
-    if (card.rank == 'ace') return true;
-    return card.suit == _topCard!.suit || card.rank == _topCard!.rank;
+    // 6. Standard Play
+    return card.suit == _topCard!.suit || card.rank == _topCard!.rank || ['2','3','joker'].contains(card.rank);
   }
 
   void _updateGameState() {
-     // LAN specific: iterate to send hands if needed, but here simple broadcast of table usually sufficient
-     // For simplicity in this file structure, assume client handles its own state mostly
+     // LAN specific state updates if needed
   }
 
   void _sendToPlayer(WebSocketChannel client, String type, dynamic data) {

@@ -9,6 +9,8 @@ class ProgressionService {
   static const String _totalWinsKey = 'total_wins';
   static const String _totalGamesKey = 'total_games';
   
+
+
   static final ProgressionService _instance = ProgressionService._internal();
   factory ProgressionService() => _instance;
   ProgressionService._internal();

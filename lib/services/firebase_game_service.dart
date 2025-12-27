@@ -32,8 +32,8 @@ class FirebaseGameService {
       } else {
         _myUserId = _auth.currentUser?.uid;
       }
+    // ignore: empty_catches
     } catch (e) {
-      print("Auth Error: $e");
     }
   }
 
@@ -64,7 +64,7 @@ class FirebaseGameService {
       'direction': 1,
       'bombStack': 0,
       'waitingForAnswer': false,
-      'jokerColorConstraint': null // NEW STATE
+      'jokerColorConstraint': null 
     });
 
     _listenToGame(code);
@@ -131,6 +131,9 @@ class FirebaseGameService {
         }
       });
 
+      // Handle Music & Queue Updates immediately (Even in Lobby)
+      _checkMusicUpdates(code);
+
       if (status == 'playing') {
         Map hands = data['hands'] ?? {};
         if (hands.containsKey(_myUserId)) {
@@ -162,7 +165,7 @@ class FirebaseGameService {
               'playerIndex': data['turnIndex'],
               'bombStack': data['bombStack'] ?? 0,
               'waitingForAnswer': data['waitingForAnswer'] ?? false, 
-              'jokerColorConstraint': data['jokerColorConstraint'], // Listen for constraint
+              'jokerColorConstraint': data['jokerColorConstraint'], 
             }
           });
         }
@@ -188,6 +191,23 @@ class FirebaseGameService {
           });
         }
       });
+  }
+
+  // Helper to listen to specific actions for Music sync on clients
+  void _checkMusicUpdates(String code) {
+     _db.collection('games').doc(code).collection('actions')
+        .orderBy('timestamp', descending: true)
+        .limit(1)
+        .snapshots().listen((qs) {
+           if(qs.docs.isNotEmpty) {
+              var data = qs.docs.first.data();
+              if (data['type'] == 'MUSIC_UPDATE') {
+                 _gameStreamController.add({'type': 'MUSIC_UPDATE', 'data': data['data']});
+              } else if (data['type'] == 'QUEUE_UPDATE') {
+                 _gameStreamController.add({'type': 'QUEUE_UPDATE', 'data': data['data']});
+              }
+           }
+        });
   }
 
   Future<void> sendAction(String type, Map<String, dynamic> data) async {
@@ -227,7 +247,7 @@ class FirebaseHostEngine {
   StreamSubscription? _actionsSubscription;
 
   List<Map<String, dynamic>> _players = [];
-  Map<String, List<CardModel>> _hands = {};
+  final Map<String, List<CardModel>> _hands = {};
   CardModel? _topCard;
   int _currentPlayerIndex = 0;
   int _direction = 1;
@@ -235,12 +255,16 @@ class FirebaseHostEngine {
   bool _waitingForAnswer = false;
   String? _forcedSuit;
   String? _forcedRank;
-  Set<String> _nikoKadiDeclarations = {}; 
+  final Set<String> _nikoKadiDeclarations = {}; 
   
   String _gameType = 'kadi';
   List<int> _books = [];
-  List<CardModel> _discardPile = []; 
-  String? _jokerColorConstraint; // 'red' or 'black'
+  final List<CardModel> _discardPile = []; 
+  String? _jokerColorConstraint; 
+
+  // --- MUSIC STATE ---
+  final List<Map<String, dynamic>> _musicQueue = [];
+  String? _currentMusicId;
 
   FirebaseHostEngine(this.gameCode);
 
@@ -259,9 +283,16 @@ class FirebaseHostEngine {
       .listen((snapshot) {
         for (var change in snapshot.docChanges) {
           if (change.type == DocumentChangeType.added) {
-            var action = change.doc.data()!;
-            _processAction(action['type'], action['playerId'], action['data'] ?? {});
-            change.doc.reference.delete(); 
+            var action = change.doc.data();
+            if (action != null) {
+                // *** FIX 1: Safely handle nulls to prevent crashes ***
+                String type = action['type'] as String? ?? 'UNKNOWN';
+                String pid = action['playerId'] as String? ?? 'unknown';
+                Map<String, dynamic> data = action['data'] as Map<String, dynamic>? ?? {};
+                
+                _processAction(type, pid, data);
+                change.doc.reference.delete(); 
+            }
           }
         }
       });
@@ -286,7 +317,28 @@ class FirebaseHostEngine {
       });
       return;
     }
+    
+    // *** FIX 2: Music Actions moved ABOVE player turn check ***
+    if (type == 'ADD_TO_QUEUE') {
+      String id = data['videoId'];
+      String title = data['title'];
+      
+      _musicQueue.add({'videoId': id, 'title': title});
+      
+      if (_currentMusicId == null) {
+         _playNextSong();
+      } else {
+         _broadcastQueueUpdate();
+      }
+      return; // Stop here, don't check game turns
+    }
+    
+    if (type == 'SONG_ENDED') {
+      _playNextSong();
+      return;
+    }
 
+    // --- GAME MOVE VALIDATION (Requires Turn) ---
     if (_players.isEmpty) return; 
     
     String currentUserId = _players[_currentPlayerIndex]['id'];
@@ -294,8 +346,9 @@ class FirebaseHostEngine {
     if (playerId != currentUserId) return; 
 
     if (_gameType == 'kadi') {
-      if (type == 'PLAY_CARD') _handlePlayCard(playerId, data['cardIndex'], data);
-      else if (type == 'PICK_CARD') _handlePickCard(playerId);
+      if (type == 'PLAY_CARD') {
+        _handlePlayCard(playerId, data['cardIndex'], data);
+      } else if (type == 'PICK_CARD') {_handlePickCard(playerId);}
     } 
     else {
       if (type == 'ASK_CARD') {
@@ -312,14 +365,41 @@ class FirebaseHostEngine {
      _currentPlayerIndex = 0;
      
      if (_gameType == 'kadi') {
-        _startKadi();
+       _startKadi();
      } else {
-        _startGoFish();
+       _startGoFish();
      }
-      
+     
      _updateGameState("playing");
      _db.collection('games').doc(gameCode).update({'winner': ""}); 
      _sendSystemMessage("System", "Game Started: ${_gameType.toUpperCase()}");
+  }
+
+  void _playNextSong() {
+      if (_musicQueue.isNotEmpty) {
+          var next = _musicQueue.removeAt(0);
+          _currentMusicId = next['videoId'];
+          String title = next['title']; // Get the title
+          
+          // Broadcast Music Update with TITLE
+          _db.collection('games').doc(gameCode).collection('actions').add({
+             'type': 'MUSIC_UPDATE',
+             'data': {'videoId': _currentMusicId, 'title': title}, 
+             'timestamp': FieldValue.serverTimestamp()
+          });
+          
+          _broadcastQueueUpdate();
+      } else {
+          _currentMusicId = null; 
+      }
+  }
+
+  void _broadcastQueueUpdate() {
+      _db.collection('games').doc(gameCode).collection('actions').add({
+          'type': 'QUEUE_UPDATE',
+          'data': {'queue': _musicQueue},
+          'timestamp': FieldValue.serverTimestamp()
+      });
   }
   
   void _startKadi() {
@@ -330,18 +410,22 @@ class FirebaseHostEngine {
      _discardPile.clear(); 
      _jokerColorConstraint = null;
      
-     for (var p in _players) _hands[p['id']] = _deckService.drawCards(4);
+     for (var p in _players) {
+       _hands[p['id']] = _deckService.drawCards(4);
+     }
      
      do {
-        if (_topCard != null) _deckService.addCardToBottom(_topCard!);
-        _topCard = _deckService.drawCards(1).first;
+       if (_topCard != null) _deckService.addCardToBottom(_topCard!);
+       _topCard = _deckService.drawCards(1).first;
      } while (['2','3','8','jack','queen','king','ace','joker'].contains(_topCard!.rank));
   }
   
   void _startGoFish() {
     _books = List.filled(_players.length, 0);
     int count = _players.length <= 3 ? 7 : 5;
-    for (var p in _players) _hands[p['id']] = _deckService.drawCards(count);
+    for (var p in _players) {
+      _hands[p['id']] = _deckService.drawCards(count);
+    }
     _topCard = CardModel(suit: 'back', rank: 'deck'); 
   }
 
@@ -382,7 +466,9 @@ class FirebaseHostEngine {
 
   void _checkBooks(String pid) {
     Map<String, int> counts = {};
-    for (var c in _hands[pid]!) counts[c.rank] = (counts[c.rank] ?? 0) + 1;
+    for (var c in _hands[pid]!) {
+      counts[c.rank] = (counts[c.rank] ?? 0) + 1;
+    }
     
     counts.forEach((rank, count) {
       if (count == 4) {
@@ -402,6 +488,44 @@ class FirebaseHostEngine {
     }
   }
 
+  bool _isValidMove(CardModel card) {
+    if (_jokerColorConstraint != null) {
+      bool isBomb = ['2', '3', 'joker'].contains(card.rank);
+      if (isBomb) return true; 
+      String cardColor = (card.suit == 'hearts' || card.suit == 'diamonds' || card.suit == 'red') ? 'red' : 'black';
+      return cardColor == _jokerColorConstraint;
+    }
+
+    if (_bombStack > 0) {
+      if (['2', '3', 'joker'].contains(card.rank)) return true;
+      if (card.rank == 'ace') return true; 
+      if (card.rank == 'king') return true; 
+      if (card.rank == 'jack') return true; 
+      return false; 
+    }
+
+    if (_waitingForAnswer) {
+       if (card.rank == 'queen' || card.rank == '8') {
+           return card.suit == _topCard!.suit || card.rank == _topCard!.rank;
+       }
+       if (['4','5','6','7','9','10'].contains(card.rank)) {
+           return card.suit == _topCard!.suit;
+       }
+       return false;
+    }
+
+    if (card.rank == 'ace') return true;
+
+    if (_forcedRank != null && _forcedSuit != null) {
+       return card.rank == _forcedRank && card.suit == _forcedSuit;
+    }
+    if (_forcedSuit != null) {
+      return card.suit == _forcedSuit;
+    }
+
+    return card.suit == _topCard!.suit || card.rank == _topCard!.rank || ['2','3','joker'].contains(card.rank);
+  }
+
   void _handlePlayCard(String pid, int index, Map<String, dynamic> data) {
     List<CardModel> hand = _hands[pid]!;
     if (index >= hand.length) return;
@@ -416,13 +540,13 @@ class FirebaseHostEngine {
     if (_topCard != null) _discardPile.add(_topCard!);
     _topCard = card;
     
-    // Clear Joker Constraint if move was valid
     if (_jokerColorConstraint != null) _jokerColorConstraint = null;
 
     bool isBomb = ['2', '3', 'joker'].contains(card.rank);
-    if (card.rank == '2') _bombStack += 2;
-    else if (card.rank == '3') _bombStack += 3;
-    else if (card.rank == 'joker') _bombStack += 5;
+    if (card.rank == '2') {
+      _bombStack += 2;
+    } else if (card.rank == '3') {_bombStack += 3;}
+    else if (card.rank == 'joker'){ _bombStack += 5;}
 
     if (card.rank == 'ace') {
        if (_bombStack > 0 && !isBomb) { 
@@ -431,28 +555,35 @@ class FirebaseHostEngine {
           _forcedRank = null;
           _sendSystemMessage("System", "Bomb Blocked by Ace!");
        } else {
-          _forcedSuit = data['requestedSuit'];
-          _forcedRank = data['requestedRank'];
-          _bombStack = 0; 
-          String msg = "Request: ${_forcedSuit}";
-          if (_forcedRank != null) msg += " $_forcedRank";
-          _sendSystemMessage("System", msg);
+          _bombStack = 0;
+          
+          if (card.suit == 'spades' && hand.length == 1) {
+             CardModel winningCard = hand[0];
+             _forcedSuit = winningCard.suit;
+             _forcedRank = winningCard.rank;
+             _sendSystemMessage("System", "🔒 LOCK: $_forcedRank of $_forcedSuit");
+          } 
+          else {
+             _forcedSuit = data['requestedSuit'];
+             _forcedRank = data['requestedRank'];
+             
+             String msg = "Request: $_forcedSuit";
+             if (_forcedRank != null) msg += " $_forcedRank";
+             _sendSystemMessage("System", msg);
+          }
        }
     } else {
-       if (_forcedSuit != null) {
-          _forcedSuit = null;
-          _forcedRank = null;
-       }
+       if (_forcedSuit != null) { _forcedSuit = null; _forcedRank = null; }
     }
 
     bool isWinningHand = hand.isNotEmpty && hand.every((c) => c.rank == hand[0].rank);
     if (hand.length == 1) {
       if (!_nikoKadiDeclarations.contains(pid)) {
+         // --- THIS WAS MISSING ---
          if (_isWinningCard(hand[0])) {
            _sendSystemMessage("Referee", "Forgot Niko Kadi! +2 Cards");
            _drawCardsForPlayer(pid, 2); 
            _updateGameState("playing");
-           _advanceTurn();
            return;
          }
       }
@@ -462,13 +593,19 @@ class FirebaseHostEngine {
     bool turnEnds = true;
     int skip = 0;
 
-    if (card.rank == 'king') {
-       if (_bombStack > 0) {
-          _direction *= -1; 
-          _sendSystemMessage("System", "Bomb Returned!");
-       } else {
-          _direction *= -1; 
-       }
+    if (card.rank == 'queen' || card.rank == '8') {
+      _waitingForAnswer = true;
+      turnEnds = false; 
+      _sendSystemMessage("System", "Question placed! Answer or Chain.");
+    } 
+    else if (_waitingForAnswer) {
+      _waitingForAnswer = false;
+      turnEnds = true;
+      _sendSystemMessage("System", "Question Answered.");
+    }
+    else if (card.rank == 'king') {
+       _direction *= -1; 
+       if (_bombStack > 0) _sendSystemMessage("System", "Bomb Returned!");
     } 
     else if (card.rank == 'jack') {
        if (_bombStack > 0) {
@@ -478,29 +615,25 @@ class FirebaseHostEngine {
           if (_players.length > 2) skip = 1; 
        }
     }
-    else if (card.rank == 'queen' || card.rank == '8') {
-      _waitingForAnswer = true;
-      turnEnds = false; 
-      _sendSystemMessage("System", "Play the Answer!");
-    } 
-    else if (_waitingForAnswer) {
-      _waitingForAnswer = false;
-      turnEnds = true;
-    }
     
     if (turnEnds && skip == 0 && hand.isNotEmpty) {
       if (hand.any((c) => c.rank == card.rank)) {
-         turnEnds = false; 
+          turnEnds = false; 
       }
     }
 
     if (hand.isEmpty) {
       bool powerCardFinish = ['2','3','joker','king','jack','queen','8'].contains(card.rank);
+      if (card.rank == 'ace') powerCardFinish = true; 
+
       bool anyoneElseCardless = _hands.entries.any((e) => e.key != pid && e.value.isEmpty);
       
       if (powerCardFinish || anyoneElseCardless) {
-         if (powerCardFinish) _sendSystemMessage("System", "Player is Cardless (Power Card)!");
-         else _sendSystemMessage("System", "Win Blocked by Cardless Player!");
+         if (powerCardFinish) {
+           _sendSystemMessage("System", "Cannot win with Power Card!");
+         } else {
+           _sendSystemMessage("System", "Win Blocked by Cardless Player!");
+         }
          _updateGameState("playing");
          if (turnEnds) _advanceTurn(skip: skip);
          return;
@@ -514,14 +647,19 @@ class FirebaseHostEngine {
     if (turnEnds) _advanceTurn(skip: skip);
   }
 
+  // --- ADDED MISSING METHOD HERE ---
+  bool _isWinningCard(CardModel card) {
+    const nonWinningRanks = ['2', '3', '8', 'jack', 'queen', 'king', 'joker'];
+    return !nonWinningRanks.contains(card.rank);
+  }
+
   void _handlePickCard(String pid) {
     int count = _bombStack > 0 ? _bombStack : 1;
     
-    // Check if picking due to bomb stack AND top card is Joker
     if (_bombStack > 0 && _topCard != null && _topCard!.rank == 'joker') {
-      // Set color constraint for NEXT player
-      if (_topCard!.suit == 'red') _jokerColorConstraint = 'red';
-      else if (_topCard!.suit == 'black') _jokerColorConstraint = 'black';
+      if (_topCard!.suit == 'red') {
+        _jokerColorConstraint = 'red';
+      } else if (_topCard!.suit == 'black') {_jokerColorConstraint = 'black';}
       _sendSystemMessage("System", "Picked Joker Bomb! Next must play $_jokerColorConstraint.");
     }
 
@@ -530,7 +668,12 @@ class FirebaseHostEngine {
     _bombStack = 0;
     _forcedSuit = null;
     _forcedRank = null;
-    _waitingForAnswer = false; 
+    
+    if (_waitingForAnswer) {
+        _waitingForAnswer = false;
+        _sendSystemMessage("System", "Player picked. Question voided.");
+    }
+    
     _nikoKadiDeclarations.remove(pid);
     
     _updateGameState("playing");
@@ -563,47 +706,6 @@ class FirebaseHostEngine {
     _updateGameState("playing");
   }
 
-  bool _isValidMove(CardModel card) {
-    // 0. Joker Color Constraint
-    if (_jokerColorConstraint != null) {
-      bool isBomb = ['2', '3', 'joker'].contains(card.rank);
-      if (isBomb) return true; // Can always stack bombs
-      
-      String cardColor = (card.suit == 'hearts' || card.suit == 'diamonds' || card.suit == 'red') ? 'red' : 'black';
-      return cardColor == _jokerColorConstraint;
-    }
-
-    if (['2', '3', 'joker'].contains(card.rank)) return true;
-
-    if (_bombStack > 0) {
-      if (card.rank == 'ace') return true; 
-      if (card.rank == 'king') return true; 
-      if (card.rank == 'jack') return true; 
-      return false; 
-    }
-
-    if (_waitingForAnswer) {
-       if (card.suit != _topCard!.suit) return false;
-       return ['4','5','6','7','9','10'].contains(card.rank);
-    }
-
-    if (_forcedRank != null && _forcedSuit != null) {
-       return card.rank == _forcedRank && card.suit == _forcedSuit;
-    }
-    if (_forcedSuit != null) {
-      if (card.rank == 'ace') return true;
-      return card.suit == _forcedSuit;
-    }
-
-    if (card.rank == 'ace') return true;
-    return card.suit == _topCard!.suit || card.rank == _topCard!.rank;
-  }
-  
-  bool _isWinningCard(CardModel card) {
-    const nonWinningRanks = ['2', '3', '8', 'jack', 'queen', 'king', 'joker'];
-    return !nonWinningRanks.contains(card.rank);
-  }
-
   void _updateGameState(String status) {
     Map<String, dynamic> handsJson = {};
     _hands.forEach((key, list) => handsJson[key] = list.map((c) => c.toJson()).toList());
@@ -618,7 +720,7 @@ class FirebaseHostEngine {
       'forcedRank': _forcedRank,
       'bombStack': _bombStack,
       'waitingForAnswer': _waitingForAnswer,
-      'jokerColorConstraint': _jokerColorConstraint, // Send constraint state
+      'jokerColorConstraint': _jokerColorConstraint, 
     });
   }
 

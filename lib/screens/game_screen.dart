@@ -2,8 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:ui'; 
 import 'package:card_game_ke/services/firebase_game_service.dart';
+import 'package:card_game_ke/services/online_game_service.dart';
 import 'package:card_game_ke/services/theme_service.dart';
 import 'package:card_game_ke/services/progression_service.dart';
+import 'package:card_game_ke/widgets/jukebox_player.dart';
 import 'package:flutter/material.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:confetti/confetti.dart';
@@ -49,6 +51,9 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   FirebaseHostEngine? _onlineHostEngine;
   StreamSubscription? _gameSubscription;
   dynamic _localEngine; 
+  String? _currentSongId;
+  String? _currentSongTitle; // Add this
+  List<Map<String, dynamic>> _songQueue = [];
   
   List<PlayerInfo> _players = [];
 
@@ -179,13 +184,16 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     // 3. Load theme after progression is ready
     _loadTheme();
 
-    if (_isOnline) {
-      if (widget.isHost && widget.onlineGameCode != null) {
-        _onlineHostEngine = FirebaseHostEngine(widget.onlineGameCode!);
-        _onlineHostEngine!.start();
-      }
-      _gameSubscription = FirebaseGameService().gameStream.listen((data) { _handleGameMessage(data); });
-    } else if (_isOffline) {
+    // Inside _initializeConnection()
+if (_isOnline) {
+   // Join the room using the new service
+   OnlineGameService().joinGame(widget.onlineGameCode!, _myName);
+
+   // Listen to the new stream
+   _gameSubscription = OnlineGameService().gameStream.listen((data) {
+      _handleGameMessage(data);
+   });
+} else if (_isOffline) {
       if (_isGoFish) {
         _localEngine = GoFishEngine();
       } else {
@@ -210,6 +218,116 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         _connectToServer(widget.hostAddress);
       }
     }
+  }
+
+
+  void _showRulesDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: EdgeInsets.all(16),
+        child: Container(
+          width: double.infinity,
+          constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.8),
+          decoration: BoxDecoration(
+            color: Color(0xFF1E293B), // Dark slate blue background
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: Colors.white24, width: 1),
+            boxShadow: [BoxShadow(color: Colors.black54, blurRadius: 20, spreadRadius: 5)],
+          ),
+          child: Column(
+            children: [
+              // Header
+              Container(
+                padding: EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.black26,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.gavel_rounded, color: Colors.amber, size: 28),
+                    SizedBox(width: 12),
+                    Text("GAME RULES", style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold, letterSpacing: 2)),
+                    Spacer(),
+                    IconButton(icon: Icon(Icons.close, color: Colors.white54), onPressed: () => Navigator.pop(context))
+                  ],
+                ),
+              ),
+              
+              // Scrollable Content
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: EdgeInsets.all(24),
+                  physics: BouncingScrollPhysics(),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildRuleSection("🏆 Objective", 
+                        "Be the first to finish your cards. You MUST end on a valid 'Answer' card. You cannot win with a Power Card."),
+                      
+                      _buildRuleSection("💣 The Bombs", 
+                        "• 2 (+2 Cards)\n"
+                        "• 3 (+3 Cards)\n"
+                        "• Joker (+5 Cards)\n"
+                        "• Bombs can be stacked on each other."),
+
+                      _buildRuleSection("🛡️ Defense", 
+                        "• Ace: Blocks the bomb (Resets to 0).\n"
+                        "• King: Reverses bomb to previous player.\n"
+                        "• Jack: Passes bomb to next player (No penalty for you)."),
+
+                      _buildRuleSection("❓ Questions (Q & 8)", 
+                        "• If you play a Q or 8, YOU keep the turn.\n"
+                        "• You can 'Chain' questions (e.g., Q♥ -> 8♥ -> 8♣).\n"
+                        "• You must finish the chain with an 'Answer' card (4,5,6,7,9,10) of the matching suit.\n"
+                        "• If you cannot answer, you must pick a card."),
+
+                      _buildRuleSection("🔒 The Ace Lock", 
+                        "• Ace of Spades Strategy: If you play Ace ♠ and have 1 card left, the game LOCKS the next move.\n"
+                        "• Opponents can ONLY play that specific Rank & Suit.\n"
+                        "• Exception: Any Ace breaks the lock."),
+
+                      _buildRuleSection("📢 Niko Kadi", 
+                        "• You must press 'NIKO KADI' when you have 1 card left.\n"
+                        "• If combining (e.g. Q -> Answer), press it before the last card.\n"
+                        "• Penalty: +2 Cards if caught forgetting."),
+                        
+                      _buildRuleSection("🚫 Winning Restrictions", 
+                        "• You CANNOT win with: 2, 3, 8, J, Q, K, A, Joker.\n"
+                        "• You CAN win with: 4, 5, 6, 7, 9, 10.\n"
+                        "• Combo Win: Q -> 8 -> 5 is a valid win because it ends on a 5."),
+                    ],
+                  ),
+                ),
+              ),
+              
+              // Footer
+              Container(
+                padding: EdgeInsets.all(16),
+                decoration: BoxDecoration(border: Border(top: BorderSide(color: Colors.white10))),
+                child: Center(child: Text("Good Luck!", style: TextStyle(color: Colors.white38, fontStyle: FontStyle.italic))),
+              )
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRuleSection(String title, String content) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: TextStyle(color: Colors.blueAccent, fontSize: 16, fontWeight: FontWeight.bold)),
+          SizedBox(height: 8),
+          Text(content, style: TextStyle(color: Colors.white70, fontSize: 14, height: 1.5)),
+        ],
+      ),
+    );
   }
 
   Future<int?> _showDeckChoiceDialog(int players) async {
@@ -276,6 +394,13 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         }
         _connectedPlayers = parsedPlayers.length;
       });
+    }else if (type == 'MUSIC_UPDATE') {
+        if (mounted) {
+          setState(() {
+           _currentSongId = data['data']['videoId'];
+           _currentSongTitle = data['data']['title']; // Capture Title
+        });
+        }
     }
     else if (type == 'DEAL_HAND') {
       setState(() {
@@ -331,6 +456,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     else if (type == 'ERROR') {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(data['data']), backgroundColor: Colors.red));
     }
+    
   }
 
   void _onCardTap(int index) {
@@ -345,10 +471,10 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     }
   }
 
-  bool _validateLocalMove(CardModel card) {
+bool _validateLocalMove(CardModel card) {
     if (_topDiscardCard == null) return true;
     
-    // 0. Joker Constraint Check
+    // 1. Joker Constraint
     if (_jokerColorConstraint != null) {
       bool isBomb = ['2', '3', 'joker'].contains(card.rank);
       if (isBomb) return true;
@@ -358,6 +484,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
     if (['2', '3', 'joker'].contains(card.rank)) return true;
 
+    // 2. Bomb Stack Logic
     if (_currentBombStack > 0) {
       if (card.rank == 'ace') return true; 
       if (card.rank == 'king') return true; 
@@ -365,14 +492,27 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       return false; 
     }
 
+    // 3. Question Mode (Self-Answering & Chaining)
+    // The UI must allow you to tap Q/8 or the matching Answer suit
     if (_waitingForAnswer) {
-       if (card.suit != _topDiscardCard!.suit) return false;
-       return ['4','5','6','7','9','10'].contains(card.rank);
+       // Chain Q/8
+       if (card.rank == 'queen' || card.rank == '8') {
+           return card.suit == _topDiscardCard!.suit || card.rank == _topDiscardCard!.rank;
+       }
+       // Answer (Must be non-power card matching suit)
+       if (['4','5','6','7','9','10'].contains(card.rank)) {
+           return card.suit == _topDiscardCard!.suit;
+       }
+       return false;
     }
 
+    // 4. Ace Counter-Play
     if (card.rank == 'ace') return true;
+
+    // 5. Standard Play
     if (card.suit == _topDiscardCard!.suit) return true;
     if (card.rank == _topDiscardCard!.rank) return true;
+    
     return false;
   }
 
@@ -448,16 +588,18 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       "saidNikoKadi": capturedNikoState // Use captured value
     };
 
-    if (_isOnline) FirebaseGameService().sendAction("PLAY_CARD", payload);
-    else if (_isOffline) _localEngine!.playCard(index, requestedSuit: reqSuit, requestedRank: reqRank, saidNikoKadi: capturedNikoState);
-    else _channel?.sink.add(jsonEncode({"type": "PLAY_CARD", ...payload}));
+    if (_isOnline) {
+      OnlineGameService().sendAction("PLAY_CARD", payload);
+    } else if (_isOffline) {_localEngine!.playCard(index, requestedSuit: reqSuit, requestedRank: reqRank, saidNikoKadi: capturedNikoState);}
+    else {_channel?.sink.add(jsonEncode({"type": "PLAY_CARD", ...payload}));}
   }
 
   void _pickCard() {
     if (!_isMyTurn) return;
-    if (_isOnline) FirebaseGameService().sendAction("PICK_CARD", {});
-    else if (_isOffline) _localEngine!.pickCard();
-    else _channel?.sink.add(jsonEncode({"type": "PICK_CARD"}));
+    if (_isOnline) {
+      OnlineGameService().sendAction("PICK_CARD", {});
+    } else if (_isOffline) {_localEngine!.pickCard();}
+    else {_channel?.sink.add(jsonEncode({"type": "PICK_CARD"}));}
   }
 
   void _startGame() async {
@@ -471,7 +613,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     if (_isOffline) {
       _localEngine.start(widget.aiCount, "Medium", decks: decks); 
     } else if (_isOnline && widget.isHost) {
-      FirebaseGameService().sendAction("START_GAME", {"decks": decks});
+      OnlineGameService().sendAction("START_GAME", {"decks": decks});
     } else if (!_isOnline) {
       _channel?.sink.add(jsonEncode({"type": "START_GAME", "decks": decks}));
     }
@@ -503,6 +645,57 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
             Column(
               children: [
                  _buildTopBar(theme),
+                 JukeboxPlayer(
+  currentVideoId: _currentSongId,
+  currentTitle: _currentSongTitle,
+  queue: _songQueue,
+  isHost: widget.isHost || _isOffline,
+  onAddSong: (id, title) {
+    Map<String, dynamic> payload = {'videoId': id, 'title': title};
+    
+    // 1. ONLINE
+    if (_isOnline) {
+      OnlineGameService().sendAction("ADD_TO_QUEUE", payload);
+    } 
+    // 2. LAN
+    else if (!_isOffline && !_isOnline) {
+      _channel?.sink.add(jsonEncode({"type": "ADD_TO_QUEUE", "data": payload}));
+    } 
+    // 3. OFFLINE (SINGLE PLAYER) - Logic to start immediately
+    else {
+      setState(() {
+         // If no song playing, Play THIS ONE immediately
+         if (_currentSongId == null) {
+            _currentSongId = id;
+            _currentSongTitle = title;
+            // DO NOT ADD TO QUEUE if playing immediately
+         } else {
+            // Else add to queue
+            _songQueue.add(payload);
+         }
+      });
+    }
+  },
+  onSongEnded: () {
+     if (_isOnline) {
+       OnlineGameService().sendAction("SONG_ENDED", {});
+     } else if (!_isOffline && !_isOnline) {
+       _channel?.sink.add(jsonEncode({"type": "SONG_ENDED"}));
+     } else {
+       // OFFLINE NEXT SONG
+       setState(() {
+          if (_songQueue.isNotEmpty) {
+             var next = _songQueue.removeAt(0);
+             _currentSongId = next['videoId'];
+             _currentSongTitle = next['title'];
+          } else {
+             _currentSongId = null;
+             _currentSongTitle = null;
+          }
+       });
+     }
+  }
+),
                  Expanded(
                    child: _gameHasStarted 
                      ? _buildTableArea(theme)
@@ -538,6 +731,16 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
               ),
             ),
             SizedBox(width: 12),
+
+            GestureDetector(
+            onTap: () => _showRulesDialog(),
+            child: Container(
+              padding: EdgeInsets.all(8),
+              decoration: BoxDecoration(color: Colors.blueAccent.withOpacity(0.2), shape: BoxShape.circle),
+              child: Icon(Icons.menu_book_rounded, color: Colors.blueAccent, size: 20),
+            ),
+          ),
+          SizedBox(width: 12),
             
             Expanded(
               child: ClipRRect(
@@ -869,104 +1072,194 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     );
   }
   
-  Future<void> _handleGameOver(String msg) async {
-      bool didIWin = msg.contains("You") || msg.contains(_myName);
-      int coinsEarned = 0;
+Future<void> _handleGameOver(String msg) async {
+    bool didIWin = msg.contains("You") || msg.contains(_myName);
+    int coinsEarned = 0;
+
+    // 1. Handle Stats & Coins
+    if (didIWin) {
+      coinsEarned = 100;
+      await ProgressionService().addCoins(coinsEarned);
+      await ProgressionService().recordGameResult(true);
       
-      if (didIWin) {
-         coinsEarned = 100;
-         await ProgressionService().addCoins(coinsEarned);
-         await ProgressionService().recordGameResult(true);
-         
-         _confettiController.play();
-         SoundService.play('win');
-      } else {
-         await ProgressionService().recordGameResult(false);
-      }
-      
-      showDialog(
-        context: context, 
-        barrierDismissible: false,
-        builder: (context) => Dialog(
-          backgroundColor: Colors.transparent,
-          insetPadding: EdgeInsets.all(20),
-          child: Stack(
-            alignment: Alignment.topCenter,
-            clipBehavior: Clip.none,
-            children: [
-              Container(
-                 padding: EdgeInsets.fromLTRB(24, 60, 24, 24),
-                 decoration: BoxDecoration(
-                   gradient: LinearGradient(
-                     colors: didIWin ? [Color(0xFF1E293B), Color(0xFF0F172A)] : [Color(0xFF2C1E1E), Color(0xFF1A1111)],
-                     begin: Alignment.topLeft,
-                     end: Alignment.bottomRight
-                   ),
-                   borderRadius: BorderRadius.circular(24),
-                   border: Border.all(color: didIWin ? Colors.amber.withOpacity(0.5) : Colors.red.withOpacity(0.3), width: 2),
-                   boxShadow: [BoxShadow(color: didIWin ? Colors.amber.withOpacity(0.2) : Colors.black45, blurRadius: 30, spreadRadius: 5)]
-                 ),
-                 child: Column(
-                   mainAxisSize: MainAxisSize.min,
-                   children: [
-                     Text(didIWin ? "VICTORY!" : "DEFEAT", style: TextStyle(fontSize: 36, fontWeight: FontWeight.w900, color: didIWin ? Colors.amber : Colors.grey, letterSpacing: 2, shadows: [Shadow(color: Colors.black, blurRadius: 10, offset: Offset(0,2))])),
-                     SizedBox(height: 12),
-                     Text(msg, textAlign: TextAlign.center, style: TextStyle(color: Colors.white70, fontSize: 16)),
-                     SizedBox(height: 24),
-                     if (didIWin)
-                       Container(
-                         padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                         decoration: BoxDecoration(color: Colors.amber.withOpacity(0.1), borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.amber.withOpacity(0.3))),
-                         child: Row(
-                           mainAxisSize: MainAxisSize.min,
-                           children: [
-                             Icon(Icons.monetization_on, color: Colors.amber, size: 28),
-                             SizedBox(width: 10),
-                             Text("+$coinsEarned Coins", style: TextStyle(color: Colors.amber, fontSize: 20, fontWeight: FontWeight.bold)),
-                           ],
-                         ),
-                       ),
-                     SizedBox(height: 32),
-                     Row(
-                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                       children: [
-                         TextButton(onPressed: () => Navigator.pop(context), child: Text("CLOSE", style: TextStyle(color: Colors.white54, fontWeight: FontWeight.bold))),
-                         if (widget.isHost || _isOffline)
-                           ElevatedButton.icon(
-                             onPressed: () { Navigator.pop(context); _startGame(); }, 
-                             icon: Icon(Icons.refresh),
-                             label: Text("PLAY AGAIN"),
-                             style: ElevatedButton.styleFrom(backgroundColor: didIWin ? Colors.green : Colors.grey[700], foregroundColor: Colors.white, padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12), shape: StadiumBorder())
-                           )
-                       ],
-                     )
-                   ],
-                 ),
+      _confettiController.play();
+      SoundService.play('win');
+    } else {
+      await ProgressionService().recordGameResult(false);
+      SoundService.play('error'); // or a 'defeat' sound
+    }
+
+    // 2. Show Dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false, // Force user to click a button
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: EdgeInsets.all(20),
+        child: Stack(
+          alignment: Alignment.topCenter,
+          clipBehavior: Clip.none,
+          children: [
+            // --- MAIN CARD ---
+            Container(
+              padding: EdgeInsets.fromLTRB(24, 60, 24, 24),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: didIWin 
+                    ? [Color(0xFF1E293B), Color(0xFF0F172A)] // Victory Blue/Black
+                    : [Color(0xFF2C1E1E), Color(0xFF1A1111)], // Defeat Red/Black
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight
+                ),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(
+                  color: didIWin ? Colors.amber.withOpacity(0.5) : Colors.red.withOpacity(0.3), 
+                  width: 2
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: didIWin ? Colors.amber.withOpacity(0.2) : Colors.black45, 
+                    blurRadius: 30, 
+                    spreadRadius: 5
+                  )
+                ]
               ),
-              Positioned(
-                top: -40,
-                child: Container(
-                  padding: EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: LinearGradient(colors: didIWin ? [Colors.amber, Colors.orange] : [Colors.grey[700]!, Colors.grey[900]!]),
-                    boxShadow: [BoxShadow(color: didIWin ? Colors.amber.withOpacity(0.4) : Colors.black45, blurRadius: 15, offset: Offset(0, 5))],
-                    border: Border.all(color: Colors.white24, width: 4)
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // TITLE
+                  Text(
+                    didIWin ? "VICTORY!" : "GAME OVER", 
+                    style: TextStyle(
+                      fontSize: 32, 
+                      fontWeight: FontWeight.w900, 
+                      color: didIWin ? Colors.amber : Colors.grey, 
+                      letterSpacing: 2, 
+                      shadows: [Shadow(color: Colors.black, blurRadius: 10, offset: Offset(0,2))]
+                    )
                   ),
-                  child: Icon(didIWin ? Icons.emoji_events_rounded : Icons.sentiment_very_dissatisfied, size: 40, color: Colors.white),
+                  
+                  SizedBox(height: 12),
+                  
+                  // MESSAGE (e.g., "Player 2 Wins!")
+                  Text(
+                    msg, 
+                    textAlign: TextAlign.center, 
+                    style: TextStyle(color: Colors.white70, fontSize: 16)
+                  ),
+                  
+                  SizedBox(height: 24),
+                  
+                  // COINS REWARD (Only for Winner)
+                  if (didIWin)
+                    Container(
+                      padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.withOpacity(0.1), 
+                        borderRadius: BorderRadius.circular(16), 
+                        border: Border.all(color: Colors.amber.withOpacity(0.3))
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.monetization_on, color: Colors.amber, size: 28),
+                          SizedBox(width: 10),
+                          Text(
+                            "+$coinsEarned Coins", 
+                            style: TextStyle(color: Colors.amber, fontSize: 20, fontWeight: FontWeight.bold)
+                          ),
+                        ],
+                      ),
+                    ),
+                    
+                  SizedBox(height: 32),
+                  
+                  // BUTTONS ROW
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      // --- EXIT BUTTON (Goes to Home) ---
+                      TextButton(
+                        onPressed: () {
+                          // Pop until we hit the first route (Home Screen)
+                          Navigator.of(context).popUntil((route) => route.isFirst);
+                        }, 
+                        child: Text(
+                          "EXIT", 
+                          style: TextStyle(color: Colors.white54, fontWeight: FontWeight.bold)
+                        )
+                      ),
+                      
+                      // --- PLAY AGAIN BUTTON ---
+                      ElevatedButton.icon(
+                        onPressed: () {
+                           Navigator.pop(context); // Close Dialog
+                           
+                           if (widget.isHost || _isOffline) {
+                             // Host/Offline: Actually restarts the game logic
+                             _startGame(); 
+                           } else {
+                             // Client: Just closes dialog to wait for Host
+                             ScaffoldMessenger.of(context).showSnackBar(
+                               SnackBar(content: Text("Waiting for Host to restart..."))
+                             );
+                           }
+                        }, 
+                        icon: Icon(Icons.refresh),
+                        label: Text("PLAY AGAIN"),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: didIWin ? Colors.green : Colors.grey[700], 
+                          foregroundColor: Colors.white, 
+                          padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12), 
+                          shape: StadiumBorder()
+                        )
+                      )
+                    ],
+                  )
+                ],
+              ),
+            ),
+            
+            // --- TOP ICON (Trophy vs Sad Face) ---
+            Positioned(
+              top: -40,
+              child: Container(
+                padding: EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    colors: didIWin 
+                      ? [Colors.amber, Colors.orange] 
+                      : [Colors.grey[700]!, Colors.grey[900]!]
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: didIWin ? Colors.amber.withOpacity(0.4) : Colors.black45, 
+                      blurRadius: 15, 
+                      offset: Offset(0, 5)
+                    )
+                  ],
+                  border: Border.all(color: Colors.white24, width: 4)
+                ),
+                child: Icon(
+                  didIWin ? Icons.emoji_events_rounded : Icons.sentiment_very_dissatisfied, 
+                  size: 40, 
+                  color: Colors.white
                 ),
               ),
-            ],
-          ),
-        )
-      );
+            ),
+          ],
+        ),
+      ),
+    );
   }
   
   void _confirmAsk() {
     if (_selectedRankToAsk == null || _selectedOpponentIndex == null) return;
     Map<String, dynamic> payload = {"targetIndex": _selectedOpponentIndex, "rank": _selectedRankToAsk};
-    if (_isOnline) FirebaseGameService().sendAction("ASK_CARD", payload);
-    else if (_isOffline) _localEngine.askForCard(_selectedOpponentIndex!, _selectedRankToAsk!);
+    if (_isOnline) {
+      OnlineGameService().sendAction("ASK_CARD", payload);
+    } else if (_isOffline) {_localEngine.askForCard(_selectedOpponentIndex!, _selectedRankToAsk!);}
     setState(() { _selectedRankToAsk = null; _selectedOpponentIndex = null; });
   }
 
@@ -1076,7 +1369,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     if (text.isEmpty) return;
 
     if (_isOnline) {
-      FirebaseGameService().sendAction("CHAT", {"senderName": _myName, "message": text});
+      OnlineGameService().sendAction("CHAT", {"senderName": _myName, "message": text});
     } else if (_isOffline) {
        // Local play: just add to list, bots don't chat back usually in this setup yet
        setState(() {

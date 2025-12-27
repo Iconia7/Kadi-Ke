@@ -155,142 +155,9 @@ class LocalGameEngine {
     _processPick(0, _playerHand);
   }
 
-  void _processMove(int playerIndex, List<CardModel> hand, int cardIndex, {String? reqSuit, String? reqRank}) {
-    CardModel card = hand[cardIndex];
-
-    if (!_isValidMove(card)) {
-        if (playerIndex > 0) _processPick(playerIndex, hand); 
-        else _broadcast("ERROR", "Invalid Move (Must match or Answer)");
-        return; 
-    }
-
-    hand.removeAt(cardIndex);
-    if (_topCard != null) _discardPile.add(_topCard!);
-    _topCard = card;
-    if (_jokerColorConstraint != null) _jokerColorConstraint = null;
-
-    bool isBomb = ['2', '3', 'joker'].contains(card.rank);
-    if (card.rank == '2') _bombStack += 2;
-    else if (card.rank == '3') _bombStack += 3;
-    else if (card.rank == 'joker') _bombStack += 5;
-
-    if (card.rank == 'ace') {
-       if (_bombStack > 0 && !isBomb) {
-          _bombStack = 0; 
-          _forcedSuit = null;
-          _forcedRank = null;
-          _broadcast("CHAT", {"sender": "System", "message": "Bomb Blocked!"});
-       } else {
-          _forcedSuit = reqSuit ?? card.suit; 
-          _forcedRank = reqRank; 
-          _bombStack = 0; 
-          String msg = "New Suit: $_forcedSuit";
-          if (_forcedRank != null) msg += " | Target: $_forcedRank";
-          _broadcast("CHAT", {"sender": "System", "message": msg});
-       }
-    } else {
-       if (_forcedSuit != null) {
-          _forcedSuit = null;
-          _forcedRank = null;
-       }
-    }
-
-    bool isWinningHand = hand.isNotEmpty && hand.every((c) => c.rank == hand[0].rank);
-    if (hand.length == 1) {
-      if (!_hasSaidMap[playerIndex]) {
-        if (_isWinningCard(hand[0])) {
-           if (playerIndex == 0) _broadcast("CHAT", {"sender": "Referee", "message": "Forgot Niko Kadi! Penalty!"});
-           _processPick(playerIndex, hand, penaltyAmount: 2);
-           return; 
-        }
-      }
-    }
-    if (hand.length > 1 && !isWinningHand) _hasSaidMap[playerIndex] = false;
-
-    bool turnEnds = true;
-    int skip = 0;
-
-    if (card.rank == 'king') {
-       if (_bombStack > 0) _direction *= -1; 
-       else _direction *= -1;
-    }
-    else if (card.rank == 'jack') {
-       if (_bombStack > 0) skip = 0; 
-       else {
-          int totalPlayers = _bots.length + 1;
-          if (totalPlayers > 2) skip = 1;
-       }
-    }
-    else if (card.rank == 'queen' || card.rank == '8') {
-      _waitingForAnswer = true;
-      turnEnds = false; 
-    }
-    else if (_waitingForAnswer) {
-      _waitingForAnswer = false;
-      turnEnds = true;
-    }
-    
-    if (turnEnds && skip == 0 && hand.isNotEmpty) {
-       if (hand.any((c) => c.rank == card.rank)) {
-          turnEnds = false;
-          if (playerIndex == 0) _broadcast("CHAT", {"sender": "System", "message": "Multi-drop: Play another ${card.rank} or Pick"});
-       }
-    }
-
-    _broadcastUpdate(playerIndex, hand);
-
-    if (hand.isEmpty) {
-      bool powerCardFinish = ['2','3','joker','king','jack','queen','8'].contains(card.rank);
-      bool anyoneElseCardless = _bots.any((b) => b.hand.isEmpty) || (playerIndex != 0 && _playerHand.isEmpty);
-      
-      if (powerCardFinish || anyoneElseCardless) {
-         if (powerCardFinish) _broadcast("CHAT", {"sender": "System", "message": "Player is Cardless (Power Card)!"});
-         else _broadcast("CHAT", {"sender": "System", "message": "Win Blocked by Cardless Player!"});
-         _broadcastUpdate(playerIndex, hand);
-         if (turnEnds) _advanceTurn(skip: skip);
-         return;
-      } else {
-        _broadcast("GAME_OVER", "Player ${playerIndex == 0 ? 'You' : 'Bot $playerIndex'} Wins!");
-        return;
-      }
-    }
-
-    if (turnEnds) {
-      _advanceTurn(skip: skip);
-    } else {
-      _broadcastTurn(); 
-      if (playerIndex > 0) {
-         _botTimer?.cancel();
-         _botTimer = Timer(Duration(milliseconds: 800), () => _runBotTurn());
-      }
-    }
-  }
-
   bool _isWinningCard(CardModel card) {
     const nonWinningRanks = ['2', '3', '8', 'jack', 'queen', 'king', 'joker'];
     return !nonWinningRanks.contains(card.rank);
-  }
-
-  void _processPick(int playerIndex, List<CardModel> hand, {int penaltyAmount = 0}) {
-    int count = penaltyAmount > 0 ? penaltyAmount : ((_bombStack > 0) ? _bombStack : 1);
-    
-    // Joker Constraint Logic
-    if (_bombStack > 0 && _topCard != null && _topCard!.rank == 'joker') {
-      if (_topCard!.suit == 'red') _jokerColorConstraint = 'red';
-      else if (_topCard!.suit == 'black') _jokerColorConstraint = 'black';
-      _broadcast("CHAT", {"sender": "System", "message": "Next player must match color: $_jokerColorConstraint"});
-    }
-
-    _drawCardsForHand(hand, count);
-    
-    _bombStack = 0;
-    _forcedSuit = null;
-    _forcedRank = null;
-    _waitingForAnswer = false;
-    _hasSaidMap[playerIndex] = false; 
-
-    _broadcastUpdate(playerIndex, hand);
-    _advanceTurn();
   }
 
   void _drawCardsForHand(List<CardModel> hand, int count) {
@@ -350,7 +217,8 @@ class LocalGameEngine {
     }
   }
 
-  bool _isValidMove(CardModel card) {
+bool _isValidMove(CardModel card) {
+    // 1. Joker Constraint (Highest Priority)
     if (_jokerColorConstraint != null) {
       bool isBomb = ['2', '3', 'joker'].contains(card.rank);
       if (isBomb) return true;
@@ -358,30 +226,210 @@ class LocalGameEngine {
       return cardColor == _jokerColorConstraint;
     }
 
-    if (['2', '3', 'joker'].contains(card.rank)) return true;
-    
+    // 2. Bomb Stack Logic
     if (_bombStack > 0) {
-      if (card.rank == 'ace') return true; 
-      if (card.rank == 'king') return true; 
-      if (card.rank == 'jack') return true; 
-      return false; 
+      if (['2', '3', 'joker'].contains(card.rank)) return true; // Stack
+      if (card.rank == 'ace') return true; // Block
+      if (card.rank == 'king') return true; // Return
+      if (card.rank == 'jack') return true; // Pass
+      return false;
     }
 
+    // 3. Question/Answer Logic (SELF-ANSWERING & CHAINING)
     if (_waitingForAnswer) {
-       if (card.suit != _topCard!.suit) return false;
-       return ['4','5','6','7','9','10'].contains(card.rank);
+       // Case A: Chaining Questions (e.g., Q -> Q or Q -> 8)
+       // You can play another Question if it matches Suit OR Rank
+       if (card.rank == 'queen' || card.rank == '8') {
+           return card.suit == _topCard!.suit || card.rank == _topCard!.rank;
+       }
+
+       // Case B: Answering (e.g., Q -> 5)
+       // You must play a standard card (4-10) matching the SUIT
+       if (['4','5','6','7','9','10'].contains(card.rank)) {
+           return card.suit == _topCard!.suit;
+       }
+
+       // You cannot play Power cards (2, 3, A, K, J) to answer a Question
+       return false; 
     }
 
+    // 4. Ace Counter-Play (CRITICAL: Ace breaks any lock)
+    if (card.rank == 'ace') return true;
+
+    // 5. Forced Suit/Rank (The Lock)
     if (_forcedRank != null && _forcedSuit != null) {
        return card.rank == _forcedRank && card.suit == _forcedSuit;
     }
     if (_forcedSuit != null) {
-      if (card.rank == 'ace') return true;
       return card.suit == _forcedSuit;
     }
 
-    if (card.rank == 'ace') return true;
-    return card.suit == _topCard!.suit || card.rank == _topCard!.rank;
+    // 6. Standard Play
+    return card.suit == _topCard!.suit || card.rank == _topCard!.rank || ['2','3','joker'].contains(card.rank);
+  }
+
+  void _processMove(int playerIndex, List<CardModel> hand, int cardIndex, {String? reqSuit, String? reqRank}) {
+    CardModel card = hand[cardIndex];
+
+    if (!_isValidMove(card)) {
+        if (playerIndex > 0) _processPick(playerIndex, hand); // Bot fallback
+        else _broadcast("ERROR", "Invalid Move!");
+        return; 
+    }
+
+    // --- EXECUTE MOVE ---
+    hand.removeAt(cardIndex);
+    if (_topCard != null) _discardPile.add(_topCard!);
+    _topCard = card;
+    if (_jokerColorConstraint != null) _jokerColorConstraint = null;
+
+    // --- BOMB CALCULATION ---
+    bool isBomb = ['2', '3', 'joker'].contains(card.rank);
+    if (card.rank == '2') _bombStack += 2;
+    else if (card.rank == '3') _bombStack += 3;
+    else if (card.rank == 'joker') _bombStack += 5;
+
+    // --- ACE LOGIC ---
+    if (card.rank == 'ace') {
+       if (_bombStack > 0 && !isBomb) {
+          _bombStack = 0; 
+          _forcedSuit = null; 
+          _forcedRank = null;
+          _broadcast("CHAT", {"sender": "System", "message": "Bomb Blocked!"});
+       } else {
+          _bombStack = 0; 
+          
+          // SPECIAL: Ace of Spades Strategy
+          if (card.suit == 'spades' && hand.length == 1) {
+             CardModel winningCard = hand[0]; // The last card you hold
+             _forcedSuit = winningCard.suit;
+             _forcedRank = winningCard.rank;
+             _broadcast("CHAT", {"sender": "System", "message": "🔒 LOCKED: ${_forcedRank} of ${_forcedSuit}"});
+          } 
+          // Normal Ace Request
+          else {
+             _forcedSuit = reqSuit ?? card.suit;
+             _forcedRank = reqRank;
+             
+             String msg = "New Suit: $_forcedSuit";
+             if (_forcedRank != null) msg += " | Target: $_forcedRank";
+             _broadcast("CHAT", {"sender": "System", "message": msg});
+          }
+       }
+    } else {
+       // Clear constraints if non-Ace played (unless inside a Question Chain, logic handles suit match automatically)
+       if (_forcedSuit != null) { _forcedSuit = null; _forcedRank = null; }
+    }
+
+    // --- NIKO KADI CHECK ---
+    bool isWinningHand = hand.isNotEmpty && hand.every((c) => c.rank == hand[0].rank);
+    if (hand.length == 1) {
+      if (!_hasSaidMap[playerIndex]) {
+        if (_isWinningCard(hand[0])) {
+           if (playerIndex == 0) _broadcast("CHAT", {"sender": "Referee", "message": "Forgot Niko Kadi! Penalty!"});
+           _processPick(playerIndex, hand, penaltyAmount: 2);
+           return; 
+        }
+      }
+    }
+    if (hand.length > 1 && !isWinningHand) _hasSaidMap[playerIndex] = false;
+
+    // --- TURN FLOW LOGIC ---
+    bool turnEnds = true;
+    int skip = 0;
+
+    // 1. Question Logic (Q & 8) - Player retains turn
+    if (card.rank == 'queen' || card.rank == '8') {
+      _waitingForAnswer = true;
+      turnEnds = false; // YOU keep the turn
+      if (playerIndex == 0) _broadcast("CHAT", {"sender": "System", "message": "Question placed! Answer or Chain."});
+    }
+    // 2. Answering Logic - Turn ends if valid answer played
+    else if (_waitingForAnswer) {
+      _waitingForAnswer = false;
+      turnEnds = true;
+      if (playerIndex == 0) _broadcast("CHAT", {"sender": "System", "message": "Question Answered."});
+    }
+    // 3. King (Reverse/Return)
+    else if (card.rank == 'king') {
+       _direction *= -1; 
+       if (_bombStack > 0) _broadcast("CHAT", {"sender": "System", "message": "Bomb Returned!"});
+    }
+    // 4. Jack (Skip/Pass)
+    else if (card.rank == 'jack') {
+       if (_bombStack > 0) skip = 0; 
+       else {
+          int totalPlayers = _bots.length + 1;
+          if (totalPlayers > 2) skip = 1;
+       }
+    }
+    
+    // 5. Multi-drop (Standard) - Only if not holding turn for Question
+    if (turnEnds && skip == 0 && hand.isNotEmpty) {
+       if (hand.any((c) => c.rank == card.rank)) {
+          turnEnds = false;
+          if (playerIndex == 0) _broadcast("CHAT", {"sender": "System", "message": "Multi-drop: Play another ${card.rank} or Pick"});
+       }
+    }
+
+    _broadcastUpdate(playerIndex, hand);
+
+    // --- WIN CONDITION ---
+    if (hand.isEmpty) {
+      bool powerCardFinish = ['2','3','joker','king','jack','queen','8'].contains(card.rank);
+      // Explicitly check Ace cannot win (unless it was part of a combo that ended on an Answer, which is handled by valid move)
+      if (card.rank == 'ace') powerCardFinish = true;
+
+      bool anyoneElseCardless = _bots.any((b) => b.hand.isEmpty) || (playerIndex != 0 && _playerHand.isEmpty);
+      
+      if (powerCardFinish || anyoneElseCardless) {
+         if (powerCardFinish) _broadcast("CHAT", {"sender": "System", "message": "Cannot win with Power Card!"});
+         else _broadcast("CHAT", {"sender": "System", "message": "Win Blocked by Cardless Player!"});
+         _broadcastUpdate(playerIndex, hand);
+         if (turnEnds) _advanceTurn(skip: skip);
+         return;
+      } else {
+        _broadcast("GAME_OVER", "Player ${playerIndex == 0 ? 'You' : 'Bot $playerIndex'} Wins!");
+        return;
+      }
+    }
+
+    if (turnEnds) {
+      _advanceTurn(skip: skip);
+    } else {
+      _broadcastTurn(); 
+      if (playerIndex > 0) {
+         _botTimer?.cancel();
+         _botTimer = Timer(Duration(milliseconds: 800), () => _runBotTurn());
+      }
+    }
+  }
+
+  void _processPick(int playerIndex, List<CardModel> hand, {int penaltyAmount = 0}) {
+    int count = penaltyAmount > 0 ? penaltyAmount : ((_bombStack > 0) ? _bombStack : 1);
+    
+    if (_bombStack > 0 && _topCard != null && _topCard!.rank == 'joker') {
+      if (_topCard!.suit == 'red') _jokerColorConstraint = 'red';
+      else if (_topCard!.suit == 'black') _jokerColorConstraint = 'black';
+      _broadcast("CHAT", {"sender": "System", "message": "Next player must match color: $_jokerColorConstraint"});
+    }
+
+    _drawCardsForHand(hand, count);
+    
+    // RESET STATES
+    _bombStack = 0;
+    _forcedSuit = null;
+    _forcedRank = null;
+    
+    // If you picked while trying to answer/chain, the question is voided for the next person
+    if (_waitingForAnswer) {
+        _waitingForAnswer = false; 
+    }
+    
+    _hasSaidMap[playerIndex] = false; 
+
+    _broadcastUpdate(playerIndex, hand);
+    _advanceTurn();
   }
 
   void _broadcastUpdate(int playerIndex, List<CardModel> hand) {
