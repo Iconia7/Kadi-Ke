@@ -1,6 +1,7 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:youtube_player_flutter/youtube_player_flutter.dart';
-import 'package:youtube_explode_dart/youtube_explode_dart.dart';
+import 'package:youtube_player_iframe/youtube_player_iframe.dart';
+import 'package:http/http.dart' as http;
 
 class JukeboxPlayer extends StatefulWidget {
   final String? currentVideoId;
@@ -11,104 +12,83 @@ class JukeboxPlayer extends StatefulWidget {
   final VoidCallback onSongEnded;
 
   const JukeboxPlayer({
-    Key? key,
+    super.key,
     required this.currentVideoId,
     this.currentTitle,
     required this.queue,
     required this.isHost,
     required this.onAddSong,
     required this.onSongEnded,
-  }) : super(key: key);
+  });
 
   @override
   _JukeboxPlayerState createState() => _JukeboxPlayerState();
 }
 
 class _JukeboxPlayerState extends State<JukeboxPlayer> {
-  YoutubePlayerController? _controller;
-  final YoutubeExplode _yt = YoutubeExplode();
+  late YoutubePlayerController _controller;
+  final String _apiKey = "AIzaSyD-_PwgOoSKpp7u89tbLJdHQkIbqun9ANI"; 
   bool _isPlaying = false;
 
   @override
   void initState() {
     super.initState();
+    // Initialize the IFrame Controller
+    _controller = YoutubePlayerController(
+      params: const YoutubePlayerParams(
+        showControls: false, // Hide default controls for that "Jukebox" feel
+        showFullscreenButton: false,
+        strictRelatedVideos: true,
+        pointerEvents: PointerEvents.none, // Disables touch on video to prevent stealing gestures
+      ),
+    );
+
+    // If a song exists on load, cue it
     if (widget.currentVideoId != null) {
-      _initController(widget.currentVideoId!);
+      _controller.loadVideoById(videoId: widget.currentVideoId!);
     }
+
+    // Listen to state changes
+    _controller.listen((event) {
+      if (!mounted) return;
+      
+      // Update Play/Pause icon
+      if (event.playerState == PlayerState.playing && !_isPlaying) {
+        setState(() => _isPlaying = true);
+      } else if (event.playerState != PlayerState.playing && _isPlaying) {
+        setState(() => _isPlaying = false);
+      }
+
+      // HOST LOGIC: Detect end of song
+      if (widget.isHost && event.playerState == PlayerState.ended) {
+        widget.onSongEnded();
+      }
+    });
   }
 
   @override
   void didUpdateWidget(JukeboxPlayer oldWidget) {
     super.didUpdateWidget(oldWidget);
+
+    // Handle Song Changes
     if (widget.currentVideoId != oldWidget.currentVideoId) {
       if (widget.currentVideoId != null) {
-        // Song changed or started
-        if (_controller == null) {
-          _initController(widget.currentVideoId!);
-        } else {
-          _controller!.load(widget.currentVideoId!);
-        }
-        Future.delayed(const Duration(milliseconds: 300), _forcePlay);
+        _controller.loadVideoById(videoId: widget.currentVideoId!);
       } else {
-        // Song removed/stopped
-        _controller?.dispose();
-        _controller = null;
+        _controller.stopVideo();
       }
-    }
-  }
-
-  void _initController(String id) {
-    _controller = YoutubePlayerController(
-      initialVideoId: id,
-      flags: const YoutubePlayerFlags(
-        autoPlay: true,
-        mute: false,
-        hideControls: true, // Hides YouTube's buttons for a mini look
-        enableCaption: false,
-        isLive: false,
-        forceHD: false,
-        loop: false,
-      ),
-    )..addListener(_listener);
-    setState(() {});
-  }
-
-  void _listener() {
-    if (_controller == null || !mounted) return;
-
-    // Update local playing state for the UI button
-    if (_controller!.value.isPlaying != _isPlaying) {
-      setState(() => _isPlaying = _controller!.value.isPlaying);
-    }
-
-    // HOST LOGIC: Detect end
-    if (widget.isHost && _controller!.value.playerState == PlayerState.ended) {
-       widget.onSongEnded();
-    }
-  }
-
-  void _forcePlay() {
-    if (_controller == null) return;
-    _controller!.play();
-    if (!_controller!.value.isPlaying) {
-      _controller!.mute();
-      _controller!.play();
-      Future.delayed(const Duration(seconds: 1), () => _controller!.unMute());
     }
   }
 
   @override
   void dispose() {
-    _controller?.removeListener(_listener);
-    _controller?.dispose();
-    _yt.close();
+    _controller.close();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    // Only show controls if we have a song ID AND the controller is ready
-    bool hasSong = widget.currentVideoId != null && _controller != null;
+    bool hasSong = widget.currentVideoId != null;
 
     return Container(
       width: double.infinity,
@@ -118,11 +98,11 @@ class _JukeboxPlayerState extends State<JukeboxPlayer> {
         color: const Color(0xFF0F172A).withOpacity(0.95),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Colors.purpleAccent.withOpacity(0.3)),
-        boxShadow: [const BoxShadow(color: Colors.black45, blurRadius: 10, offset: Offset(0, 4))]
+        boxShadow: [const BoxShadow(color: Colors.black45, blurRadius: 10, offset: Offset(0, 4))],
       ),
       child: Row(
         children: [
-          // 1. ALBUM ART ICON
+          // 1. ALBUM ART ICON (Opens Search)
           GestureDetector(
             onTap: _showJukeboxPanel,
             child: Container(
@@ -130,7 +110,7 @@ class _JukeboxPlayerState extends State<JukeboxPlayer> {
               decoration: BoxDecoration(
                 color: Colors.purpleAccent.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.purpleAccent.withOpacity(0.5))
+                border: Border.all(color: Colors.purpleAccent.withOpacity(0.5)),
               ),
               child: const Icon(Icons.queue_music, color: Colors.purpleAccent, size: 20),
             ),
@@ -153,7 +133,7 @@ class _JukeboxPlayerState extends State<JukeboxPlayer> {
                     overflow: TextOverflow.ellipsis,
                   ),
                   Text(
-                    widget.currentVideoId != null ? "${widget.queue.length} up next" : "Tap to add songs",
+                    hasSong ? "${widget.queue.length} up next" : "Tap to add songs",
                     style: const TextStyle(color: Colors.white54, fontSize: 10),
                   ),
                 ],
@@ -161,37 +141,34 @@ class _JukeboxPlayerState extends State<JukeboxPlayer> {
             ),
           ),
 
-          // 3. CONTROLS & VIDEO (Grouped together to prevent crash)
+          // 3. CONTROLS & MINI PLAYER
           if (hasSong) ...[
             IconButton(
               icon: Icon(_isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled),
               color: Colors.white,
               iconSize: 32,
-              onPressed: () {
-                if (_isPlaying) {
-                  _controller?.pause();
+              onPressed: () async {
+                final state = await _controller.playerState;
+                if (state == PlayerState.playing) {
+                  _controller.pauseVideo();
                 } else {
-                  _forcePlay();
+                  _controller.playVideo();
                 }
               },
             ),
             
-            // The Mini Player
+            // The Mini Player (Hidden visuals but functional)
             Container(
-              width: 120, // Slightly smaller width for mini look
-              height: 68,
+              width: 80, 
+              height: 45,
               margin: const EdgeInsets.only(left: 8),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-
-                  child: YoutubePlayer(
-                    controller: _controller!,
-                    showVideoProgressIndicator: false,
-                    onReady: () {
-                    // Slight delay ensures the view is attached before playing
-                    Future.delayed(const Duration(milliseconds: 500), _forcePlay);
-                  },
-                  ),
+                // YoutubePlayer from 'youtube_player_iframe' package
+                child: YoutubePlayer(
+                  controller: _controller,
+                  aspectRatio: 16 / 9,
+                ),
               ),
             ),
           ],
@@ -200,7 +177,8 @@ class _JukeboxPlayerState extends State<JukeboxPlayer> {
     );
   }
 
-  // --- EXISTING METHODS (No changes needed below here) ---
+  // --- SEARCH UI & LOGIC ---
+
   void _showJukeboxPanel() {
     showModalBottomSheet(
       context: context,
@@ -215,10 +193,11 @@ class _JukeboxPlayerState extends State<JukeboxPlayer> {
         builder: (context, scrollController) {
           return Column(
             children: [
+              // Header
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: const BoxDecoration(
-                  border: Border(bottom: BorderSide(color: Colors.white10))
+                  border: Border(bottom: BorderSide(color: Colors.white10)),
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -229,12 +208,13 @@ class _JukeboxPlayerState extends State<JukeboxPlayer> {
                   ],
                 ),
               ),
+              // Search Bar
               Padding(
                 padding: const EdgeInsets.all(16),
                 child: TextField(
                   style: const TextStyle(color: Colors.white),
                   decoration: InputDecoration(
-                    hintText: "Search song title...",
+                    hintText: "Search YouTube (API)...",
                     hintStyle: const TextStyle(color: Colors.white38),
                     prefixIcon: const Icon(Icons.search, color: Colors.purpleAccent),
                     filled: true,
@@ -242,22 +222,17 @@ class _JukeboxPlayerState extends State<JukeboxPlayer> {
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
                   ),
                   onSubmitted: (val) {
-                    if (val.trim().isNotEmpty) _performSearch(val);
+                    if (val.trim().isNotEmpty) _performSearchWithApi(val);
                   },
                 ),
               ),
+              // Queue List
               Expanded(
                 child: widget.queue.isEmpty 
                   ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: const [
-                          Icon(Icons.playlist_add, size: 48, color: Colors.white24),
-                          SizedBox(height: 10),
-                          Text("Queue is empty.", style: TextStyle(color: Colors.white38)),
-                          Text("Search to add a song!", style: TextStyle(color: Colors.white38)),
-                        ],
-                      ),
+                      child: Text("Queue is empty.\nSearch to add music!", 
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white38)),
                     )
                   : ListView.builder(
                       controller: scrollController,
@@ -265,10 +240,7 @@ class _JukeboxPlayerState extends State<JukeboxPlayer> {
                       itemBuilder: (context, index) {
                         final song = widget.queue[index];
                         return ListTile(
-                          leading: CircleAvatar(
-                            backgroundColor: Colors.white10,
-                            child: Text("${index + 1}", style: const TextStyle(color: Colors.white70)),
-                          ),
+                          leading: Text("${index + 1}", style: const TextStyle(color: Colors.white70)),
                           title: Text(song['title'] ?? "Unknown", style: const TextStyle(color: Colors.white)),
                           trailing: const Icon(Icons.music_note, color: Colors.white24),
                         );
@@ -282,59 +254,89 @@ class _JukeboxPlayerState extends State<JukeboxPlayer> {
     );
   }
 
-  Future<void> _performSearch(String query) async {
+  // --- NEW: OFFICIAL API SEARCH ---
+  Future<void> _performSearchWithApi(String query) async {
+    // 1. Loading UI
     showDialog(
       context: context, 
       barrierDismissible: false,
       builder: (_) => const Center(child: CircularProgressIndicator(color: Colors.purpleAccent))
     );
-    
-    try {
-      var results = await _yt.search.search(query);
-      Navigator.pop(context); 
 
-      if (results.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No results found.")));
-        return;
+    try {
+      // 2. Call YouTube Data API
+      final url = Uri.parse(
+        'https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=10&q=$query&type=video&key=$_apiKey'
+      );
+      
+      final response = await http.get(url);
+      
+      // Close Loader
+      if (mounted) Navigator.pop(context);
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final items = data['items'] as List;
+
+        if (items.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No results found.")));
+          return;
+        }
+
+        // 3. Show Results
+        _showSearchResults(items);
+
+      } else {
+        print("API Error: ${response.body}");
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("API Error: ${response.statusCode}")));
       }
 
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          backgroundColor: const Color(0xFF0F172A),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Text("Select Song", style: TextStyle(color: Colors.white)),
-          content: SizedBox(
-            width: double.maxFinite,
-            height: 300,
-            child: ListView.builder(
-              itemCount: results.take(10).length,
-              itemBuilder: (context, index) {
-                var video = results.elementAt(index);
-                return ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: Image.network(video.thumbnails.lowResUrl, width: 50, fit: BoxFit.cover),
-                  ),
-                  title: Text(video.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white)),
-                  subtitle: Text(video.author, style: const TextStyle(color: Colors.white54)),
-                  onTap: () {
-                    widget.onAddSong(video.id.value, video.title);
-                    Navigator.pop(context); 
-                    Navigator.pop(context); 
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Added '${video.title}' to Queue!")));
-                  },
-                );
-              },
-            ),
+    } catch (e) {
+      if (mounted) Navigator.pop(context);
+      print("Network Error: $e");
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Error searching. Check internet.")));
+    }
+  }
+
+  void _showSearchResults(List items) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF0F172A),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text("Select Song", style: TextStyle(color: Colors.white)),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 300,
+          child: ListView.builder(
+            itemCount: items.length,
+            itemBuilder: (context, index) {
+              final video = items[index];
+              final snippet = video['snippet'];
+              final videoId = video['id']['videoId'];
+              final title = snippet['title'];
+              final thumb = snippet['thumbnails']['default']['url'];
+              final channel = snippet['channelTitle'];
+
+              return ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: Image.network(thumb, width: 50, fit: BoxFit.cover),
+                ),
+                title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white)),
+                subtitle: Text(channel, style: const TextStyle(color: Colors.white54)),
+                onTap: () {
+                  widget.onAddSong(videoId, title);
+                  Navigator.pop(context); // Close List
+                  Navigator.pop(context); // Close Jukebox Panel
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Added '$title' to Queue!")));
+                },
+              );
+            },
           ),
         ),
-      );
-    } catch (e) {
-      if (mounted && Navigator.canPop(context)) Navigator.pop(context);
-      print("Search Error: $e");
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Error searching. Try again.")));
-    }
+      ),
+    );
   }
 }

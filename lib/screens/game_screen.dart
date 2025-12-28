@@ -186,14 +186,27 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
     // Inside _initializeConnection()
 if (_isOnline) {
-   // Join the room using the new service
-   OnlineGameService().joinGame(widget.onlineGameCode!, _myName);
+       // Join the room
+       OnlineGameService().joinGame(widget.onlineGameCode!, _myName);
 
-   // Listen to the new stream
-   _gameSubscription = OnlineGameService().gameStream.listen((data) {
-      _handleGameMessage(data);
-   });
-} else if (_isOffline) {
+       // LISTEN TO THE STREAM
+       _gameSubscription = OnlineGameService().gameStream.listen(
+          (data) {
+             _handleGameMessage(data);
+          },
+          // ✅ ADD THIS: Handle Disconnection
+          onDone: () {
+             if (mounted) {
+               _showDisconnectDialog("Connection Lost", "You were disconnected from the server.");
+             }
+          },
+          onError: (error) {
+             if (mounted) {
+               _showDisconnectDialog("Connection Error", "Error: $error");
+             }
+          },
+       );
+    } else if (_isOffline) {
       if (_isGoFish) {
         _localEngine = GoFishEngine();
       } else {
@@ -218,6 +231,27 @@ if (_isOnline) {
         _connectToServer(widget.hostAddress);
       }
     }
+  }
+
+  void _showDisconnectDialog(String title, String message) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: Color(0xFF1E293B),
+        title: Text(title, style: TextStyle(color: Colors.redAccent)),
+        content: Text(message, style: TextStyle(color: Colors.white70)),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context); // Close Dialog
+              Navigator.pop(context); // Go back to Home
+            },
+            child: Text("EXIT TO MENU"),
+          )
+        ],
+      ),
+    );
   }
 
 
