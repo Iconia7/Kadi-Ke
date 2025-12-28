@@ -183,17 +183,15 @@ class _JukeboxPlayerState extends State<JukeboxPlayer> {
               margin: const EdgeInsets.only(left: 8),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-                // IgnorePointer makes sure touches go to your app, not the video
-                child: IgnorePointer(
-                  ignoring: true, 
+
                   child: YoutubePlayer(
                     controller: _controller!,
                     showVideoProgressIndicator: false,
                     onReady: () {
-                      _forcePlay();
-                    },
+                    // Slight delay ensures the view is attached before playing
+                    Future.delayed(const Duration(milliseconds: 500), _forcePlay);
+                  },
                   ),
-                ),
               ),
             ),
           ],

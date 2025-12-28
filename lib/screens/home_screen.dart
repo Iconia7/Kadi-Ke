@@ -1,10 +1,13 @@
+import 'dart:async'; // Required for StreamSubscription
 import 'package:flutter/material.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'dart:ui';
 import 'game_screen.dart'; 
+import 'settings_screen.dart';
 import 'shop_screen.dart';
 import 'profile_screen.dart';
-import '../services/firebase_game_service.dart';
+import '../services/firebase_game_service.dart'; // Keep for Auth/Profile
+import '../services/online_game_service.dart';   // ADD THIS for Game Logic
 
 class HomeScreen extends StatefulWidget {
   @override
@@ -62,32 +65,49 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     });
   }
 
-  // --- ONLINE METHODS ---
-  void _startOnlineHost() async {
+  // --- ONLINE METHODS (UPDATED FOR RENDER SERVER) ---
+
+  void _startOnlineHost() {
     if (!_isFirebaseReady) return;
     
-    try {
-      String code = await FirebaseGameService().createGame("Player", _selectedGameMode); 
-      if (!mounted) return;
-      
-      Navigator.pop(context); 
-      Navigator.push(context, MaterialPageRoute(builder: (context) => 
-        GameScreen(
-          isHost: true, 
-          hostAddress: 'online', 
-          onlineGameCode: code,
-          gameType: _selectedGameMode, 
-        )
-      ));
-    } catch (e) {
-      print("Error creating game: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Failed to connect. Check internet.")),
-      );
-    }
+    // 1. Show Loading Spinner
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (c) => Center(child: CircularProgressIndicator(color: Colors.amber)),
+    );
+
+    // 2. Listen for Server Response
+    StreamSubscription? subscription;
+    subscription = OnlineGameService().gameStream.listen((data) {
+      if (data['type'] == 'ROOM_CREATED') {
+        
+        // 3. Server replied! Get the code
+        String roomCode = data['data'];
+        subscription?.cancel(); // Stop listening here
+        
+        if (mounted) {
+          Navigator.pop(context); // Close spinner
+
+          // 4. Navigate to Game Screen
+          Navigator.push(context, MaterialPageRoute(builder: (context) => 
+            GameScreen(
+              isHost: true, 
+              hostAddress: 'online', 
+              onlineGameCode: roomCode, // Use code from Server
+              gameType: _selectedGameMode, 
+            )
+          ));
+        }
+      }
+    });
+
+    // 5. Send Request
+    // Note: We use "Player" temporarily, actual name syncs in GameScreen
+    OnlineGameService().createGame("Player", _selectedGameMode); 
   }
 
-  void _joinOnlineGame() async {
+  void _joinOnlineGame() {
     if (!_isFirebaseReady) return;
 
     String code = _codeController.text.toUpperCase().trim();
@@ -96,27 +116,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       return;
     }
     
-    try {
-      String? error = await FirebaseGameService().joinGame(code, "Player Joined", _selectedGameMode);
-      if (!mounted) return;
-
-      if (error == null) {
-        Navigator.pop(context);
-        Navigator.push(context, MaterialPageRoute(builder: (context) => 
-          GameScreen(
-            isHost: false, 
-            hostAddress: 'online', 
-            onlineGameCode: code,
-            gameType: _selectedGameMode, 
-          )
-        ));
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
-      }
-    } catch (e) {
-      print("Error joining game: $e");
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Connection error")));
-    }
+    // For joining, we can navigate immediately. The GameScreen will handle the connection.
+    Navigator.pop(context); // Close dialog
+    Navigator.push(context, MaterialPageRoute(builder: (context) => 
+      GameScreen(
+        isHost: false, 
+        hostAddress: 'online', 
+        onlineGameCode: code,
+        gameType: _selectedGameMode, 
+      )
+    ));
   }
 
   // --- LOCAL METHODS ---
@@ -245,7 +254,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
                                 ElevatedButton.icon(
-                                  onPressed: _startOnlineHost,
+                                  onPressed: _startOnlineHost, // Uses new Logic
                                   icon: Icon(Icons.add),
                                   label: Text("Create Room"),
                                   style: ElevatedButton.styleFrom(backgroundColor: Colors.amber, foregroundColor: Colors.black),
@@ -374,6 +383,30 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
+                          // Place this near your other Positioned widgets (like the floating icon)
+Positioned(
+  top: 50,
+  right: 20,
+  child: GestureDetector(
+    onTap: () {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => SettingsScreen()),
+      );
+    },
+    child: Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.1), // Glass effect
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white24),
+        boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 8)],
+      ),
+      child: const Icon(Icons.settings, color: Colors.white, size: 28),
+    ),
+  ),
+),
+SizedBox(width: 40),
                           _buildIconButton("Shop", Icons.shopping_bag_outlined, Colors.amber, () => Navigator.push(context, MaterialPageRoute(builder: (_) => ShopScreen()))),
                           SizedBox(width: 40),
                           _buildIconButton("Profile", Icons.bar_chart_rounded, Colors.greenAccent, () => Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen()))),

@@ -651,27 +651,26 @@ bool _validateLocalMove(CardModel card) {
   queue: _songQueue,
   isHost: widget.isHost || _isOffline,
   onAddSong: (id, title) {
-    Map<String, dynamic> payload = {'videoId': id, 'title': title};
+    Map<String, dynamic> songInfo = {'videoId': id, 'title': title};
     
     // 1. ONLINE
     if (_isOnline) {
-      OnlineGameService().sendAction("ADD_TO_QUEUE", payload);
+      // ✅ FIX: Wrap the payload in a 'data' key so the server can find it!
+      OnlineGameService().sendAction("ADD_TO_QUEUE", {"data": songInfo});
     } 
     // 2. LAN
     else if (!_isOffline && !_isOnline) {
-      _channel?.sink.add(jsonEncode({"type": "ADD_TO_QUEUE", "data": payload}));
+      // LAN likely expects the same nested structure if using the same server logic
+      _channel?.sink.add(jsonEncode({"type": "ADD_TO_QUEUE", "data": songInfo}));
     } 
-    // 3. OFFLINE (SINGLE PLAYER) - Logic to start immediately
+    // 3. OFFLINE (SINGLE PLAYER)
     else {
       setState(() {
-         // If no song playing, Play THIS ONE immediately
          if (_currentSongId == null) {
             _currentSongId = id;
             _currentSongTitle = title;
-            // DO NOT ADD TO QUEUE if playing immediately
          } else {
-            // Else add to queue
-            _songQueue.add(payload);
+            _songQueue.add(songInfo);
          }
       });
     }

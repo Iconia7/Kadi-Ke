@@ -5,16 +5,21 @@ import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-// --- MODELS & SERVICES (Inline for easy deployment) ---
+// ==========================================
+//           MODELS & DECK SERVICE
+// ==========================================
 
 class CardModel {
-  final String suit; // "hearts", "spades", "diamonds", "clubs"
-  final String rank; // "2", "3", ... "king", "ace", "joker"
+  final String suit; 
+  final String rank; 
 
   CardModel({required this.suit, required this.rank});
 
   Map<String, dynamic> toJson() => {'suit': suit, 'rank': rank};
   factory CardModel.fromJson(Map<String, dynamic> json) => CardModel(suit: json['suit'], rank: json['rank']);
+  
+  @override
+  String toString() => "$rank of $suit";
 }
 
 class DeckService {
@@ -32,15 +37,13 @@ class DeckService {
           _deck.add(CardModel(suit: suit, rank: rank));
         }
       }
-      // Jokers per deck
+      // Jokers per deck (Standard Kadi requirement)
       _deck.add(CardModel(suit: "red", rank: "joker"));
       _deck.add(CardModel(suit: "black", rank: "joker"));
     }
   }
 
-  void shuffle() {
-    _deck.shuffle(Random());
-  }
+  void shuffle() => _deck.shuffle(Random());
 
   List<CardModel> drawCards(int count) {
     if (count >= _deck.length) {
@@ -53,23 +56,23 @@ class DeckService {
     return drawn;
   }
 
-  void addCardToBottom(CardModel card) {
-    _deck.add(card);
-  }
-
-  void addCards(List<CardModel> cards) {
-    _deck.addAll(cards);
-  }
+  void addCardToBottom(CardModel card) => _deck.add(card);
+  void addCards(List<CardModel> cards) => _deck.addAll(cards);
 }
 
-// --- SERVER LOGIC ---
+// ==========================================
+//              SERVER LOGIC
+// ==========================================
 
 class Player {
   final String id;
   final String name;
   final WebSocketChannel socket;
   List<CardModel> hand = [];
-  bool hasSaidNikoKadi = false;
+  
+  // Game-Specific State
+  bool hasSaidNikoKadi = false; // Kadi
+  int books = 0; // Go Fish
   
   Player(this.id, this.name, this.socket);
 }
@@ -78,24 +81,26 @@ class GameRoom {
   final String code;
   final DeckService deckService = DeckService();
   List<Player> players = [];
-  List<CardModel> discardPile = [];
   
-  // Game State
-  String gameType = 'kadi';
+  // SHARED STATE
+  String gameType = 'kadi'; // 'kadi' or 'gofish'
   bool isGameStarted = false;
-  CardModel? topCard;
   int currentPlayerIndex = 0;
+  
+  // MUSIC STATE
+  List<Map<String, dynamic>> musicQueue = [];
+  String? currentMusicId;
+  String? currentMusicTitle;
+
+  // KADI STATE
+  List<CardModel> discardPile = [];
+  CardModel? topCard;
   int direction = 1;
   int bombStack = 0;
   bool waitingForAnswer = false;
   String? forcedSuit;
   String? forcedRank;
   String? jokerColorConstraint;
-  
-  // Music State
-  List<Map<String, dynamic>> musicQueue = [];
-  String? currentMusicId;
-  String? currentMusicTitle;
 
   GameRoom(this.code);
 
@@ -109,15 +114,18 @@ class GameRoom {
   Map<String, dynamic> getGameState() {
     return {
       'playerIndex': currentPlayerIndex,
+      // Kadi
       'bombStack': bombStack,
       'waitingForAnswer': waitingForAnswer,
       'jokerColorConstraint': jokerColorConstraint,
-      'direction': direction
+      'direction': direction,
+      // Go Fish
+      'books': players.map((p) => p.books).toList(),
     };
   }
 }
 
-class KadiServer {
+class MultiGameServer {
   final Map<String, GameRoom> _rooms = {}; 
 
   Future<void> start() async {
@@ -129,7 +137,7 @@ class KadiServer {
         final data = jsonDecode(message);
         String type = data['type'];
 
-        // --- LOBBY LOGIC ---
+        // --- LOBBY MANAGEMENT ---
         if (type == 'CREATE_GAME') {
           String roomCode = _generateRoomCode();
           _rooms[roomCode] = GameRoom(roomCode);
@@ -147,18 +155,13 @@ class KadiServer {
             Player newPlayer = Player(playerId!, name, socket);
             _rooms[code]!.players.add(newPlayer);
             
-            // Send Initial Info
             _broadcastPlayerInfo(_rooms[code]!);
             
-            // If Music is playing, sync new player
+            // Sync Music on join
             if (_rooms[code]!.currentMusicId != null) {
                socket.sink.add(jsonEncode({
                  "type": "MUSIC_UPDATE", 
                  "data": {'videoId': _rooms[code]!.currentMusicId, 'title': _rooms[code]!.currentMusicTitle}
-               }));
-               socket.sink.add(jsonEncode({
-                 "type": "QUEUE_UPDATE", 
-                 "data": {'queue': _rooms[code]!.musicQueue}
                }));
             }
           } else {
@@ -166,7 +169,7 @@ class KadiServer {
           }
         }
         
-        // --- GAMEPLAY ACTIONS ---
+        // --- GAME ACTIONS ---
         else if (currentRoomCode != null && _rooms.containsKey(currentRoomCode)) {
            GameRoom room = _rooms[currentRoomCode]!;
            _handleGameAction(room, playerId!, type, data);
@@ -186,104 +189,198 @@ class KadiServer {
       });
     });
 
-    // Listen on 0.0.0.0 is crucial for Render deployment
+    // Listen on 0.0.0.0 for Render
     var server = await shelf_io.serve(handler, '0.0.0.0', 8080);
-    print('Kadi Server running on port ${server.port}');
+    print('Game Server running on port ${server.port}');
   }
 
   void _handleGameAction(GameRoom room, String pid, String type, dynamic data) {
-     // 1. CHAT
      if (type == 'CHAT') {
         room.broadcast("CHAT", {"sender": data['senderName'], "message": data['message']});
+        return;
      }
-     
-     // 2. MUSIC
-     else if (type == 'ADD_TO_QUEUE') {
+     if (type == 'ADD_TO_QUEUE') {
         room.musicQueue.add(data['data']);
-        if (room.currentMusicId == null) {
-           _playNextSong(room);
-        } else {
-           room.broadcast("QUEUE_UPDATE", {'queue': room.musicQueue});
-        }
+        if (room.currentMusicId == null) _playNextSong(room);
+        else room.broadcast("QUEUE_UPDATE", {'queue': room.musicQueue});
+        return;
      }
-     else if (type == 'SONG_ENDED') {
+     if (type == 'SONG_ENDED') {
         _playNextSong(room);
+        return;
      }
-     
-     // 3. START GAME
-     else if (type == 'START_GAME') {
-        // Only host (index 0) usually starts, but for simplicity we allow any start call
+     if (type == 'START_GAME') {
         _startGame(room, data['decks'] ?? 1);
+        return;
      }
-     
-     // 4. PLAYER MOVES (Require Turn Check)
-     else {
-        int pIndex = room.players.indexWhere((p) => p.id == pid);
-        if (pIndex != -1 && pIndex == room.currentPlayerIndex) {
-           if (type == 'PLAY_CARD') _handlePlayCard(room, pIndex, data);
-           else if (type == 'PICK_CARD') _handlePickCard(room, pIndex);
+
+     // --- GAMEPLAY ROUTER ---
+     int pIndex = room.players.indexWhere((p) => p.id == pid);
+     if (pIndex != -1 && pIndex == room.currentPlayerIndex) {
+        
+        if (room.gameType == 'kadi') {
+           if (type == 'PLAY_CARD') _handleKadiPlay(room, pIndex, data);
+           else if (type == 'PICK_CARD') _handleKadiPick(room, pIndex);
+        } 
+        else if (room.gameType == 'gofish') {
+           if (type == 'ASK_CARD') _handleGoFishAsk(room, pIndex, data);
         }
      }
   }
+
+  // ==========================================
+  //               SETUP LOGIC
+  // ==========================================
 
   void _startGame(GameRoom room, int decks) {
      room.deckService.initializeDeck(decks: decks);
      room.deckService.shuffle();
-     
      room.currentPlayerIndex = 0;
-     room.direction = 1;
-     room.bombStack = 0;
-     room.waitingForAnswer = false;
-     room.jokerColorConstraint = null;
-     room.discardPile.clear();
+     room.isGameStarted = true;
      
-     // Deal Hands
-     for(var p in room.players) {
-        p.hand = room.deckService.drawCards(4);
-        p.hasSaidNikoKadi = false;
-        p.socket.sink.add(jsonEncode({"type": "DEAL_HAND", "data": p.hand.map((c)=>c.toJson()).toList()}));
-     }
-     
-     // Top Card
-     room.topCard = room.deckService.drawCards(1).first;
-     while (['2','3','8','jack','queen','king','ace','joker'].contains(room.topCard!.rank)) {
-       room.deckService.addCardToBottom(room.topCard!);
+     // KADI SETUP
+     if (room.gameType == 'kadi') {
+       room.direction = 1; room.bombStack = 0; room.waitingForAnswer = false;
+       room.jokerColorConstraint = null; room.discardPile.clear();
+       room.forcedSuit = null; room.forcedRank = null;
+       
+       for(var p in room.players) {
+          p.hand = room.deckService.drawCards(4);
+          p.hasSaidNikoKadi = false;
+          _sendHand(p);
+       }
+       
+       // Ensure valid top card
        room.topCard = room.deckService.drawCards(1).first;
+       while (['2','3','8','jack','queen','king','ace','joker'].contains(room.topCard!.rank)) {
+         room.deckService.addCardToBottom(room.topCard!);
+         room.topCard = room.deckService.drawCards(1).first;
+       }
+       room.broadcast("UPDATE_TABLE", room.topCard!.toJson());
+     } 
+     // GO FISH SETUP
+     else {
+       int count = room.players.length <= 3 ? 7 : 5;
+       for(var p in room.players) {
+          p.hand = room.deckService.drawCards(count);
+          p.books = 0;
+          _sendHand(p);
+       }
+       room.broadcast("GO_FISH_STATE", {'books': room.players.map((p)=>0).toList()});
      }
      
-     room.broadcast("UPDATE_TABLE", room.topCard!.toJson());
      room.broadcast("TURN_UPDATE", room.getGameState());
-     room.broadcast("CHAT", {"sender": "System", "message": "Game Started!"});
+     room.broadcast("CHAT", {"sender": "System", "message": "${room.gameType.toUpperCase()} Started!"});
   }
 
-  void _handlePlayCard(GameRoom room, int pIndex, dynamic data) {
+  // ==========================================
+  //             GO FISH LOGIC
+  // ==========================================
+
+  void _handleGoFishAsk(GameRoom room, int askerIdx, dynamic data) {
+     int targetIdx = data['targetIndex'];
+     String rank = data['rank'];
+     
+     if (targetIdx < 0 || targetIdx >= room.players.length || targetIdx == askerIdx) return;
+     
+     Player asker = room.players[askerIdx];
+     Player target = room.players[targetIdx];
+     
+     List<CardModel> found = target.hand.where((c) => c.rank == rank).toList();
+     
+     if (found.isNotEmpty) {
+        // SUCCESS: Take cards
+        target.hand.removeWhere((c) => c.rank == rank);
+        asker.hand.addAll(found);
+        
+        room.broadcast("CHAT", {
+           "sender": "System", 
+           "message": "${asker.name} took ${found.length} ${rank}s from ${target.name}"
+        });
+        
+        _checkGoFishBooks(room, asker);
+        _sendHand(asker);
+        _sendHand(target);
+        
+        // Success means you go again
+        room.broadcast("TURN_UPDATE", room.getGameState());
+     } else {
+        // FAIL: Go Fish
+        room.broadcast("CHAT", {"sender": "System", "message": "${target.name} says: GO FISH!"});
+        
+        if (room.deckService.remainingCards > 0) {
+           List<CardModel> drawn = room.deckService.drawCards(1);
+           CardModel card = drawn.first;
+           asker.hand.add(card);
+           _sendHand(asker);
+           _checkGoFishBooks(room, asker);
+           
+           if (card.rank == rank) {
+              room.broadcast("CHAT", {"sender": "System", "message": "Fished the $rank! Go again."});
+              room.broadcast("TURN_UPDATE", room.getGameState());
+              return; 
+           }
+        } else {
+           room.broadcast("CHAT", {"sender": "System", "message": "Pond is empty."});
+        }
+        
+        _advanceTurn(room);
+     }
+  }
+
+  void _checkGoFishBooks(GameRoom room, Player p) {
+     Map<String, int> counts = {};
+     for (var c in p.hand) counts[c.rank] = (counts[c.rank] ?? 0) + 1;
+     
+     counts.forEach((rank, count) {
+        if (count == 4) {
+           p.hand.removeWhere((c) => c.rank == rank);
+           p.books++;
+           room.broadcast("CHAT", {"sender": "System", "message": "${p.name} made a Book of ${rank}s!"});
+        }
+     });
+     
+     room.broadcast("GO_FISH_STATE", {'books': room.players.map((pl)=>pl.books).toList()});
+     
+     // Win Condition
+     int totalBooks = room.players.fold(0, (sum, pl) => sum + pl.books);
+     if (totalBooks == 13 || (room.deckService.remainingCards == 0 && room.players.every((pl)=>pl.hand.isEmpty))) {
+        Player winner = room.players.reduce((curr, next) => curr.books > next.books ? curr : next);
+        room.broadcast("GAME_OVER", "${winner.name} Wins with ${winner.books} books!");
+     }
+  }
+
+  // ==========================================
+  //               KADI LOGIC
+  // ==========================================
+
+  void _handleKadiPlay(GameRoom room, int pIndex, dynamic data) {
      Player player = room.players[pIndex];
      int cardIndex = data['cardIndex'];
-     
      if (cardIndex >= player.hand.length) return;
      CardModel card = player.hand[cardIndex];
      
-     // --- VALIDATION LOGIC ---
-     if (!_isValidMove(room, card)) {
-        player.socket.sink.add(jsonEncode({"type": "ERROR", "data": "Invalid Move"}));
-        return;
+     // Rules Validation
+     bool isValid = _isValidKadiMove(room, card);
+     if (!isValid) { 
+        player.socket.sink.add(jsonEncode({"type": "ERROR", "data": "Invalid Move"})); 
+        return; 
      }
-     
+
      if (data['saidNikoKadi'] == true) player.hasSaidNikoKadi = true;
-     
-     // Execute Move
+
+     // Play Card
      player.hand.removeAt(cardIndex);
      if (room.topCard != null) room.discardPile.add(room.topCard!);
      room.topCard = card;
      if (room.jokerColorConstraint != null) room.jokerColorConstraint = null;
-     
+
      // Bomb Logic
      bool isBomb = ['2','3','joker'].contains(card.rank);
-     if (card.rank == '2') {
-       room.bombStack += 2;
-     } else if (card.rank == '3') room.bombStack += 3;
+     if (card.rank == '2') room.bombStack += 2;
+     else if (card.rank == '3') room.bombStack += 3;
      else if (card.rank == 'joker') room.bombStack += 5;
-     
+
      // Ace Logic
      if (card.rank == 'ace') {
         if (room.bombStack > 0 && !isBomb) {
@@ -291,7 +388,7 @@ class KadiServer {
            room.broadcast("CHAT", {"sender": "System", "message": "Bomb Blocked!"});
         } else {
            room.bombStack = 0;
-           // Spades Lock
+           // Ace of Spades Lock
            if (card.suit == 'spades' && player.hand.length == 1) {
               CardModel last = player.hand[0];
               room.forcedSuit = last.suit; room.forcedRank = last.rank;
@@ -306,110 +403,76 @@ class KadiServer {
         if (room.forcedSuit != null) { room.forcedSuit = null; room.forcedRank = null; }
      }
      
-     // Turn Flow
+     // Turn Flow & Specials
      bool turnEnds = true;
      int skip = 0;
-     
-     if (card.rank == 'queen' || card.rank == '8') {
-        room.waitingForAnswer = true;
-        turnEnds = false;
-        room.broadcast("CHAT", {"sender": "System", "message": "Question! Answer or Chain."});
-     } else if (room.waitingForAnswer) {
-        room.waitingForAnswer = false;
-        turnEnds = true;
-     } else if (card.rank == 'king') {
-        room.direction *= -1;
-        if (room.bombStack > 0) room.broadcast("CHAT", {"sender": "System", "message": "Bomb Returned!"});
-     } else if (card.rank == 'jack') {
-        if (room.bombStack > 0) {
-          skip = 0;
-        } else {
-          skip = 1;
-        } 
-     }
-     
-     // Multi-drop
+     if (card.rank == 'queen' || card.rank == '8') { room.waitingForAnswer = true; turnEnds = false; }
+     else if (room.waitingForAnswer) { room.waitingForAnswer = false; }
+     else if (card.rank == 'king') room.direction *= -1;
+     else if (card.rank == 'jack') skip = (room.bombStack > 0) ? 0 : 1;
+
+     // Multi-drop Check (allow dropping duplicates)
      if (turnEnds && skip == 0 && player.hand.isNotEmpty) {
         if (player.hand.any((c) => c.rank == card.rank)) turnEnds = false;
      }
-     
+
      // Win Check
      if (player.hand.isEmpty) {
-        bool powerFinish = ['2','3','joker','king','jack','queen','8','ace'].contains(card.rank);
-        if (powerFinish) {
+        // Power Card restriction
+        if (['2','3','8','jack','queen','king','ace','joker'].contains(card.rank)) {
            room.broadcast("CHAT", {"sender": "System", "message": "Cannot win with Power Card!"});
-           _updateGameState(room);
-           if (turnEnds) _advanceTurn(room, skip: skip);
-           return;
-        } else {
-           // NIKO KADI PENALTY CHECK
-           if (!player.hasSaidNikoKadi) {
-              // This is where _isWinningCard was missing
-              if (_isWinningCard(card)) {
-                 room.broadcast("CHAT", {"sender": "Referee", "message": "Forgot Niko Kadi! +2 Cards"});
-                 _handlePickCard(room, pIndex, penalty: 2); // Helper to draw 2
-                 return;
-              }
-           }
-           
-           room.broadcast("GAME_OVER", "${player.name} Wins!");
+           _sendHand(player); // Re-sync
+           _advanceTurn(room, skip: skip); 
            return;
         }
+        // Niko Kadi Penalty
+        if (!player.hasSaidNikoKadi) {
+             room.broadcast("CHAT", {"sender": "Referee", "message": "Forgot Niko Kadi! +2 Cards"});
+             _handleKadiPick(room, pIndex, penalty: 2);
+             return;
+        }
+        room.broadcast("GAME_OVER", "${player.name} Wins!");
+        return;
      }
-     
-     player.socket.sink.add(jsonEncode({"type": "DEAL_HAND", "data": player.hand.map((c)=>c.toJson()).toList()}));
+
+     _sendHand(player);
      room.broadcast("UPDATE_TABLE", room.topCard!.toJson());
      
-     if (turnEnds) {
-       _advanceTurn(room, skip: skip);
-     } else {
-       _updateGameState(room);
-     }
+     if (turnEnds) _advanceTurn(room, skip: skip);
+     else room.broadcast("TURN_UPDATE", room.getGameState());
   }
 
-  void _handlePickCard(GameRoom room, int pIndex, {int? penalty}) {
+  void _handleKadiPick(GameRoom room, int pIndex, {int? penalty}) {
      Player player = room.players[pIndex];
      int count = penalty ?? (room.bombStack > 0 ? room.bombStack : 1);
      
-     // Joker Constraint Logic (only if not a penalty)
+     // Joker Constraint Logic
      if (penalty == null && room.bombStack > 0 && room.topCard?.rank == 'joker') {
         room.jokerColorConstraint = (room.topCard!.suit == 'red') ? 'red' : 'black';
         room.broadcast("CHAT", {"sender": "System", "message": "Constraint: ${room.jokerColorConstraint}"});
      }
-     
-     // Draw
+
      List<CardModel> drawn = [];
-     if (room.deckService.remainingCards >= count) {
-        drawn = room.deckService.drawCards(count);
-     } else {
+     if (room.deckService.remainingCards >= count) drawn = room.deckService.drawCards(count);
+     else {
         drawn.addAll(room.deckService.drawCards(room.deckService.remainingCards));
-        room.deckService.addCards(room.discardPile);
-        room.discardPile.clear();
-        room.deckService.shuffle();
+        room.deckService.addCards(room.discardPile); room.discardPile.clear(); room.deckService.shuffle();
         int needed = count - drawn.length;
         drawn.addAll(room.deckService.drawCards(needed));
      }
      player.hand.addAll(drawn);
      
-     // Reset
      if (penalty == null) {
        room.bombStack = 0;
-       room.forcedSuit = null;
-       room.forcedRank = null;
-       if (room.waitingForAnswer) {
-          room.waitingForAnswer = false;
-          room.broadcast("CHAT", {"sender": "System", "message": "Player picked. Question voided."});
-       }
+       if (room.waitingForAnswer) { room.waitingForAnswer = false; }
      }
      player.hasSaidNikoKadi = false;
      
-     player.socket.sink.add(jsonEncode({"type": "DEAL_HAND", "data": player.hand.map((c)=>c.toJson()).toList()}));
-     
-     // Only advance turn if it wasn't a penalty that keeps turn (usually penalty ends turn in Kadi)
+     _sendHand(player);
      _advanceTurn(room);
   }
 
-  bool _isValidMove(GameRoom room, CardModel card) {
+  bool _isValidKadiMove(GameRoom room, CardModel card) {
      if (room.jokerColorConstraint != null) {
         bool isBomb = ['2', '3', 'joker'].contains(card.rank);
         if (isBomb) return true;
@@ -432,21 +495,27 @@ class KadiServer {
      
      return card.suit == room.topCard!.suit || card.rank == room.topCard!.rank || ['2','3','joker'].contains(card.rank);
   }
-
+  
   bool _isWinningCard(CardModel card) {
-    const nonWinningRanks = ['2', '3', '8', 'jack', 'queen', 'king', 'joker'];
-    return !nonWinningRanks.contains(card.rank);
+    const nonWinning = ['2', '3', '8', 'jack', 'queen', 'king', 'joker'];
+    return !nonWinning.contains(card.rank);
   }
+
+  // ==========================================
+  //               HELPERS
+  // ==========================================
 
   void _advanceTurn(GameRoom room, {int skip = 0}) {
-     int total = room.players.length;
-     int step = room.direction * (1 + skip);
-     room.currentPlayerIndex = (room.currentPlayerIndex + step) % total;
-     if (room.currentPlayerIndex < 0) room.currentPlayerIndex += total;
-     _updateGameState(room);
-  }
-  
-  void _updateGameState(GameRoom room) {
+     int step = (room.gameType == 'kadi' ? room.direction : 1) * (1 + skip);
+     room.currentPlayerIndex = (room.currentPlayerIndex + step) % room.players.length;
+     if (room.currentPlayerIndex < 0) room.currentPlayerIndex += room.players.length;
+     
+     // Auto-Draw for empty hands in Go Fish
+     if (room.gameType == 'gofish' && room.players[room.currentPlayerIndex].hand.isEmpty && room.deckService.remainingCards > 0) {
+        room.players[room.currentPlayerIndex].hand.addAll(room.deckService.drawCards(1));
+        _sendHand(room.players[room.currentPlayerIndex]);
+     }
+     
      room.broadcast("TURN_UPDATE", room.getGameState());
   }
 
@@ -455,24 +524,21 @@ class KadiServer {
         var next = room.musicQueue.removeAt(0);
         room.currentMusicId = next['videoId'];
         room.currentMusicTitle = next['title'];
-        
         room.broadcast("MUSIC_UPDATE", {'videoId': room.currentMusicId, 'title': room.currentMusicTitle});
         room.broadcast("QUEUE_UPDATE", {'queue': room.musicQueue});
-     } else {
-        room.currentMusicId = null;
      }
+  }
+
+  void _sendHand(Player p) {
+     p.socket.sink.add(jsonEncode({"type": "DEAL_HAND", "data": p.hand.map((c)=>c.toJson()).toList()}));
   }
 
   void _broadcastPlayerInfo(GameRoom room) {
      List<Map<String, dynamic>> pList = room.players.asMap().entries.map((e) => 
         {'id': e.value.id, 'name': e.value.name, 'index': e.key}
      ).toList();
-     
      for (var p in room.players) {
-        p.socket.sink.add(jsonEncode({
-           "type": "PLAYER_INFO", 
-           "data": {"players": pList, "myId": p.id}
-        }));
+        p.socket.sink.add(jsonEncode({ "type": "PLAYER_INFO", "data": {"players": pList, "myId": p.id} }));
      }
   }
 
@@ -484,5 +550,5 @@ class KadiServer {
 }
 
 void main() {
-  KadiServer().start();
+  MultiGameServer().start();
 }
