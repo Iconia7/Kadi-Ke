@@ -128,66 +128,76 @@ class GameRoom {
 class MultiGameServer {
   final Map<String, GameRoom> _rooms = {}; 
 
-  Future<void> start() async {
-    var handler = webSocketHandler((WebSocketChannel socket) {
-      String? playerId;
-      String? currentRoomCode;
+Future<void> _start() async {
+    var handler = webSocketHandler(
+      (WebSocketChannel socket) {
+        String? playerId;
+        String? currentRoomCode;
 
-      socket.stream.listen((message) {
-        final data = jsonDecode(message);
-        String type = data['type'];
+        socket.stream.listen((message) {
+          final data = jsonDecode(message);
+          String type = data['type'];
 
-        // --- LOBBY MANAGEMENT ---
-        if (type == 'CREATE_GAME') {
-          String roomCode = _generateRoomCode();
-          _rooms[roomCode] = GameRoom(roomCode);
-          _rooms[roomCode]!.gameType = data['gameType'] ?? 'kadi';
-          socket.sink.add(jsonEncode({"type": "ROOM_CREATED", "data": roomCode}));
-        }
-        else if (type == 'JOIN_GAME') {
-          String code = data['roomCode'].toString().toUpperCase();
-          String name = data['name'];
-          
-          if (_rooms.containsKey(code)) {
-            currentRoomCode = code;
-            playerId = DateTime.now().millisecondsSinceEpoch.toString(); 
-            
-            Player newPlayer = Player(playerId!, name, socket);
-            _rooms[code]!.players.add(newPlayer);
-            
-            _broadcastPlayerInfo(_rooms[code]!);
-            
-            // Sync Music on join
-            if (_rooms[code]!.currentMusicId != null) {
-               socket.sink.add(jsonEncode({
-                 "type": "MUSIC_UPDATE", 
-                 "data": {'videoId': _rooms[code]!.currentMusicId, 'title': _rooms[code]!.currentMusicTitle}
-               }));
-            }
-          } else {
-            socket.sink.add(jsonEncode({"type": "ERROR", "data": "Room not found"}));
+          // --- LOBBY MANAGEMENT ---
+          if (type == 'CREATE_GAME') {
+            String roomCode = _generateRoomCode();
+            _rooms[roomCode] = GameRoom(roomCode);
+            _rooms[roomCode]!.gameType = data['gameType'] ?? 'kadi';
+            socket.sink.add(jsonEncode({"type": "ROOM_CREATED", "data": roomCode}));
           }
-        }
-        
-        // --- GAME ACTIONS ---
-        else if (currentRoomCode != null && _rooms.containsKey(currentRoomCode)) {
-           GameRoom room = _rooms[currentRoomCode]!;
-           _handleGameAction(room, playerId!, type, data);
-        }
+          else if (type == 'JOIN_GAME') {
+            String code = data['roomCode'].toString().toUpperCase();
+            String name = data['name'];
+            
+            if (_rooms.containsKey(code)) {
+              currentRoomCode = code;
+              playerId = DateTime.now().millisecondsSinceEpoch.toString(); 
+              
+              Player newPlayer = Player(playerId!, name, socket);
+              _rooms[code]!.players.add(newPlayer);
+              
+              _broadcastPlayerInfo(_rooms[code]!);
+              
+              // Sync Music on join
+              if (_rooms[code]!.currentMusicId != null) {
+                 socket.sink.add(jsonEncode({
+                   "type": "MUSIC_UPDATE", 
+                   "data": {'videoId': _rooms[code]!.currentMusicId, 'title': _rooms[code]!.currentMusicTitle}
+                 }));
+              }
+            } else {
+              socket.sink.add(jsonEncode({"type": "ERROR", "data": "Room not found"}));
+            }
+          }
+          
+          // --- GAME ACTIONS ---
+          else if (currentRoomCode != null && _rooms.containsKey(currentRoomCode)) {
+             GameRoom room = _rooms[currentRoomCode]!;
+             _handleGameAction(room, playerId!, type, data);
+          }
 
-      }, onDone: () {
-        if (currentRoomCode != null && _rooms.containsKey(currentRoomCode)) {
-           GameRoom room = _rooms[currentRoomCode]!;
-           room.players.removeWhere((p) => p.id == playerId);
-           if (room.players.isEmpty) {
-             _rooms.remove(currentRoomCode);
-             print("Room $currentRoomCode deleted.");
-           } else {
-             _broadcastPlayerInfo(room);
-           }
-        }
-      });
-    });
+        }, onDone: () {
+          if (currentRoomCode != null && _rooms.containsKey(currentRoomCode)) {
+             GameRoom room = _rooms[currentRoomCode]!;
+             // Remove player
+             room.players.removeWhere((p) => p.id == playerId);
+             
+             // If room is empty, delete it
+             if (room.players.isEmpty) {
+               _rooms.remove(currentRoomCode);
+               print("Room $currentRoomCode deleted.");
+             } else {
+               // Notify others that player left
+               _broadcastPlayerInfo(room);
+             }
+          }
+        }, onError: (error) {
+           print("Socket Error: $error");
+        });
+      },
+      // ✅ VITAL FIX: Keep connection alive by pinging every 10 seconds
+      pingInterval: Duration(seconds: 10), 
+    );
 
     // Listen on 0.0.0.0 for Render
     var server = await shelf_io.serve(handler, '0.0.0.0', 8080);
@@ -550,5 +560,5 @@ class MultiGameServer {
 }
 
 void main() {
-  MultiGameServer().start();
+  MultiGameServer()._start();
 }

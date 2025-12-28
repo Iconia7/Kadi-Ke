@@ -20,7 +20,7 @@ class SoundService {
     try {
       await _player.stop(); // Stop previous for snappy feel
       // Make sure your assets path is correct (usually 'sounds/' or just name if defined in pubspec)
-      await _player.play(AssetSource('sounds/$soundName.mp3'));
+      await _player.play(AssetSource('audio/$soundName.mp3'));
     } catch (e) {
       print("Audio Error: $e");
     }

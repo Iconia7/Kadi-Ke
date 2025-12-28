@@ -323,7 +323,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   // --- MAIN BUILD ---
-  @override
+@override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Container(
@@ -336,6 +336,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         ),
         child: Stack(
           children: [
+            // 1. Floating Icon (Background)
             AnimatedBuilder(
               animation: _floatingAnimation,
               builder: (context, child) => Positioned(
@@ -344,6 +345,32 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 child: Opacity(opacity: 0.05, child: Icon(Icons.style, size: 120, color: Colors.white)),
               ),
             ),
+
+            // 2. SETTINGS BUTTON (MOVED HERE - Correct Spot inside Stack)
+            Positioned(
+              top: 50,
+              right: 20,
+              child: GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => SettingsScreen()),
+                  );
+                },
+                child: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white24),
+                    boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 8)],
+                  ),
+                  child: const Icon(Icons.settings, color: Colors.white, size: 28),
+                ),
+              ),
+            ),
+
+            // 3. Main Content
             SafeArea(
               child: Center(
                 child: SingleChildScrollView(
@@ -380,33 +407,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       _buildMenuButton("MULTIPLAYER", Icons.groups, Colors.deepPurpleAccent, _showMultiplayerDialog),
                       SizedBox(height: 60),
                       
+                      // Bottom Row (Fixed: Removed the Positioned widget from here)
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          // Place this near your other Positioned widgets (like the floating icon)
-Positioned(
-  top: 50,
-  right: 20,
-  child: GestureDetector(
-    onTap: () {
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (context) => SettingsScreen()),
-      );
-    },
-    child: Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.1), // Glass effect
-        shape: BoxShape.circle,
-        border: Border.all(color: Colors.white24),
-        boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 8)],
-      ),
-      child: const Icon(Icons.settings, color: Colors.white, size: 28),
-    ),
-  ),
-),
-SizedBox(width: 40),
                           _buildIconButton("Shop", Icons.shopping_bag_outlined, Colors.amber, () => Navigator.push(context, MaterialPageRoute(builder: (_) => ShopScreen()))),
                           SizedBox(width: 40),
                           _buildIconButton("Profile", Icons.bar_chart_rounded, Colors.greenAccent, () => Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen()))),
