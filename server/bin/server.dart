@@ -279,8 +279,9 @@ class KadiServer {
      
      // Bomb Logic
      bool isBomb = ['2','3','joker'].contains(card.rank);
-     if (card.rank == '2') room.bombStack += 2;
-     else if (card.rank == '3') room.bombStack += 3;
+     if (card.rank == '2') {
+       room.bombStack += 2;
+     } else if (card.rank == '3') room.bombStack += 3;
      else if (card.rank == 'joker') room.bombStack += 5;
      
      // Ace Logic
@@ -320,8 +321,11 @@ class KadiServer {
         room.direction *= -1;
         if (room.bombStack > 0) room.broadcast("CHAT", {"sender": "System", "message": "Bomb Returned!"});
      } else if (card.rank == 'jack') {
-        if (room.bombStack > 0) skip = 0;
-        else skip = 1; 
+        if (room.bombStack > 0) {
+          skip = 0;
+        } else {
+          skip = 1;
+        } 
      }
      
      // Multi-drop
@@ -356,8 +360,11 @@ class KadiServer {
      player.socket.sink.add(jsonEncode({"type": "DEAL_HAND", "data": player.hand.map((c)=>c.toJson()).toList()}));
      room.broadcast("UPDATE_TABLE", room.topCard!.toJson());
      
-     if (turnEnds) _advanceTurn(room, skip: skip);
-     else _updateGameState(room);
+     if (turnEnds) {
+       _advanceTurn(room, skip: skip);
+     } else {
+       _updateGameState(room);
+     }
   }
 
   void _handlePickCard(GameRoom room, int pIndex, {int? penalty}) {

@@ -7,9 +7,8 @@ class OnlineGameService {
   final StreamController<Map<String, dynamic>> _streamController = StreamController.broadcast();
   Stream<Map<String, dynamic>> get gameStream => _streamController.stream;
 
-  // REPLACE WITH YOUR RENDER/HEROKU URL AFTER DEPLOYMENT
-  // Local testing: 'ws://10.0.2.2:8080' (Android Emulator) or 'ws://localhost:8080'
-  final String _serverUrl = "wss://your-app-name.onrender.com"; 
+  // --- FIX 1: CORRECT URL FORMAT (Removed 'https://') ---
+  final String _serverUrl = "wss://kadi-ke.onrender.com"; 
 
   static final OnlineGameService _instance = OnlineGameService._internal();
   factory OnlineGameService() => _instance;
@@ -18,8 +17,6 @@ class OnlineGameService {
   void createGame(String playerName, String gameType) {
     _connect();
     _send("CREATE_GAME", {"gameType": gameType});
-    // Wait for ROOM_CREATED response, then Join automatically
-    // Ideally you handle this via the stream in the UI
   }
 
   void joinGame(String roomCode, String playerName) {
@@ -32,30 +29,51 @@ class OnlineGameService {
   }
 
   void _connect() {
-    if (_channel != null) return;
+    // If already connected, don't reconnect
+    if (_channel != null && _channel!.closeCode == null) return;
+
     try {
+      print("Connecting to: $_serverUrl");
       _channel = WebSocketChannel.connect(Uri.parse(_serverUrl));
+      
       _channel!.stream.listen(
         (message) {
           final data = jsonDecode(message);
           _streamController.add(data);
         },
-        onDone: () => print("Disconnected from server"),
-        onError: (error) => print("WebSocket Error: $error"),
+        onDone: () {
+          print("Disconnected from server");
+          _channel = null; // --- FIX 2: Reset so we can reconnect later
+        },
+        onError: (error) {
+          print("WebSocket Error: $error");
+          _channel = null; // --- FIX 2: Reset on error
+        },
       );
     } catch (e) {
       print("Connection Error: $e");
+      _channel = null;
     }
   }
 
   void _send(String type, Map<String, dynamic> data) {
     if (_channel != null) {
-      _channel!.sink.add(jsonEncode({"type": type, ...data}));
+      try {
+        _channel!.sink.add(jsonEncode({"type": type, ...data}));
+      } catch (e) {
+        print("Send Error: $e");
+      }
+    } else {
+      print("Cannot send $type: Not connected.");
+      // Optional: Auto-reconnect here if you want to be aggressive
+      _connect(); 
     }
   }
 
   void disconnect() {
-    _channel?.sink.close();
-    _channel = null;
+    if (_channel != null) {
+      _channel!.sink.close();
+      _channel = null;
+    }
   }
 }

@@ -24,7 +24,7 @@ class GameScreen extends StatefulWidget {
   final String? onlineGameCode;
   final String gameType; // 'kadi' or 'gofish'
 
-  const GameScreen({
+  const GameScreen({super.key, 
     required this.isHost, 
     required this.hostAddress, 
     this.aiCount = 1,
@@ -53,7 +53,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   dynamic _localEngine; 
   String? _currentSongId;
   String? _currentSongTitle; // Add this
-  List<Map<String, dynamic>> _songQueue = [];
+  final List<Map<String, dynamic>> _songQueue = [];
   
   List<PlayerInfo> _players = [];
 
@@ -63,7 +63,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     }
     return List.generate(_connectedPlayers - 1, (index) {
       int realIndex = index + 1; // Assuming host is 0
-      return PlayerInfo(id: 'bot$realIndex', name: 'Bot ${realIndex}', index: realIndex);
+      return PlayerInfo(id: 'bot$realIndex', name: 'Bot $realIndex', index: realIndex);
     });
   }
 
@@ -94,9 +94,9 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   
   // Chat
   String _myName = "Player"; 
-  List<Map<String, dynamic>> _chatMessages = []; 
+  final List<Map<String, dynamic>> _chatMessages = []; 
   bool _chatDialogOpen = false;
-  TextEditingController _chatController = TextEditingController();
+  final TextEditingController _chatController = TextEditingController();
   bool _hasUnreadMessages = false; 
 
   // --- ANIMATION CONTROLLERS ---
