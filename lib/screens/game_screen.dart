@@ -628,7 +628,7 @@ bool _validateLocalMove(CardModel card) {
     else {_channel?.sink.add(jsonEncode({"type": "PICK_CARD"}));}
   }
 
-  void _startGame() async {
+ void _startGame() async {
     int decks = 1;
     if (!_isOffline && widget.isHost && _connectedPlayers > 6) {
       final choice = await _showDeckChoiceDialog(_connectedPlayers);
@@ -637,12 +637,20 @@ bool _validateLocalMove(CardModel card) {
     }
 
     if (_isOffline) {
-      _localEngine.start(widget.aiCount, "Medium", decks: decks); 
-    } else if (_isOnline && widget.isHost) {
+      // ✅ SAFETY CHECK: Prevent crash if engine isn't ready
+      if (_localEngine != null) {
+         _localEngine.start(widget.aiCount, "Medium", decks: decks); 
+      } else {
+         print("Error: Local Engine not initialized yet");
+      }
+    } 
+    else if (_isOnline && widget.isHost) {
       OnlineGameService().sendAction("START_GAME", {"decks": decks});
-    } else if (!_isOnline) {
+    } 
+    else if (!_isOnline) {
       _channel?.sink.add(jsonEncode({"type": "START_GAME", "decks": decks}));
     }
+    
     SoundService.play('deal');
   }
 

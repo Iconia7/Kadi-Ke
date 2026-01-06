@@ -113,9 +113,13 @@ class LocalGameEngine {
   
   Timer? _botTimer; 
 
-  void start(int aiCount, String difficulty, {int decks = 1}) {
+void start(int aiCount, String difficulty, {int decks = 1}) async {
     _deckService.initializeDeck(decks: decks); 
     _deckService.shuffle();
+
+    // ✅ VITAL FIX: Wait 500ms before sending data.
+    // This ensures the GameScreen has finished building and listening to the stream.
+    await Future.delayed(Duration(milliseconds: 500));
 
     _playerHand = _deckService.drawCards(4);
     _broadcast("DEAL_HAND", _playerHand.map((e) => e.toJson()).toList());

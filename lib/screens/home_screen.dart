@@ -29,7 +29,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   void initState() {
     super.initState();
     _getIpAddress();
-    _initFirebase();
+    _initFirebaseCheck();
     
     _floatingController = AnimationController(
       duration: const Duration(seconds: 4),
@@ -40,24 +40,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-Future<void> _initFirebase() async {
-  try {
-    await FirebaseGameService().initialize();
-    if (mounted) {
-      setState(() {
-        _isFirebaseReady = true;
-      });
-    }
-  } catch (e) {
-    print("Firebase init error in HomeScreen: $e");
-    // Still set to true after a delay to show UI, or show error message
-    if (mounted) {
-      setState(() {
-        _isFirebaseReady = true; // Allow UI to show even if Firebase failed
-      });
+Future<void> _initFirebaseCheck() async {
+    try {
+      // Just ensure the Game Service is ready (Auth login)
+      await FirebaseGameService().initialize();
+      if (mounted) setState(() => _isFirebaseReady = true);
+    } catch (e) {
+      print("Auth Service Error: $e");
+      // Allow UI to show even if Auth fails (for Offline mode)
+      if (mounted) setState(() => _isFirebaseReady = true);
     }
   }
-}
 
   @override
   void dispose() {

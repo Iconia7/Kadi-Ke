@@ -9,7 +9,7 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  bool _isMuted = SoundService.isMuted;
+  bool _isMuted = false;
   final TextEditingController _nameController = TextEditingController();
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   String _currentName = "Loading...";
@@ -17,6 +17,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
+    try {
+      _isMuted = SoundService.isMuted;
+    } catch (e) {
+      print("Sound Service Error: $e");
+    }
     _loadCurrentName();
   }
 
