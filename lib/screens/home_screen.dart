@@ -40,14 +40,24 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  Future<void> _initFirebase() async {
+Future<void> _initFirebase() async {
+  try {
     await FirebaseGameService().initialize();
     if (mounted) {
       setState(() {
         _isFirebaseReady = true;
       });
     }
+  } catch (e) {
+    print("Firebase init error in HomeScreen: $e");
+    // Still set to true after a delay to show UI, or show error message
+    if (mounted) {
+      setState(() {
+        _isFirebaseReady = true; // Allow UI to show even if Firebase failed
+      });
+    }
   }
+}
 
   @override
   void dispose() {
@@ -67,7 +77,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   // --- ONLINE METHODS (UPDATED FOR RENDER SERVER) ---
 
-  void _startOnlineHost() {
+void _startOnlineHost() {
     if (!_isFirebaseReady) return;
     
     // 1. Show Loading Spinner
@@ -79,12 +89,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     // 2. Listen for Server Response
     StreamSubscription? subscription;
+    bool hasNavigated = false; // Flag to ensure we don't act twice
+
     subscription = OnlineGameService().gameStream.listen((data) {
       if (data['type'] == 'ROOM_CREATED') {
+        hasNavigated = true;
         
         // 3. Server replied! Get the code
         String roomCode = data['data'];
-        subscription?.cancel(); // Stop listening here
+        subscription?.cancel(); // Stop listening
         
         if (mounted) {
           Navigator.pop(context); // Close spinner
@@ -94,7 +107,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             GameScreen(
               isHost: true, 
               hostAddress: 'online', 
-              onlineGameCode: roomCode, // Use code from Server
+              onlineGameCode: roomCode,
               gameType: _selectedGameMode, 
             )
           ));
@@ -102,8 +115,24 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       }
     });
 
-    // 5. Send Request
-    // Note: We use "Player" temporarily, actual name syncs in GameScreen
+    // ✅ ADD THIS: Safety Timeout (15 Seconds)
+    // If the server doesn't reply in 15s, stop spinning.
+    Future.delayed(Duration(seconds: 15), () {
+      if (!hasNavigated && mounted && Navigator.canPop(context)) {
+        Navigator.pop(context); // Close spinner
+        subscription?.cancel(); // Stop listening
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Server is waking up... Please press Create again!"),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 4),
+          )
+        );
+      }
+    });
+
+    // 5. Send Request (Now calls the async version from step 1)
     OnlineGameService().createGame("Player", _selectedGameMode); 
   }
 

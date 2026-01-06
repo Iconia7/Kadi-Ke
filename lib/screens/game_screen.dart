@@ -5,7 +5,6 @@ import 'package:card_game_ke/services/firebase_game_service.dart';
 import 'package:card_game_ke/services/online_game_service.dart';
 import 'package:card_game_ke/services/theme_service.dart';
 import 'package:card_game_ke/services/progression_service.dart';
-import 'package:card_game_ke/widgets/jukebox_player.dart';
 import 'package:flutter/material.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:confetti/confetti.dart';
@@ -50,10 +49,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   GameServer? _server;
   FirebaseHostEngine? _onlineHostEngine;
   StreamSubscription? _gameSubscription;
-  dynamic _localEngine; 
-  String? _currentSongId;
-  String? _currentSongTitle; // Add this
-  final List<Map<String, dynamic>> _songQueue = [];
+  dynamic _localEngine;
   
   List<PlayerInfo> _players = [];
 
@@ -428,13 +424,6 @@ if (_isOnline) {
         }
         _connectedPlayers = parsedPlayers.length;
       });
-    }else if (type == 'MUSIC_UPDATE') {
-        if (mounted) {
-          setState(() {
-           _currentSongId = data['data']['videoId'];
-           _currentSongTitle = data['data']['title']; // Capture Title
-        });
-        }
     }
     else if (type == 'DEAL_HAND') {
       setState(() {
@@ -497,8 +486,11 @@ if (_isOnline) {
     if (!_isMyTurn) return;
     if (_isGoFish) {
       setState(() {
-        if (_selectedRankToAsk == _myHand[index].rank) _selectedRankToAsk = null;
-        else _selectedRankToAsk = _myHand[index].rank;
+        if (_selectedRankToAsk == _myHand[index].rank) {
+          _selectedRankToAsk = null;
+        } else {
+          _selectedRankToAsk = _myHand[index].rank;
+        }
       });
     } else {
       _playCardKadi(index);
@@ -679,56 +671,6 @@ bool _validateLocalMove(CardModel card) {
             Column(
               children: [
                  _buildTopBar(theme),
-                 JukeboxPlayer(
-  currentVideoId: _currentSongId,
-  currentTitle: _currentSongTitle,
-  queue: _songQueue,
-  isHost: widget.isHost || _isOffline,
-  onAddSong: (id, title) {
-    Map<String, dynamic> songInfo = {'videoId': id, 'title': title};
-    
-    // 1. ONLINE
-    if (_isOnline) {
-      // ✅ FIX: Wrap the payload in a 'data' key so the server can find it!
-      OnlineGameService().sendAction("ADD_TO_QUEUE", {"data": songInfo});
-    } 
-    // 2. LAN
-    else if (!_isOffline && !_isOnline) {
-      // LAN likely expects the same nested structure if using the same server logic
-      _channel?.sink.add(jsonEncode({"type": "ADD_TO_QUEUE", "data": songInfo}));
-    } 
-    // 3. OFFLINE (SINGLE PLAYER)
-    else {
-      setState(() {
-         if (_currentSongId == null) {
-            _currentSongId = id;
-            _currentSongTitle = title;
-         } else {
-            _songQueue.add(songInfo);
-         }
-      });
-    }
-  },
-  onSongEnded: () {
-     if (_isOnline) {
-       OnlineGameService().sendAction("SONG_ENDED", {});
-     } else if (!_isOffline && !_isOnline) {
-       _channel?.sink.add(jsonEncode({"type": "SONG_ENDED"}));
-     } else {
-       // OFFLINE NEXT SONG
-       setState(() {
-          if (_songQueue.isNotEmpty) {
-             var next = _songQueue.removeAt(0);
-             _currentSongId = next['videoId'];
-             _currentSongTitle = next['title'];
-          } else {
-             _currentSongId = null;
-             _currentSongTitle = null;
-          }
-       });
-     }
-  }
-),
                  Expanded(
                    child: _gameHasStarted 
                      ? _buildTableArea(theme)

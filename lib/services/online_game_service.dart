@@ -14,8 +14,14 @@ class OnlineGameService {
   factory OnlineGameService() => _instance;
   OnlineGameService._internal();
 
-  void createGame(String playerName, String gameType) {
+// Update this method to be async
+  Future<void> createGame(String playerName, String gameType) async {
     _connect();
+    
+    // ✅ CRITICAL FIX: Wait 1 second for the socket to fully open
+    // This allows the WebSocket handshake to complete before we send data.
+    await Future.delayed(Duration(seconds: 1));
+    
     _send("CREATE_GAME", {"gameType": gameType});
   }
 
