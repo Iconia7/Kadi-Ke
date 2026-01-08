@@ -60,8 +60,8 @@ android {
             signingConfig = signingConfigs.getByName("release")
             
             // Standard Flutter release config
-            isMinifyEnabled = true // Usually true for release to shrink code
-            isShrinkResources = true
+            isMinifyEnabled = false // Usually true for release to shrink code
+            isShrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }

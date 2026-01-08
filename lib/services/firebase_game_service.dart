@@ -4,10 +4,13 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'deck_service.dart';
+import '../firebase_options.dart'; // Ensure you import this
 
 class FirebaseGameService {
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  // 1. Change these to 'late' or nullable. Do NOT assign them immediately.
+  late FirebaseAuth _auth;
+  late FirebaseFirestore _db;
+  
   final StreamController<Map<String, dynamic>> _gameStreamController = StreamController.broadcast();
 
   StreamSubscription<DocumentSnapshot>? _gameSubscription;
@@ -25,15 +28,26 @@ class FirebaseGameService {
 
   Future<void> initialize() async {
     try {
-      if (Firebase.apps.isEmpty) await Firebase.initializeApp();
+      // 2. Ensure we use the generated options
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp(
+          options: DefaultFirebaseOptions.currentPlatform,
+        );
+      }
+      
+      // 3. Initialize the instances HERE, after we know Firebase is ready
+      _auth = FirebaseAuth.instance;
+      _db = FirebaseFirestore.instance;
+
       if (_auth.currentUser == null) {
         UserCredential user = await _auth.signInAnonymously();
         _myUserId = user.user?.uid;
       } else {
         _myUserId = _auth.currentUser?.uid;
       }
-    // ignore: empty_catches
     } catch (e) {
+      print("Error initializing FirebaseGameService: $e");
+      // Handle offline mode gracefully here if needed
     }
   }
 

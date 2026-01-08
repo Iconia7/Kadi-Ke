@@ -29,6 +29,10 @@ class GameServer {
   String? _jokerColorConstraint; 
 
   Future<void> start() async {
+    if (_server != null) {
+      await _server!.close(force: true);
+      _server = null;
+    }
     var handler = webSocketHandler((WebSocketChannel webSocket) {
       if (_isGameRunning) {
         webSocket.sink.close(1000, "Game already started!");

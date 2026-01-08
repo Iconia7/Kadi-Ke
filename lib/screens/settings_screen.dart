@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_core/firebase_core.dart'; // Import this
 import '../services/sound_service.dart';
 import '../services/firebase_game_service.dart';
 
@@ -11,12 +12,25 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _isMuted = false;
   final TextEditingController _nameController = TextEditingController();
-  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  
+  // 1. CHANGE: Make _db nullable and remove immediate initialization
+  FirebaseFirestore? _db; 
+  
   String _currentName = "Loading...";
 
   @override
   void initState() {
     super.initState();
+    
+    // 2. FIX: Safely initialize DB only if Firebase is actually running
+    try {
+      if (Firebase.apps.isNotEmpty) {
+        _db = FirebaseFirestore.instance;
+      }
+    } catch (e) {
+      print("Settings: Firebase not available - $e");
+    }
+
     try {
       _isMuted = SoundService.isMuted;
     } catch (e) {
@@ -26,12 +40,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _loadCurrentName() async {
+    // 3. FIX: Check if DB is available before using it
+    if (_db == null) {
+      setState(() => _currentName = "Offline Player");
+      return;
+    }
+
     String uid = FirebaseGameService().currentUserId;
     if (uid == "unknown") return;
 
     try {
-      // Fetch existing name from 'users' collection
-      DocumentSnapshot doc = await _db.collection('users').doc(uid).get();
+      DocumentSnapshot doc = await _db!.collection('users').doc(uid).get();
       if (doc.exists) {
         setState(() {
           _currentName = doc.get('name') ?? "Player";
@@ -46,6 +65,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _saveNickname() async {
+    // 4. FIX: Check if DB is available before saving
+    if (_db == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Cannot save: Offline Mode"), backgroundColor: Colors.grey),
+      );
+      return;
+    }
+
     String newName = _nameController.text.trim();
     if (newName.isEmpty) return;
 
@@ -53,15 +80,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (uid == "unknown") return;
 
     try {
-      // Save to Firebase
-      await _db.collection('users').doc(uid).set({
+      await _db!.collection('users').doc(uid).set({
         'name': newName,
-      }, SetOptions(merge: true)); // Merge prevents deleting coins/skins
+      }, SetOptions(merge: true));
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Nickname saved as '$newName'"), backgroundColor: Colors.green),
       );
-      FocusScope.of(context).unfocus(); // Close keyboard
+      FocusScope.of(context).unfocus();
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Error saving name"), backgroundColor: Colors.red),
@@ -72,7 +98,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0F172A), // Dark Navy Background
+      backgroundColor: const Color(0xFF0F172A),
       appBar: AppBar(
         title: const Text("SETTINGS", style: TextStyle(letterSpacing: 2, fontWeight: FontWeight.bold, color: Colors.white)),
         backgroundColor: Colors.transparent,
@@ -86,7 +112,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          // 1. SOUND SETTINGS
           _buildSectionHeader("AUDIO"),
           Container(
             decoration: BoxDecoration(
@@ -107,7 +132,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           const SizedBox(height: 30),
 
-          // 2. PROFILE SETTINGS
           _buildSectionHeader("PROFILE"),
           Container(
             padding: const EdgeInsets.all(16),
@@ -127,7 +151,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         controller: _nameController,
                         style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                         decoration: InputDecoration(
-                          hintText: "Enter Name",
+                          hintText: _db == null ? "Offline" : "Enter Name",
                           hintStyle: const TextStyle(color: Colors.white30),
                           isDense: true,
                           filled: true,
@@ -156,7 +180,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           const SizedBox(height: 30),
 
-          // 3. LEGAL & INFO
           _buildSectionHeader("LEGAL"),
           Container(
             decoration: BoxDecoration(
@@ -236,7 +259,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  // --- LEGAL TEXT CONTENT ---
   final String _termsText = """
 1. Acceptance
 By playing Kadi Ke, you agree to fair play rules.
