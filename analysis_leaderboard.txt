@@ -1,0 +1,178 @@
+﻿Analyzing card_game_ke...                                       
+
+   info - The private field _clients could be 'final' - lib\game_server.dart:9:26 - prefer_final_fields
+   info - The private field _musicQueue could be 'final' - lib\game_server.dart:19:30 - prefer_final_fields
+   info - The private field _hasSaidNikoKadi could be 'final' - lib\game_server.dart:27:18 - prefer_final_fields
+   info - The private field _discardPile could be 'final' - lib\game_server.dart:28:19 - prefer_final_fields
+   info - Don't invoke 'print' in production code - lib\game_server.dart:44:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\game_server.dart:97:5 - avoid_print
+   info - Statements in an if should be enclosed in a block - lib\game_server.dart:168:27 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\game_server.dart:169:32 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\game_server.dart:170:36 - curly_braces_in_flow_control_structures
+   info - Unnecessary braces in a string interpolation - lib\game_server.dart:188:77 - unnecessary_brace_in_string_interps
+   info - Unnecessary braces in a string interpolation - lib\game_server.dart:188:95 - unnecessary_brace_in_string_interps
+   info - Statements in an if should be enclosed in a block - lib\game_server.dart:246:28 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\game_server.dart:247:13 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\game_server.dart:251:28 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\game_server.dart:274:31 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\game_server.dart:275:15 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\game_server.dart:306:38 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\game_server.dart:307:45 - curly_braces_in_flow_control_structures
+   info - Statements in a for should be enclosed in a block - lib\game_server.dart:415:34 - curly_braces_in_flow_control_structures
+   info - Don't invoke 'print' in production code - lib\main.dart:20:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\main.dart:22:5 - avoid_print
+   info - Parameter 'key' could be a super parameter - lib\main.dart:29:9 - use_super_parameters
+   info - Invalid use of a private type in a public API - lib\screens\game_screen.dart:38:3 - library_private_types_in_public_api
+   info - The private field _activeEmotes could be 'final' - lib\screens\game_screen.dart:101:26 - prefer_final_fields
+warning - The declaration '_updateIntenseMode' isn't referenced - lib\screens\game_screen.dart:182:8 - unused_element
+warning - The value of the local variable 'p' isn't used - lib\screens\game_screen.dart:188:14 - unused_local_variable
+   info - Don't invoke 'print' in production code - lib\screens\game_screen.dart:211:7 - avoid_print
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\game_screen.dart:315:43 - deprecated_member_use
+   info - Empty catch block - lib\screens\game_screen.dart:486:19 - empty_catches
+   info - Statements in an if should be enclosed in a block - lib\screens\game_screen.dart:539:31 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\screens\game_screen.dart:540:17 - curly_braces_in_flow_control_structures
+warning - The value of the local variable 'senderId' isn't used - lib\screens\game_screen.dart:564:12 - unused_local_variable
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\game_screen.dart:646:38 - deprecated_member_use
+   info - Don't use 'BuildContext's across async gaps - lib\screens\game_screen.dart:667:37 - use_build_context_synchronously
+   info - Don't invoke 'print' in production code - lib\screens\game_screen.dart:700:7 - avoid_print
+   info - Don't use 'BuildContext's across async gaps - lib\screens\game_screen.dart:742:23 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps - lib\screens\game_screen.dart:743:30 - use_build_context_synchronously
+   info - Don't invoke 'print' in production code - lib\screens\game_screen.dart:760:10 - avoid_print
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\game_screen.dart:903:66 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\game_screen.dart:916:41 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\game_screen.dart:988:48 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\game_screen.dart:1014:75 - deprecated_member_use
+   info - Unnecessary braces in a string interpolation - lib\screens\game_screen.dart:1016:41 - unnecessary_brace_in_string_interps
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\game_screen.dart:1054:56 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\game_screen.dart:1056:62 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\game_screen.dart:1077:33 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\game_screen.dart:1077:64 - deprecated_member_use
+   info - Empty catch block - lib\screens\game_screen.dart:1118:44 - empty_catches
+   info - Use 'isNotEmpty' instead of 'length' to test whether the collection is empty - lib\screens\game_screen.dart:1142:25 - prefer_is_empty
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\game_screen.dart:1215:28 - deprecated_member_use
+   info - Uses 'await' on an instance of 'int', which is not a subtype of 'Future' - lib\screens\game_screen.dart:1247:26 - await_only_futures
+   info - Uses 'await' on an instance of 'int', which is not a subtype of 'Future' - lib\screens\game_screen.dart:1264:19 - await_only_futures
+   info - Don't use 'BuildContext's across async gaps - lib\screens\game_screen.dart:1280:7 - use_build_context_synchronously
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\game_screen.dart:1302:49 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\game_screen.dart:1302:79 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\game_screen.dart:1307:51 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\game_screen.dart:1344:45 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\game_screen.dart:1346:64 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\game_screen.dart:1423:53 - deprecated_member_use
+   info - Don't invoke 'print' in production code - lib\screens\game_screen.dart:1456:19 - avoid_print
+warning - The declaration '_playVoiceLine' isn't referenced - lib\screens\game_screen.dart:1568:8 - unused_element
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\game_screen.dart:1694:52 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\game_screen.dart:1694:88 - deprecated_member_use
+   info - The import of 'dart:ui' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/material.dart' - lib\screens\home_screen.dart:4:8 - unnecessary_import
+   info - Constructors for public widgets should have a named 'key' parameter - lib\screens\home_screen.dart:17:7 - use_key_in_widget_constructors
+   info - Invalid use of a private type in a public API - lib\screens\home_screen.dart:19:3 - library_private_types_in_public_api
+   info - Don't invoke 'print' in production code - lib\screens\home_screen.dart:61:7 - avoid_print
+   info - Don't use 'BuildContext's across async gaps - lib\screens\home_screen.dart:76:14 - use_build_context_synchronously
+   info - Don't invoke 'print' in production code - lib\screens\home_screen.dart:86:9 - avoid_print
+   info - 'activeColor' is deprecated and shouldn't be used. Use activeThumbColor instead. This feature was deprecated after v3.31.0-2.0.pre - lib\screens\home_screen.dart:166:27 - deprecated_member_use
+   info - Use a 'SizedBox' to add whitespace to a layout - lib\screens\home_screen.dart:395:21 - sized_box_for_whitespace
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\home_screen.dart:511:41 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\home_screen.dart:611:51 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\home_screen.dart:611:75 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\home_screen.dart:614:46 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\home_screen.dart:636:35 - deprecated_member_use
+   info - Constructors for public widgets should have a named 'key' parameter - lib\screens\leaderboard_screen.dart:4:7 - use_key_in_widget_constructors
+   info - Constructors for public widgets should have a named 'key' parameter - lib\screens\profile_screen.dart:7:7 - use_key_in_widget_constructors
+   info - Invalid use of a private type in a public API - lib\screens\profile_screen.dart:9:3 - library_private_types_in_public_api
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\profile_screen.dart:84:66 - deprecated_member_use
+   info - Use a 'SizedBox' to add whitespace to a layout - lib\screens\profile_screen.dart:121:15 - sized_box_for_whitespace
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\profile_screen.dart:135:62 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\profile_screen.dart:135:94 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\profile_screen.dart:168:29 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\profile_screen.dart:178:28 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\profile_screen.dart:180:50 - deprecated_member_use
+   info - Constructors for public widgets should have a named 'key' parameter - lib\screens\settings_screen.dart:8:7 - use_key_in_widget_constructors
+   info - Invalid use of a private type in a public API - lib\screens\settings_screen.dart:10:3 - library_private_types_in_public_api
+   info - Don't invoke 'print' in production code - lib\screens\settings_screen.dart:33:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\screens\settings_screen.dart:39:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\screens\settings_screen.dart:65:7 - avoid_print
+   info - Don't use 'BuildContext's across async gaps - lib\screens\settings_screen.dart:89:28 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps - lib\screens\settings_screen.dart:92:21 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps - lib\screens\settings_screen.dart:94:28 - use_build_context_synchronously
+   info - 'activeColor' is deprecated and shouldn't be used. Use activeThumbColor instead. This feature was deprecated after v3.31.0-2.0.pre - lib\screens\settings_screen.dart:127:15 - deprecated_member_use
+   info - The import of 'dart:ui' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/material.dart' - lib\screens\shop_screen.dart:2:8 - unnecessary_import
+   info - Constructors for public widgets should have a named 'key' parameter - lib\screens\shop_screen.dart:9:7 - use_key_in_widget_constructors
+   info - Invalid use of a private type in a public API - lib\screens\shop_screen.dart:11:3 - library_private_types_in_public_api
+   info - Statements in an if should be enclosed in a block - lib\screens\shop_screen.dart:72:17 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\screens\shop_screen.dart:73:10 - curly_braces_in_flow_control_structures
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\shop_screen.dart:105:64 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\shop_screen.dart:105:100 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\shop_screen.dart:146:57 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\shop_screen.dart:180:53 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\shop_screen.dart:181:72 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\shop_screen.dart:228:35 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\shop_screen.dart:234:75 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\shop_screen.dart:256:76 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\shop_screen.dart:274:65 - deprecated_member_use
+warning - Unused import: 'home_screen.dart' - lib\screens\tournament_screen.dart:3:8 - unused_import
+   info - Constructors for public widgets should have a named 'key' parameter - lib\screens\tournament_screen.dart:5:7 - use_key_in_widget_constructors
+   info - Invalid use of a private type in a public API - lib\screens\tournament_screen.dart:7:3 - library_private_types_in_public_api
+warning - The value of the field '_difficulties' isn't used - lib\screens\tournament_screen.dart:14:22 - unused_field
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\tournament_screen.dart:145:44 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\tournament_screen.dart:145:87 - deprecated_member_use
+warning - Unused import: 'dart:convert' - lib\services\achievement_service.dart:1:8 - unused_import
+   info - The private field _deck could be 'final' - lib\services\deck_service.dart:14:19 - prefer_final_fields
+   info - Don't invoke 'print' in production code - lib\services\firebase_game_service.dart:48:7 - avoid_print
+   info - The parameter name 'count' matches a visible type name - lib\services\firebase_game_service.dart:515:27 - avoid_types_as_parameter_names
+warning - The value of the local variable 'totalBooks' isn't used - lib\services\firebase_game_service.dart:524:9 - unused_local_variable
+   info - Statements in a for should be enclosed in a block - lib\services\go_fish_engine.dart:30:44 - curly_braces_in_flow_control_structures
+   info - Statements in a for should be enclosed in a block - lib\services\go_fish_engine.dart:191:40 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\services\local_game_engine.dart:34:36 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\services\local_game_engine.dart:35:13 - curly_braces_in_flow_control_structures
+   info - Statements in a for should be enclosed in a block - lib\services\local_game_engine.dart:128:25 - curly_braces_in_flow_control_structures
+   info - The private field _discardPile could be 'final' - lib\services\local_game_engine.dart:158:19 - prefer_final_fields
+   info - Statements in an if should be enclosed in a block - lib\services\local_game_engine.dart:326:30 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\services\local_game_engine.dart:327:14 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\services\local_game_engine.dart:339:27 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\services\local_game_engine.dart:340:32 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\services\local_game_engine.dart:341:36 - curly_braces_in_flow_control_structures
+   info - Unnecessary braces in a string interpolation - lib\services\local_game_engine.dart:358:77 - unnecessary_brace_in_string_interps
+   info - Unnecessary braces in a string interpolation - lib\services\local_game_engine.dart:358:95 - unnecessary_brace_in_string_interps
+   info - Statements in an if should be enclosed in a block - lib\services\local_game_engine.dart:411:28 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\services\local_game_engine.dart:437:31 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\services\local_game_engine.dart:438:15 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\services\local_game_engine.dart:463:36 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\services\local_game_engine.dart:464:43 - curly_braces_in_flow_control_structures
+   info - Don't invoke 'print' in production code - lib\services\online_game_service.dart:28:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\online_game_service.dart:60:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\online_game_service.dart:75:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\online_game_service.dart:80:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\online_game_service.dart:90:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\online_game_service.dart:106:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\online_game_service.dart:109:7 - avoid_print
+warning - The value of the field '_initialized' isn't used - lib\services\progression_service.dart:19:8 - unused_field
+   info - Don't invoke 'print' in production code - lib\services\sound_service.dart:25:7 - avoid_print
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\services\theme_service.dart:43:35 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\services\theme_service.dart:52:35 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\services\theme_service.dart:61:35 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\services\theme_service.dart:70:35 - deprecated_member_use
+   info - Parameter 'key' could be a super parameter - lib\widgets\daily_reward_dialog.dart:8:9 - use_super_parameters
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\widgets\daily_reward_dialog.dart:32:48 - deprecated_member_use
+   info - Parameter 'key' could be a super parameter - lib\widgets\flying_emoji.dart:7:9 - use_super_parameters
+   info - Invalid use of a private type in a public API - lib\widgets\flying_emoji.dart:10:3 - library_private_types_in_public_api
+   info - Constructors for public widgets should have a named 'key' parameter - lib\widgets\playing_card_widget.dart:12:9 - use_key_in_widget_constructors
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\widgets\playing_card_widget.dart:46:33 - deprecated_member_use
+warning - Unused import: 'dart:io' - server\bin\server.dart:4:8 - unused_import
+   info - The private field _deck could be 'final' - server\bin\server.dart:28:19 - prefer_final_fields
+   info - Don't invoke 'print' in production code - server\bin\server.dart:143:5 - avoid_print
+warning - The stack trace variable 'stack' isn't used and can be removed - server\bin\server.dart:205:23 - unused_catch_stack
+   info - Statements in an if should be enclosed in a block - server\bin\server.dart:262:44 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - server\bin\server.dart:263:16 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - server\bin\server.dart:280:39 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - server\bin\server.dart:281:44 - curly_braces_in_flow_control_structures
+   info - Statements in a for should be enclosed in a block - server\bin\server.dart:395:28 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - server\bin\server.dart:450:28 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - server\bin\server.dart:451:33 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - server\bin\server.dart:452:37 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - server\bin\server.dart:489:36 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - server\bin\server.dart:490:36 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - server\bin\server.dart:520:20 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - server\bin\server.dart:521:11 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - server\bin\server.dart:535:52 - curly_braces_in_flow_control_structures
+warning - The declaration '_isWinningCard' isn't referenced - server\bin\server.dart:588:8 - unused_element
+

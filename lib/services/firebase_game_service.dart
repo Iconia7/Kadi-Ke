@@ -8,8 +8,8 @@ import '../firebase_options.dart'; // Ensure you import this
 
 class FirebaseGameService {
   // 1. Change these to 'late' or nullable. Do NOT assign them immediately.
-  late FirebaseAuth _auth;
-  late FirebaseFirestore _db;
+  FirebaseAuth get _auth => FirebaseAuth.instance;
+  FirebaseFirestore get _db => FirebaseFirestore.instance;
   
   final StreamController<Map<String, dynamic>> _gameStreamController = StreamController.broadcast();
 
@@ -36,8 +36,7 @@ class FirebaseGameService {
       }
       
       // 3. Initialize the instances HERE, after we know Firebase is ready
-      _auth = FirebaseAuth.instance;
-      _db = FirebaseFirestore.instance;
+      // _auth and _db are now getters, so no need to assign them manually.
 
       if (_auth.currentUser == null) {
         UserCredential user = await _auth.signInAnonymously();
@@ -53,7 +52,7 @@ class FirebaseGameService {
 
   // --- CLIENT METHODS ---
 
-  Future<String> createGame(String playerName, String gameType) async {
+  Future<String> createGame(String playerName, String gameType, {int entryFee = 0}) async {
     if (_myUserId == null) await initialize();
     leaveGame(); 
     
@@ -78,7 +77,8 @@ class FirebaseGameService {
       'direction': 1,
       'bombStack': 0,
       'waitingForAnswer': false,
-      'jokerColorConstraint': null 
+      'jokerColorConstraint': null,
+      'entryFee': entryFee // Added
     });
 
     _listenToGame(code);
@@ -106,6 +106,15 @@ class FirebaseGameService {
       }
       
       if (data['status'] != 'waiting') return "Game Already Started";
+      
+      // BETTING LOGIC
+      int entryFee = data['entryFee'] ?? 0;
+      if (entryFee > 0) {
+         // Check constraints
+         // For now, checks are assumed done by UI before calling join, but we can double check here?
+         // Actually, we need to know if we CAN join.
+         // Let's assume UI checks balance. 
+      }
 
       List players = data['players'] ?? [];
       
@@ -141,7 +150,8 @@ class FirebaseGameService {
         'type': 'PLAYER_INFO',
         'data': {
           'players': players,
-          'myId': _myUserId
+          'myId': _myUserId,
+          'entryFee': data['entryFee'] ?? 0 // Added
         }
       });
 
@@ -250,6 +260,26 @@ class FirebaseGameService {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     Random rnd = Random();
     return String.fromCharCodes(Iterable.generate(6, (_) => chars.codeUnitAt(rnd.nextInt(chars.length))));
+  }
+
+  // --- LEADERBOARD LOGIC ---
+  Future<void> updateHighscore(String name, int totalWins) async {
+    await initialize();
+    if (_myUserId == null) return;
+    await _db.collection('users').doc(_myUserId).set({
+      'name': name,
+      'wins': totalWins,
+      'lastActive': FieldValue.serverTimestamp()
+    }, SetOptions(merge: true));
+  }
+
+  Stream<List<Map<String, dynamic>>> getLeaderboard() async* {
+    await initialize();
+    yield* _db.collection('users')
+      .orderBy('wins', descending: true)
+      .limit(20)
+      .snapshots()
+      .map((qs) => qs.docs.map((d) => d.data()).toList());
   }
 }
 

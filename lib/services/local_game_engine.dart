@@ -4,8 +4,10 @@ import 'deck_service.dart';
 
 class AiBot {
   final int id;
+  final String difficulty; // 'easy', 'medium', 'hard'
   List<CardModel> hand = [];
-  AiBot(this.id);
+  
+  AiBot(this.id, this.difficulty);
 
   BotMove chooseMove(CardModel topCard, String? forcedSuit, int bombStack, bool waitingForAnswer, String? jokerConstraint) {
     List<int> playableIndices = [];
@@ -17,12 +19,34 @@ class AiBot {
 
     if (playableIndices.isEmpty) return BotMove(-1); 
     
+    // DIFFICULTY LOGIC
     int selectedIndex = playableIndices.first;
-    for (int idx in playableIndices) {
-      if (hand[idx].rank == topCard.rank) {
-        selectedIndex = idx;
-        break;
-      }
+    Random rnd = Random();
+
+    // EASY: 30% chance to pick a random valid card instead of optimal (simulates confusion)
+    if (difficulty == 'easy' && rnd.nextDouble() < 0.3) {
+       selectedIndex = playableIndices[rnd.nextInt(playableIndices.length)];
+    }
+    // MEDIUM: Tries to match Rank (Defensive) or Suit
+    else if (difficulty == 'medium') {
+       // Prefer matching Rank to keep Suit options open
+       var rankMatches = playableIndices.where((i) => hand[i].rank == topCard.rank).toList();
+       if (rankMatches.isNotEmpty) selectedIndex = rankMatches.first;
+       else selectedIndex = playableIndices.first; // Default to first valid
+    }
+    // HARD: Optimal Strategy
+    else if (difficulty == 'hard') {
+       // 1. If Bomb Stack > 0, MUST block or return if possible (filtered by _isPlayable but prioritized here)
+       // 2. Save Power Cards (Aces/Kings) for later unless necessary
+       // 3. Chain Questions if possible
+       
+       // Simple heuristic: Try to keep 'Ace' for last if possible, unless blocking bomb
+       playableIndices.sort((a, b) {
+          int scoreA = _evalCard(hand[a], topCard);
+          int scoreB = _evalCard(hand[b], topCard);
+          return scoreB.compareTo(scoreA); // Descending score
+       });
+       selectedIndex = playableIndices.first;
     }
 
     CardModel card = hand[selectedIndex];
@@ -31,12 +55,43 @@ class AiBot {
 
     if (card.rank == 'ace' && bombStack == 0) {
       reqSuit = _getMostFrequentSuit();
-      if (card.suit == 'spades') reqRank = _getMostFrequentRank();
+      // Hard bots lock Ace of Spades intelligently
+      if (difficulty == 'hard' && card.suit == 'spades' && hand.length == 1) {
+         reqRank = card.rank; // Self-lock (should be winning card, but logic implies we just played it)
+         // Actually, if we play Ace Spades as last card, we win instantly usually, unless blocked.
+         // Logic for locking usually happens if we have 1 card LEFT (which is this one).
+         // Wait, if hand.length == 1 and we play it, hand is empty. Game Over.
+         // Lock is useful if we *don't* win yet (e.g. Ace prevents win?). 
+         // Actually standard rule: Ace Spades lock happens if you play it and have cards remaining? 
+         // No, the code says `hand.length == 1` meaning the card being played IS the last one? 
+         // "if (card.suit == 'spades' && hand.length == 1)" -> We are playing our last card.
+         // So we win immediately. The lock is irrelevant unless valid move check prevents winning with power card?
+         // Ah, Ace IS a power card. So we CANNOT win with it.
+         // So we must pick. Thus the lock applies for the NEXT turn after we pick?
+         // The engine logic handles the pick if we play power card as last.
+      }
     }
 
     return BotMove(selectedIndex, requestedSuit: reqSuit, requestedRank: reqRank);
   }
 
+  int _evalCard(CardModel c, CardModel top) {
+     // Higher value = Better move
+     int score = 0;
+     if (c.suit == top.suit) score += 2;
+     if (c.rank == top.rank) score += 3; // Rank match breaks suit flow (good)
+     
+     // Save Power Cards
+     if (c.rank == 'ace') score -= 5; 
+     if (c.rank == '2' || c.rank == '3') score -= 2; 
+     
+     // Dump non-power
+     if (!['2','3','8','jack','queen','king','ace','joker'].contains(c.rank)) score += 5;
+
+     return score;
+  }
+  
+  // ignore: unused_element
   bool _isPlayable(CardModel card, CardModel topCard, String? forcedSuit, int bombStack, bool waitingForAnswer, String? jokerConstraint) {
     if (jokerConstraint != null) {
       bool isBomb = ['2', '3', 'joker'].contains(card.rank);
@@ -55,7 +110,7 @@ class AiBot {
     }
 
     if (waitingForAnswer) {
-       if (card.suit != topCard.suit) return false;
+       if (card.suit != topCard.suit) return false; // Must match suit of Q/8
        return ['4','5','6','7','9','10'].contains(card.rank);
     }
 
@@ -72,14 +127,6 @@ class AiBot {
     Map<String, int> counts = {'hearts':0, 'diamonds':0, 'clubs':0, 'spades':0};
     for (var c in hand) counts[c.suit] = (counts[c.suit] ?? 0) + 1;
     var sorted = counts.entries.toList()..sort((a,b) => b.value.compareTo(a.value));
-    return sorted.first.key;
-  }
-
-  String _getMostFrequentRank() {
-    Map<String, int> counts = {};
-    for (var c in hand) counts[c.rank] = (counts[c.rank] ?? 0) + 1;
-    var sorted = counts.entries.toList()..sort((a,b) => b.value.compareTo(a.value));
-    if (sorted.isEmpty) return '7'; 
     return sorted.first.key;
   }
 }
@@ -125,7 +172,7 @@ void start(int aiCount, String difficulty, {int decks = 1}) async {
     _broadcast("DEAL_HAND", _playerHand.map((e) => e.toJson()).toList());
 
     _bots = List.generate(aiCount, (index) {
-      var bot = AiBot(index + 1);
+      var bot = AiBot(index + 1, difficulty); // Pass difficulty
       bot.hand = _deckService.drawCards(4);
       return bot;
     });

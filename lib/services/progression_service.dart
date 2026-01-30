@@ -105,6 +105,60 @@ class ProgressionService {
     return base;
   }
   int getLossReward() => 15;
+
+  // --- DAILY STREAK LOGIC ---
+  static const String _lastLoginKey = 'last_login_time';
+  static const String _streakKey = 'current_streak';
+
+  Future<Map<String, dynamic>> checkDailyLogin() async {
+    final now = DateTime.now();
+    final lastTimeStr = _prefs.getString(_getKey(_lastLoginKey));
+    int streak = _prefs.getInt(_getKey(_streakKey)) ?? 0;
+
+    if (lastTimeStr == null) {
+      // First time
+      streak = 1;
+      await _logLogin(now, streak);
+      return {'streak': streak, 'reward': 100, 'canClaim': true};
+    }
+
+    final lastTime = DateTime.parse(lastTimeStr);
+    
+    // Check if same day
+    if (_isSameDay(now, lastTime)) {
+       return {'streak': streak, 'reward': 0, 'canClaim': false};
+    }
+
+    // Check if consecutive (yesterday)
+    if (_isYesterday(now, lastTime)) {
+       streak++;
+    } else {
+       // Missed a day
+       streak = 1;
+    }
+
+    // Cap streak reward logic or purely visual? 
+    // Let's cap visual streak at nothing, but reward grows.
+    int reward = 100 + ((streak - 1) * 20);
+    if (reward > 500) reward = 500; // Cap daily max
+
+    await _logLogin(now, streak);
+    return {'streak': streak, 'reward': reward, 'canClaim': true};
+  }
+
+  Future<void> _logLogin(DateTime when, int streak) async {
+    await _prefs.setString(_getKey(_lastLoginKey), when.toIso8601String());
+    await _prefs.setInt(_getKey(_streakKey), streak);
+  }
+
+  bool _isSameDay(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  bool _isYesterday(DateTime now, DateTime past) {
+    final yesterday = now.subtract(Duration(days: 1));
+    return _isSameDay(yesterday, past);
+  }
 }
 
 class ShopItem {

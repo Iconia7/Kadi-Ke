@@ -6,8 +6,13 @@ import 'game_screen.dart';
 import 'settings_screen.dart';
 import 'shop_screen.dart';
 import 'profile_screen.dart';
+import 'tournament_screen.dart'; // ADDED
+import 'leaderboard_screen.dart'; // ADDED
 import '../services/firebase_game_service.dart'; // Keep for Auth/Profile
 import '../services/online_game_service.dart';   // ADD THIS for Game Logic
+
+import '../services/progression_service.dart';
+import '../widgets/daily_reward_dialog.dart';
 
 class HomeScreen extends StatefulWidget {
   @override
@@ -44,12 +49,42 @@ Future<void> _initFirebaseCheck() async {
     try {
       // Just ensure the Game Service is ready (Auth login)
       await FirebaseGameService().initialize();
-      if (mounted) setState(() => _isFirebaseReady = true);
+      // Initialize Progression
+      String uid = FirebaseGameService().currentUserId;
+      await ProgressionService().initialize(userId: uid);
+      
+      if (mounted) {
+         setState(() => _isFirebaseReady = true);
+         _checkDailyReward();
+      }
     } catch (e) {
       print("Auth Service Error: $e");
       // Allow UI to show even if Auth fails (for Offline mode)
       if (mounted) setState(() => _isFirebaseReady = true);
     }
+  }
+
+  Future<void> _checkDailyReward() async {
+     try {
+        var res = await ProgressionService().checkDailyLogin();
+        if (res['canClaim'] == true) {
+           int reward = res['reward'];
+           int streak = res['streak'];
+           await ProgressionService().addCoins(reward); // Secure logic
+           
+           showDialog(
+             context: context,
+             barrierDismissible: false,
+             builder: (c) => DailyRewardDialog(
+               streak: streak, 
+               reward: reward, 
+               onClose: () => Navigator.pop(context),
+             )
+           );
+        }
+     } catch (e) {
+        print("Daily Reward Error: $e");
+     }
   }
 
   @override
@@ -70,9 +105,114 @@ Future<void> _initFirebaseCheck() async {
 
   // --- ONLINE METHODS (UPDATED FOR RENDER SERVER) ---
 
-void _startOnlineHost() {
+  void _startOnlineHost() {
     if (!_isFirebaseReady) return;
     
+    // show Betting Dialog FIRST, then Rules
+    showDialog(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: Text("Select Stakes", style: TextStyle(color: Colors.amber)),
+        backgroundColor: Color(0xFF1E293B),
+        children: [
+          _buildStakeOption("Casual (Free)", 0),
+          _buildStakeOption("High Stakes (100 Coins)", 100),
+          _buildStakeOption("Pro Table (500 Coins)", 500),
+        ],
+      )
+    );
+  }
+
+  Widget _buildStakeOption(String title, int fee) {
+    return SimpleDialogOption(
+       onPressed: () {
+          Navigator.pop(context);
+          _showRulesConfigDialog(fee); // NEXT: Rules
+       },
+       child: Padding(
+         padding: const EdgeInsets.symmetric(vertical: 8.0),
+         child: Row(
+            children: [
+               Icon(fee == 0 ? Icons.casino_outlined : Icons.monetization_on, color: fee == 0 ? Colors.white70 : Colors.amber),
+               SizedBox(width: 12),
+               Text(title, style: TextStyle(color: Colors.white, fontSize: 16)),
+            ],
+         ),
+       ),
+    );
+  }
+
+  void _showRulesConfigDialog(int fee) {
+     Map<String, dynamic> rules = {
+       'jokerPenalty': 5,
+       'queenAction': 'question',
+       'allowBombStacking': true
+     };
+
+     showDialog(
+        context: context,
+        builder: (context) => StatefulBuilder(
+           builder: (context, setState) {
+              return AlertDialog(
+                 backgroundColor: Color(0xFF1E293B),
+                 title: Text("House Rules", style: TextStyle(color: Colors.white)),
+                 content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                       SwitchListTile(
+                          title: Text("Allow Bomb Stacking?", style: TextStyle(color: Colors.white)),
+                          subtitle: Text("Can players reply to a bomb with a bomb?", style: TextStyle(color: Colors.white54, fontSize: 12)),
+                          value: rules['allowBombStacking'],
+                          activeColor: Colors.green,
+                          onChanged: (v) => setState(() => rules['allowBombStacking'] = v),
+                       ),
+                       ListTile(
+                          title: Text("Joker Penalty", style: TextStyle(color: Colors.white)),
+                          trailing: DropdownButton<int>(
+                             value: rules['jokerPenalty'],
+                             dropdownColor: Color(0xFF2E3E5E),
+                             style: TextStyle(color: Colors.white),
+                             items: [5, 10].map((e) => DropdownMenuItem(value: e, child: Text("Pick $e"))).toList(),
+                             onChanged: (v) => setState(() => rules['jokerPenalty'] = v),
+                          ),
+                       ),
+                       ListTile(
+                          title: Text("Queen Action", style: TextStyle(color: Colors.white)),
+                          trailing: DropdownButton<String>(
+                             value: rules['queenAction'],
+                             dropdownColor: Color(0xFF2E3E5E),
+                             style: TextStyle(color: Colors.white),
+                             items: [
+                               DropdownMenuItem(value: 'question', child: Text("Question")),
+                               DropdownMenuItem(value: 'skip', child: Text("Skip Turn")),
+                             ].toList(),
+                             onChanged: (v) => setState(() => rules['queenAction'] = v),
+                          ),
+                       ),
+                    ],
+                 ),
+                 actions: [
+                    TextButton(onPressed: () => _createOnlineRoom(fee, rules), child: Text("START GAME", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)))
+                 ],
+              );
+           }
+        )
+     );
+  }
+
+  void _createOnlineRoom(int fee, Map<String, dynamic> rules) {
+    Navigator.pop(context); // Close Rules Dialog
+
+    if (fee > 0) {
+       // Check balance
+       int balance = ProgressionService().getCoins();
+       if (balance < fee) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Not enough coins! Need $fee.")));
+          return;
+       }
+       ProgressionService().spendCoins(fee); // Pay Entry
+    }
+
     // 1. Show Loading Spinner
     showDialog(
       context: context,
@@ -82,20 +222,18 @@ void _startOnlineHost() {
 
     // 2. Listen for Server Response
     StreamSubscription? subscription;
-    bool hasNavigated = false; // Flag to ensure we don't act twice
+    bool hasNavigated = false; 
 
     subscription = OnlineGameService().gameStream.listen((data) {
       if (data['type'] == 'ROOM_CREATED') {
         hasNavigated = true;
         
-        // 3. Server replied! Get the code
         String roomCode = data['data'];
-        subscription?.cancel(); // Stop listening
+        subscription?.cancel(); 
         
         if (mounted) {
           Navigator.pop(context); // Close spinner
 
-          // 4. Navigate to Game Screen
           Navigator.push(context, MaterialPageRoute(builder: (context) => 
             GameScreen(
               isHost: true, 
@@ -107,26 +245,14 @@ void _startOnlineHost() {
         }
       }
     });
+    
+    OnlineGameService().createGame("Player", _selectedGameMode, entryFee: fee, rules: rules);
 
-    // ✅ ADD THIS: Safety Timeout (15 Seconds)
-    // If the server doesn't reply in 15s, stop spinning.
     Future.delayed(Duration(seconds: 15), () {
       if (!hasNavigated && mounted && Navigator.canPop(context)) {
         Navigator.pop(context); // Close spinner
-        subscription?.cancel(); // Stop listening
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("Server is waking up... Please press Create again!"),
-            backgroundColor: Colors.orange,
-            duration: Duration(seconds: 4),
-          )
-        );
       }
     });
-
-    // 5. Send Request (Now calls the async version from step 1)
-    OnlineGameService().createGame("Player", _selectedGameMode); 
   }
 
   void _joinOnlineGame() {
@@ -427,6 +553,10 @@ void _startOnlineHost() {
                       _buildMenuButton("SINGLE PLAYER", Icons.person, Colors.blueAccent, _showSinglePlayerDialog),
                       SizedBox(height: 20),
                       _buildMenuButton("MULTIPLAYER", Icons.groups, Colors.deepPurpleAccent, _showMultiplayerDialog),
+                      SizedBox(height: 20),
+                      _buildMenuButton("TOURNAMENT", Icons.emoji_events, Colors.orange, () => Navigator.push(context, MaterialPageRoute(builder: (c) => TournamentScreen()))),
+                      SizedBox(height: 20),
+                      _buildMenuButton("LEADERBOARD", Icons.bar_chart, Colors.purpleAccent, () => Navigator.push(context, MaterialPageRoute(builder: (c) => LeaderboardScreen()))),
                       SizedBox(height: 60),
                       
                       // Bottom Row (Fixed: Removed the Positioned widget from here)
@@ -435,7 +565,7 @@ void _startOnlineHost() {
                         children: [
                           _buildIconButton("Shop", Icons.shopping_bag_outlined, Colors.amber, () => Navigator.push(context, MaterialPageRoute(builder: (_) => ShopScreen()))),
                           SizedBox(width: 40),
-                          _buildIconButton("Profile", Icons.bar_chart_rounded, Colors.greenAccent, () => Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen()))),
+                          _buildIconButton("Profile", Icons.account_circle, Colors.greenAccent, () => Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen()))),
                         ],
                       ),
                     ],

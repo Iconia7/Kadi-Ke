@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:async';
 import 'dart:math';
+import 'dart:io'; // For Platform info if needed
+import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -86,6 +88,7 @@ class GameRoom {
   String gameType = 'kadi'; // 'kadi' or 'gofish'
   bool isGameStarted = false;
   int currentPlayerIndex = 0;
+  int entryFee = 0; // Added for Betting
   
   // MUSIC STATE
   List<Map<String, dynamic>> musicQueue = [];
@@ -102,12 +105,19 @@ class GameRoom {
   String? forcedRank;
   String? jokerColorConstraint;
 
+  // HOUSE RULES
+  Map<String, dynamic> rules = {
+    'jokerPenalty': 5, // 5 or 10
+    'queenAction': 'question', // 'question' or 'skip'
+    'allowBombStacking': true // true or false
+  };
+
   GameRoom(this.code);
 
   void broadcast(String type, dynamic data) {
     String payload = jsonEncode({"type": type, "data": data});
     for (var p in players) {
-      try { p.socket.sink.add(payload); } catch (e) { print("Socket error: $e"); }
+      try { p.socket.sink.add(payload); } catch (e) { MultiGameServer._log("Socket error for ${p.id}: $e", level: 'ERROR'); }
     }
   }
   
@@ -128,52 +138,73 @@ class GameRoom {
 class MultiGameServer {
   final Map<String, GameRoom> _rooms = {}; 
 
-Future<void> _start() async {
-    var handler = webSocketHandler(
+  static void _log(String message, {String level = 'INFO'}) {
+    final time = DateTime.now().toIso8601String();
+    print("[$time] [$level] $message");
+  }
+
+  Future<void> _start() async {
+    // WebSocket Handler
+    var wsHandler = webSocketHandler(
       (WebSocketChannel socket) {
         String? playerId;
         String? currentRoomCode;
 
         socket.stream.listen((message) {
-          final data = jsonDecode(message);
-          String type = data['type'];
+          try {
+             final data = jsonDecode(message);
+             // Basic Sanity Check
+             if (data == null || data['type'] == null) return;
 
-          // --- LOBBY MANAGEMENT ---
-          if (type == 'CREATE_GAME') {
-            String roomCode = _generateRoomCode();
-            _rooms[roomCode] = GameRoom(roomCode);
-            _rooms[roomCode]!.gameType = data['gameType'] ?? 'kadi';
-            socket.sink.add(jsonEncode({"type": "ROOM_CREATED", "data": roomCode}));
-          }
-          else if (type == 'JOIN_GAME') {
-            String code = data['roomCode'].toString().toUpperCase();
-            String name = data['name'];
-            
-            if (_rooms.containsKey(code)) {
-              currentRoomCode = code;
-              playerId = DateTime.now().millisecondsSinceEpoch.toString(); 
-              
-              Player newPlayer = Player(playerId!, name, socket);
-              _rooms[code]!.players.add(newPlayer);
-              
-              _broadcastPlayerInfo(_rooms[code]!);
-              
-              // Sync Music on join
-              if (_rooms[code]!.currentMusicId != null) {
-                 socket.sink.add(jsonEncode({
-                   "type": "MUSIC_UPDATE", 
-                   "data": {'videoId': _rooms[code]!.currentMusicId, 'title': _rooms[code]!.currentMusicTitle}
-                 }));
-              }
-            } else {
-              socket.sink.add(jsonEncode({"type": "ERROR", "data": "Room not found"}));
-            }
-          }
-          
-          // --- GAME ACTIONS ---
-          else if (currentRoomCode != null && _rooms.containsKey(currentRoomCode)) {
-             GameRoom room = _rooms[currentRoomCode]!;
-             _handleGameAction(room, playerId!, type, data);
+             String type = data['type'];
+
+             // --- LOBBY MANAGEMENT ---
+             if (type == 'CREATE_GAME') {
+               String roomCode = _generateRoomCode();
+               _rooms[roomCode] = GameRoom(roomCode);
+               _rooms[roomCode]!.gameType = data['gameType'] ?? 'kadi';
+               _rooms[roomCode]!.entryFee = data['entryFee'] ?? 0;
+               if (data['rules'] != null) {
+                  _rooms[roomCode]!.rules = data['rules'];
+               }
+               socket.sink.add(jsonEncode({"type": "ROOM_CREATED", "data": roomCode}));
+               _log("Room Created: $roomCode Rules: ${_rooms[roomCode]!.rules}");
+             }
+             else if (type == 'JOIN_GAME') {
+               String code = data['roomCode'].toString().toUpperCase();
+               String name = data['name'];
+               
+               if (_rooms.containsKey(code)) {
+                 currentRoomCode = code;
+                 playerId = DateTime.now().millisecondsSinceEpoch.toString(); 
+                 
+                 Player newPlayer = Player(playerId!, name, socket);
+                 _rooms[code]!.players.add(newPlayer);
+                 
+                 _broadcastPlayerInfo(_rooms[code]!);
+                 
+                 // Sync Music on join
+                 if (_rooms[code]!.currentMusicId != null) {
+                    socket.sink.add(jsonEncode({
+                      "type": "MUSIC_UPDATE", 
+                      "data": {'videoId': _rooms[code]!.currentMusicId, 'title': _rooms[code]!.currentMusicTitle}
+                    }));
+                 }
+                 _log("Player $name joined room $code");
+               } else {
+                 socket.sink.add(jsonEncode({"type": "ERROR", "data": "Room not found"}));
+               }
+             }
+             
+             // --- GAME ACTIONS ---
+             else if (currentRoomCode != null && _rooms.containsKey(currentRoomCode)) {
+                GameRoom room = _rooms[currentRoomCode]!;
+                _handleGameAction(room, playerId!, type, data);
+             }
+
+          } catch (e, stack) {
+             _log("Error processing message: $e", level: 'ERROR');
+             // Optionally print stack trace during dev: print(stack);
           }
 
         }, onDone: () {
@@ -185,56 +216,76 @@ Future<void> _start() async {
              // If room is empty, delete it
              if (room.players.isEmpty) {
                _rooms.remove(currentRoomCode);
-               print("Room $currentRoomCode deleted.");
+               _log("Room $currentRoomCode deleted (Empty).");
              } else {
                // Notify others that player left
                _broadcastPlayerInfo(room);
+               _log("Player left room $currentRoomCode. Rem: ${room.players.length}");
              }
           }
         }, onError: (error) {
-           print("Socket Error: $error");
+           _log("WebSocket Error: $error", level: 'ERROR');
         });
       },
       // ✅ VITAL FIX: Keep connection alive by pinging every 10 seconds
       pingInterval: Duration(seconds: 10), 
     );
 
+    // Main Pipeline with Health Check
+    var handler = Pipeline()
+      .addMiddleware(logRequests())
+      .addHandler((Request request) {
+         if (request.url.path == 'health') {
+           return Response.ok('{"status": "ok", "rooms": ${_rooms.length}}', headers: {'content-type': 'application/json'});
+         }
+         return wsHandler(request);
+      });
+
     // Listen on 0.0.0.0 for Render
     var server = await shelf_io.serve(handler, '0.0.0.0', 8080);
-    print('Game Server running on port ${server.port}');
+    _log('Game Server running on port ${server.port}');
   }
 
   void _handleGameAction(GameRoom room, String pid, String type, dynamic data) {
-     if (type == 'CHAT') {
-        room.broadcast("CHAT", {"sender": data['senderName'], "message": data['message']});
-        return;
-     }
-     if (type == 'ADD_TO_QUEUE') {
-        room.musicQueue.add(data['data']);
-        if (room.currentMusicId == null) _playNextSong(room);
-        else room.broadcast("QUEUE_UPDATE", {'queue': room.musicQueue});
-        return;
-     }
-     if (type == 'SONG_ENDED') {
-        _playNextSong(room);
-        return;
-     }
-     if (type == 'START_GAME') {
-        _startGame(room, data['decks'] ?? 1);
-        return;
-     }
+     try {
+       if (type == 'CHAT') {
+          room.broadcast("CHAT", {"sender": data['senderName'], "message": data['message']});
+          return;
+       }
+       if (type == 'EMOTE') {
+          // Broadcast to all, including sender so they see it too (or exclude sender if local handled)
+          room.broadcast("EMOTE", {"senderId": pid, "emote": data['emote']});
+          return;
+       }
+       if (type == 'ADD_TO_QUEUE') {
+          room.musicQueue.add(data['data']);
+          if (room.currentMusicId == null) _playNextSong(room);
+          else room.broadcast("QUEUE_UPDATE", {'queue': room.musicQueue});
+          return;
+       }
+       if (type == 'SONG_ENDED') {
+          _playNextSong(room);
+          return;
+       }
+       if (type == 'START_GAME') {
+          _startGame(room, data['decks'] ?? 1);
+          return;
+       }
 
-     // --- GAMEPLAY ROUTER ---
-     int pIndex = room.players.indexWhere((p) => p.id == pid);
-     if (pIndex != -1 && pIndex == room.currentPlayerIndex) {
-        
-        if (room.gameType == 'kadi') {
-           if (type == 'PLAY_CARD') _handleKadiPlay(room, pIndex, data);
-           else if (type == 'PICK_CARD') _handleKadiPick(room, pIndex);
-        } 
-        else if (room.gameType == 'gofish') {
-           if (type == 'ASK_CARD') _handleGoFishAsk(room, pIndex, data);
-        }
+       // --- GAMEPLAY ROUTER ---
+       int pIndex = room.players.indexWhere((p) => p.id == pid);
+       if (pIndex != -1 && pIndex == room.currentPlayerIndex) {
+          
+          if (room.gameType == 'kadi') {
+             if (type == 'PLAY_CARD') _handleKadiPlay(room, pIndex, data);
+             else if (type == 'PICK_CARD') _handleKadiPick(room, pIndex);
+          } 
+          else if (room.gameType == 'gofish') {
+             if (type == 'ASK_CARD') _handleGoFishAsk(room, pIndex, data);
+          }
+       }
+     } catch (e) {
+       _log("Game Action Error: $e", level: 'ERROR');
      }
   }
 
@@ -243,6 +294,7 @@ Future<void> _start() async {
   // ==========================================
 
   void _startGame(GameRoom room, int decks) {
+     _log("Starting game in room ${room.code} with $decks decks");
      room.deckService.initializeDeck(decks: decks);
      room.deckService.shuffle();
      room.currentPlayerIndex = 0;
@@ -357,6 +409,7 @@ Future<void> _start() async {
      if (totalBooks == 13 || (room.deckService.remainingCards == 0 && room.players.every((pl)=>pl.hand.isEmpty))) {
         Player winner = room.players.reduce((curr, next) => curr.books > next.books ? curr : next);
         room.broadcast("GAME_OVER", "${winner.name} Wins with ${winner.books} books!");
+        _log("Game Over in room ${room.code}. Winner: ${winner.name}");
      }
   }
 
@@ -387,9 +440,16 @@ Future<void> _start() async {
 
      // Bomb Logic
      bool isBomb = ['2','3','joker'].contains(card.rank);
+     
+     // Stacking Rule
+     if (room.bombStack > 0 && isBomb && room.rules['allowBombStacking'] == false) {
+        // You cannot stack! You sent a "move" that should be invalid or handled?
+        // Actually, _isValidKadiMove should handle prevention.
+     }
+
      if (card.rank == '2') room.bombStack += 2;
      else if (card.rank == '3') room.bombStack += 3;
-     else if (card.rank == 'joker') room.bombStack += 5;
+     else if (card.rank == 'joker') room.bombStack += (room.rules['jokerPenalty'] as int); // Rule Applied
 
      // Ace Logic
      if (card.rank == 'ace') {
@@ -416,7 +476,15 @@ Future<void> _start() async {
      // Turn Flow & Specials
      bool turnEnds = true;
      int skip = 0;
-     if (card.rank == 'queen' || card.rank == '8') { room.waitingForAnswer = true; turnEnds = false; }
+     
+     if (card.rank == 'queen') {
+        if (room.rules['queenAction'] == 'skip') {
+           skip = (room.bombStack > 0) ? 0 : 1;
+        } else {
+           room.waitingForAnswer = true; turnEnds = false;
+        }
+     }
+     else if (card.rank == '8') { room.waitingForAnswer = true; turnEnds = false; }
      else if (room.waitingForAnswer) { room.waitingForAnswer = false; }
      else if (card.rank == 'king') room.direction *= -1;
      else if (card.rank == 'jack') skip = (room.bombStack > 0) ? 0 : 1;
@@ -442,6 +510,7 @@ Future<void> _start() async {
              return;
         }
         room.broadcast("GAME_OVER", "${player.name} Wins!");
+        _log("Game Over in room ${room.code}. Winner: ${player.name}");
         return;
      }
 
@@ -469,6 +538,7 @@ Future<void> _start() async {
         room.deckService.addCards(room.discardPile); room.discardPile.clear(); room.deckService.shuffle();
         int needed = count - drawn.length;
         drawn.addAll(room.deckService.drawCards(needed));
+        _log("Deck reshuffled in room ${room.code}");
      }
      player.hand.addAll(drawn);
      
@@ -490,6 +560,15 @@ Future<void> _start() async {
         return color == room.jokerColorConstraint;
      }
      if (room.bombStack > 0) {
+        if (room.rules['allowBombStacking'] == false) {
+           return false; // MUST PICK if stacking disabled
+           // Wait, usually player picks via PICK_CARD. So if they try to PLAY a card, it must be valid.
+           // If they have a bomb, can they play it? No.
+           // But wait, if stacking is false, then a Bomb is an attack that cannot be countered.
+           // So NO card is valid? Except maybe Ace/King to block/reverse if allowed?
+           // Kadi rules vary. Typically "No Stacking" means you eat the damage.
+           // So if stack > 0, you cannot play 2,3,Joker.
+        }
         if (['2','3','joker'].contains(card.rank)) return true;
         if (['ace','king','jack'].contains(card.rank)) return true;
         return false;
@@ -547,9 +626,16 @@ Future<void> _start() async {
      List<Map<String, dynamic>> pList = room.players.asMap().entries.map((e) => 
         {'id': e.value.id, 'name': e.value.name, 'index': e.key}
      ).toList();
-     for (var p in room.players) {
-        p.socket.sink.add(jsonEncode({ "type": "PLAYER_INFO", "data": {"players": pList, "myId": p.id} }));
-     }
+      for (var p in room.players) {
+         p.socket.sink.add(jsonEncode({ 
+            "type": "PLAYER_INFO", 
+            "data": {
+               "players": pList, 
+               "myId": p.id,
+               "entryFee": room.entryFee // Broadcast Entry Fee
+            } 
+         }));
+      }
   }
 
   String _generateRoomCode() {

@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart'; // Import this
 import '../services/sound_service.dart';
 import '../services/firebase_game_service.dart';
+import '../services/online_game_service.dart'; // Add this
 
 class SettingsScreen extends StatefulWidget {
   @override
@@ -12,6 +13,7 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _isMuted = false;
   final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _urlController = TextEditingController();
   
   // 1. CHANGE: Make _db nullable and remove immediate initialization
   FirebaseFirestore? _db; 
@@ -180,6 +182,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           const SizedBox(height: 30),
 
+          _buildSectionHeader("NETWORK (Advanced)"),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white10,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text("Server URL", style: TextStyle(color: Colors.white54, fontSize: 12)),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _urlController,
+                  onSubmitted: (val) {
+                     OnlineGameService().setServerUrl(val);
+                     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("URL Updated!"), backgroundColor: Colors.green));
+                  },
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                  decoration: InputDecoration(
+                    hintText: "wss://kadi-ke.onrender.com",
+                    hintStyle: const TextStyle(color: Colors.white30),
+                    isDense: true,
+                    filled: true,
+                    fillColor: Colors.black26,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                  ),
+                ),
+                SizedBox(height: 8),
+                Text("Requires App Restart to apply fully if changed mid-game.", style: TextStyle(color: Colors.amber, fontSize: 10)),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 30),
+
           _buildSectionHeader("LEGAL"),
           Container(
             decoration: BoxDecoration(
@@ -205,7 +243,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           
           const SizedBox(height: 40),
           Center(
-            child: Text("Kadi Ke v1.0.0", style: TextStyle(color: Colors.white24, fontStyle: FontStyle.italic)),
+            child: Text("Kadi Ke v1.1.0", style: TextStyle(color: Colors.white24, fontStyle: FontStyle.italic)),
           ),
         ],
       ),

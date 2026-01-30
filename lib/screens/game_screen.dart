@@ -5,7 +5,9 @@ import 'package:card_game_ke/services/firebase_game_service.dart';
 import 'package:card_game_ke/services/online_game_service.dart';
 import 'package:card_game_ke/services/theme_service.dart';
 import 'package:card_game_ke/services/progression_service.dart';
+import 'package:flutter/services.dart'; // ADDED for Haptics
 import 'package:flutter/material.dart';
+import '../services/achievement_service.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:confetti/confetti.dart';
 import 'package:in_app_update/in_app_update.dart'; 
@@ -15,6 +17,7 @@ import '../services/deck_service.dart';
 import '../services/sound_service.dart';
 import '../services/local_game_engine.dart';
 import '../services/go_fish_engine.dart';
+import '../widgets/flying_emoji.dart'; // Add Import
 
 class GameScreen extends StatefulWidget {
   final bool isHost;
@@ -49,6 +52,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   GameServer? _server;
   FirebaseHostEngine? _onlineHostEngine;
   StreamSubscription? _gameSubscription;
+  StreamSubscription? _statusSubscription; // New subscription
   dynamic _localEngine;
   
   List<PlayerInfo> _players = [];
@@ -94,6 +98,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   bool _chatDialogOpen = false;
   final TextEditingController _chatController = TextEditingController();
   bool _hasUnreadMessages = false; 
+  Map<int, List<String>> _activeEmotes = {}; // Maps Player Index to list of active emoji strings 
 
   // --- ANIMATION CONTROLLERS ---
   late ConfettiController _confettiController;
@@ -108,6 +113,9 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   bool _isAnimatingCard = false;
   int? _animatingCardIndex;
   CardModel? _animatingCard;
+
+  // Emote State
+
 
   // Getters
   bool get _isOffline => widget.hostAddress == 'offline';
@@ -139,7 +147,57 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     _checkForUpdate();
     
     _initializeConnection();
+    
+    // Listen to Connection Status
+    if (_isOnline) {
+       _statusSubscription = OnlineGameService().connectionStatus.listen((status) {
+          if (!mounted) return;
+          if (status == ConnectionStatus.disconnected) {
+             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: Row(children: [Icon(Icons.wifi_off, color: Colors.white), SizedBox(width: 10), Text("Disconnected! Reconnecting...")]),
+                backgroundColor: Colors.red,
+                duration: Duration(days: 1), // Persistent
+             ));
+          } else if (status == ConnectionStatus.connected) {
+             ScaffoldMessenger.of(context).hideCurrentSnackBar();
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: Text("Connected!"), backgroundColor: Colors.green, duration: Duration(seconds: 2)
+             ));
+          }
+       });
+    }
+
+    // Start Pulse Controller for Intense Mode
+    _pulseController.repeat(reverse: true);
   }
+
+  // --- INTENSE MODE STATE ---
+  bool _isIntenseMode = false;
+  CardModel? _lastPlayedCard; // Track for Achievements
+  int _entryFee = 0; // Betting Stakes
+  bool _hasPaidEntry = false; // Ensure we pay only once
+
+
+
+  void _updateIntenseMode() {
+     bool intense = false;
+     // Intense if bomb stack is high
+     if (_currentBombStack > 0) intense = true;
+     // Intense if any player (including me) has 1 card
+     if (_myHand.length == 1) intense = true;
+     for(var p in _players) {
+        // We need to know opponent hand size. 
+        // Currently _players stores PlayerInfo but not hand size directly unless we sync it.
+        // We do have 'UPDATE_TABLE' but usually hand counts are synced or we assume based on something else.
+        // For now, let's just use bomb stack or if *I* have 1 card.
+     }
+     
+     if (_isIntenseMode != intense) {
+        setState(() => _isIntenseMode = intense);
+        if (intense) SoundService.play('heartbeat'); // Loop this? For now just one cue.
+     }
+  }
+
 
   // --- IN-APP UPDATE CHECK ---
   Future<void> _checkForUpdate() async {
@@ -248,6 +306,17 @@ if (_isOnline) {
         ],
       ),
     );
+  }
+
+  void _showAchievementSnackbar(String text) {
+     ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+           content: Row(children: [Icon(Icons.emoji_events, color: Colors.amber), SizedBox(width: 8), Text(text)]),
+           backgroundColor: Colors.purple.withOpacity(0.9),
+           behavior: SnackBarBehavior.floating,
+           duration: Duration(seconds: 4),
+        )
+     );
   }
 
 
@@ -415,9 +484,23 @@ if (_isOnline) {
       try {
         me = parsedPlayers.firstWhere((p) => p.id == myId);
       } catch (e) { }
+       
+      int fee = 0;
+      if (dataMap['entryFee'] != null) {
+          fee = dataMap['entryFee'];
+      }
 
       setState(() {
         _players = parsedPlayers;
+        _entryFee = fee;
+        
+        // Deduct Entry Fee if not Host (Host paid in Home Screen)
+        // Only if I'm online and haven't paid yet
+        if (_entryFee > 0 && !_hasPaidEntry && !widget.isHost && _isOnline) {
+             _payEntryFee();
+        }
+        if (widget.isHost) _hasPaidEntry = true;
+        
         if (me != null) {
           _myPlayerId = me.index;
           _myName = me.name;
@@ -460,6 +543,7 @@ if (_isOnline) {
 
         if (_isMyTurn && !wasMyTurn) {
            SoundService.play('turn'); 
+           HapticFeedback.mediumImpact(); // Turn Alert
            _selectedRankToAsk = null;
            _selectedOpponentIndex = null;
         }
@@ -475,6 +559,15 @@ if (_isOnline) {
     }
     else if (type == 'GAME_OVER') {
       _handleGameOver(data['data']);
+    }
+    else if (type == 'EMOTE') {
+       int senderId = -1;
+       // Find player index by sender ID
+       String sid = data['data']['senderId'];
+       var p = _players.firstWhere((pl) => pl.id == sid, orElse: () => PlayerInfo(id: '', name: '', index: -1));
+       if (p.index != -1) {
+          _triggerEmote(p.index, data['data']['emote']);
+       }
     }
     else if (type == 'ERROR') {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(data['data']), backgroundColor: Colors.red));
@@ -590,7 +683,17 @@ bool _validateLocalMove(CardModel card) {
     });
     
     SoundService.play('throw'); 
+    HapticFeedback.lightImpact(); // Card Thrown
     
+    _lastPlayedCard = card;
+    
+    // Achievement: Bomb Squad
+    if (['2','3','joker'].contains(card.rank) && _currentBombStack > 0) {
+       AchievementService().unlock('bomb_squad').then((unlocked) {
+          if (unlocked) _showAchievementSnackbar("Bomb Squad Unlocked! 💣");
+       });
+    }
+
     try {
       await _cardThrowController.forward();
     } catch (e) {
@@ -622,13 +725,26 @@ bool _validateLocalMove(CardModel card) {
 
   void _pickCard() {
     if (!_isMyTurn) return;
+    HapticFeedback.selectionClick(); // Interaction
     if (_isOnline) {
-      OnlineGameService().sendAction("PICK_CARD", {});
+        OnlineGameService().sendAction("PICK_CARD", {});
     } else if (_isOffline) {_localEngine!.pickCard();}
     else {_channel?.sink.add(jsonEncode({"type": "PICK_CARD"}));}
   }
 
- void _startGame() async {
+  Future<void> _payEntryFee() async {
+     bool success = await ProgressionService().spendCoins(_entryFee);
+     if (success) {
+        _hasPaidEntry = true;
+        _showAchievementSnackbar("Paid $_entryFee Coins Entry");
+     } else {
+        // Not enough money
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Not enough coins for this room! Entry: $_entryFee"), backgroundColor: Colors.red));
+     }
+  }
+
+  void _startGame() async {
     int decks = 1;
     if (!_isOffline && widget.isHost && _connectedPlayers > 6) {
       final choice = await _showDeckChoiceDialog(_connectedPlayers);
@@ -654,21 +770,40 @@ bool _validateLocalMove(CardModel card) {
     SoundService.play('deal');
   }
 
+
+
   @override
   Widget build(BuildContext context) {
     final theme = TableThemes.getTheme(_currentThemeId);
+    
+    // Dynamic Gradient for Intense Mode
+    List<Color> bgColors = theme.gradientColors;
+    if (_isIntenseMode) {
+       // Oscillate slightly red/darker
+       bgColors = [
+         Color.lerp(theme.gradientColors[0], Colors.red.shade900, _pulseController.value * 0.5)!,
+         Color.lerp(theme.gradientColors[1], Colors.black, _pulseController.value * 0.5)!
+       ];
+    }
 
-    return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: theme.gradientColors,
+    return AnimatedBuilder(
+      animation: _pulseController, // Rebuild on pulse
+      builder: (context, child) {
+        return Scaffold(
+          body: Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: bgColors,
+              ),
+            ),
+            child: child,
           ),
-        ),
-        child: Stack(
-          children: [
+        );
+      },
+      child: Stack(
+          children: [ // Content Stack
             Positioned.fill(
               child: Opacity(
                 opacity: 0.05,
@@ -691,10 +826,56 @@ bool _validateLocalMove(CardModel card) {
             if (_isAnimatingCard && _animatingCard != null)
                _buildFlyingCard(),
 
+            _buildEmoteLayer(), // ADDED: Emote Layer
+
             _buildChatButton(theme),
             Align(alignment: Alignment.topCenter, child: ConfettiWidget(confettiController: _confettiController, shouldLoop: false)),
           ],
         ),
+      );
+  }
+
+  Widget _buildChatButton(ThemeModel theme) {
+    return Positioned(
+      bottom: 20,
+      right: 20,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Emote Button
+          GestureDetector(
+             onTap: _showEmoteMenu,
+             child: Container(
+               padding: EdgeInsets.all(12),
+               decoration: BoxDecoration(
+                 color: Colors.amber,
+                 shape: BoxShape.circle,
+                 boxShadow: [BoxShadow(color: Colors.black45, blurRadius: 8, offset: Offset(0, 4))],
+               ),
+               child: Icon(Icons.emoji_emotions, color: Colors.black, size: 28),
+             ),
+          ),
+          SizedBox(width: 16),
+          // Chat Button
+          Stack(
+            children: [
+              FloatingActionButton(
+                backgroundColor: theme.accentColor,
+                onPressed: () => _showChatDialog(),
+                child: Icon(Icons.chat_bubble, color: Colors.black),
+              ),
+              if (_hasUnreadMessages)
+                Positioned(
+                  right: 0, top: 0,
+                  child: Container(
+                    padding: EdgeInsets.all(4),
+                    decoration: BoxDecoration(color: Colors.red, shape: BoxShape.circle),
+                    constraints: BoxConstraints(minWidth: 12, minHeight: 12),
+                  ),
+                )
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -1062,14 +1243,36 @@ Future<void> _handleGameOver(String msg) async {
     // 1. Handle Stats & Coins
     if (didIWin) {
       coinsEarned = 100;
-      await ProgressionService().addCoins(coinsEarned);
-      await ProgressionService().recordGameResult(true);
+      if (_isOnline) {
+         int totalWins = await ProgressionService().getTotalWins();
+         await FirebaseGameService().updateHighscore(_myName, totalWins);
+         
+         if (_entryFee > 0) {
+            int winnings = _entryFee * _players.length;
+            await ProgressionService().addCoins(winnings);
+            _showAchievementSnackbar("won $winnings Coins!");
+         }
+      }
       
+      // Achievement: First Win & Sniper & Rich Kid
+      await AchievementService().unlock('first_win').then((u) { if(u) _showAchievementSnackbar("First Blood 🩸"); });
+      
+      if (_lastPlayedCard?.rank == 'ace') {
+         await AchievementService().unlock('sniper').then((u) { if(u) _showAchievementSnackbar("Sniper 🎯"); });
+      }
+      
+      int coins = await ProgressionService().getCoins();
+      if (coins >= 1000) {
+         await AchievementService().unlock('rich_kid').then((u) { if(u) _showAchievementSnackbar("Rich Kid 💰"); });
+      }
+
       _confettiController.play();
       SoundService.play('win');
+      HapticFeedback.heavyImpact(); // VICTORY!
     } else {
       await ProgressionService().recordGameResult(false);
       SoundService.play('error'); // or a 'defeat' sound
+      HapticFeedback.heavyImpact(); // DEFEAT :(
     }
 
     // 2. Show Dialog
@@ -1164,8 +1367,8 @@ Future<void> _handleGameOver(String msg) async {
                       // --- EXIT BUTTON (Goes to Home) ---
                       TextButton(
                         onPressed: () {
-                          // Pop until we hit the first route (Home Screen)
-                          Navigator.of(context).popUntil((route) => route.isFirst);
+                          Navigator.pop(context); 
+                          Navigator.pop(context, didIWin ? 'WON' : 'LOST'); 
                         }, 
                         child: Text(
                           "EXIT", 
@@ -1253,16 +1456,7 @@ Future<void> _handleGameOver(String msg) async {
     } catch (e) { print(e); }
   }
   
-  Widget _buildChatButton(ThemeModel theme) {
-    return Positioned(
-      right: 20, bottom: 200, 
-      child: FloatingActionButton(
-        backgroundColor: theme.accentColor,
-        child: Icon(_hasUnreadMessages ? Icons.mark_chat_unread : Icons.chat_bubble, color: Colors.black),
-        onPressed: () { setState(()=>_hasUnreadMessages=false); _showChatDialog(); },
-      ),
-    );
-  }
+
 
   Widget _chatBubble(Map<String, dynamic> msg) {
     final bool isMe = msg['sender'] == _myName;
@@ -1369,7 +1563,110 @@ Future<void> _handleGameOver(String msg) async {
 
     _chatController.clear();
   }
-  
+
+  // --- VOICE LOGIC ---
+  void _playVoiceLine(String type) {
+     // Placeholder for voice lines.
+     // e.g. SoundService.play('voice_$type');
+     // 'win', 'lose', 'uno', 'pick'
+  }
+
+  // --- EMOTE LOGIC ---
+  void _triggerEmote(int playerIndex, String emote) {
+      if (!_activeEmotes.containsKey(playerIndex)) _activeEmotes[playerIndex] = [];
+      setState(() {
+         _activeEmotes[playerIndex]!.add(emote);
+      });
+      SoundService.play('pop'); // Reuse a sound or add 'pop'
+  }
+
+  Widget _buildEmoteLayer() {
+     // Overlay that maps players to positions
+     List<Widget> emojis = [];
+     
+     _activeEmotes.forEach((pIndex, emoteList) {
+        // Determine position
+        bool isMe = pIndex == _myPlayerId;
+        // Simple mapping: Me = Bottom Center. Others = Top Center (for now)
+        // Ideally we map to the exact avatar position, but simpler is fine.
+        double top = isMe ? MediaQuery.of(context).size.height - 200 : 100;
+        double left = MediaQuery.of(context).size.width / 2;
+
+        if (!isMe && opponents.isNotEmpty) {
+           // Try to find specific opponent index visual
+           int screenIdx = opponents.indexWhere((p) => p.index == pIndex);
+           if (screenIdx != -1) {
+              // Distribute along top based on list index
+              double step = MediaQuery.of(context).size.width / (opponents.length + 1);
+              left = step * (screenIdx + 1);
+              top = 80; // Near top bar
+           }
+        }
+
+        for (var emote in emoteList) {
+           emojis.add(
+             Positioned(
+               top: top, left: left - 20, // Center it
+               child: FlyingEmoji(
+                 emoji: emote, 
+                 onComplete: () {
+                    if (mounted) {
+                      setState(() {
+                         _activeEmotes[pIndex]?.remove(emote);
+                      });
+                    }
+                 }
+               )
+             )
+           );
+        }
+     });
+     
+     return IgnorePointer(child: Stack(children: emojis));
+  }
+
+  void _showEmoteMenu() {
+     showModalBottomSheet(
+       context: context, 
+       backgroundColor: Colors.transparent,
+       builder: (c) => Container(
+          padding: EdgeInsets.all(24),
+          decoration: BoxDecoration(
+             color: Color(0xFF1E293B),
+             borderRadius: BorderRadius.vertical(top: Radius.circular(24))
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+               Text("SEND EMOTE", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+               SizedBox(height: 20),
+               Wrap(
+                 spacing: 20, runSpacing: 20,
+                 children: ['😂','😎','😡','😭','❤️','👍','👋','🤔'].map((e) => 
+                    GestureDetector(
+                       onTap: () {
+                          Navigator.pop(context);
+                          _sendEmote(e);
+                       },
+                       child: Text(e, style: TextStyle(fontSize: 40)),
+                    )
+                 ).toList(),
+               )
+            ],
+          ),
+       )
+     );
+  }
+
+  void _sendEmote(String emote) {
+     if (_isOffline) {
+        _triggerEmote(_myPlayerId, emote);
+     } else if (_isOnline) {
+        OnlineGameService().sendAction("EMOTE", {"emote": emote});
+     }
+     AchievementService().unlock('social_butterfly').then((u) { if(u) _showAchievementSnackbar("Social Butterfly 🦋"); });
+  }
+
   void _showChatSnackbar(dynamic data) {
     if (_chatDialogOpen) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("${data['sender']}: ${data['message']}"), duration: Duration(seconds: 2)));
@@ -1478,7 +1775,9 @@ Future<void> _handleGameOver(String msg) async {
 
   @override
   void dispose() {
+    _statusSubscription?.cancel();
     _gameSubscription?.cancel();
+    if (_isOnline) OnlineGameService().disconnect();
     _onlineHostEngine?.stop();
     FirebaseGameService().leaveGame();
     _localEngine?.dispose();

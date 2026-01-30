@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/progression_service.dart';
 import '../services/theme_service.dart';
 import '../services/firebase_game_service.dart';
+import '../services/achievement_service.dart';
 
 class ProfileScreen extends StatefulWidget {
   @override
@@ -29,6 +30,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     // 2. Initialize Progression with User ID
     await _progressionService.initialize(userId: userId);
+    await AchievementService().initialize();
     
     if (mounted) {
       setState(() {
@@ -110,6 +112,49 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ],
                 ),
               ),
+              
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                child: Align(alignment: Alignment.centerLeft, child: Text("ACHIEVEMENTS", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, letterSpacing: 2))),
+              ),
+              
+              Container(
+                height: 100,
+                child: ListView.builder(
+                   scrollDirection: Axis.horizontal,
+                   padding: EdgeInsets.symmetric(horizontal: 20),
+                   itemCount: AchievementService().allAchievements.length,
+                   itemBuilder: (context, index) {
+                      final achievement = AchievementService().allAchievements[index];
+                      final isUnlocked = AchievementService().isUnlocked(achievement.id);
+                      
+                      return Container(
+                         width: 80,
+                         margin: EdgeInsets.only(right: 12),
+                         decoration: BoxDecoration(
+                            color: isUnlocked ? Colors.amber.withOpacity(0.1) : Colors.white.withOpacity(0.05),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: isUnlocked ? Colors.amber : Colors.white10),
+                         ),
+                         child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                               Text(isUnlocked ? achievement.icon : "🔒", style: TextStyle(fontSize: 24)),
+                               SizedBox(height: 8),
+                               Text(
+                                 isUnlocked ? achievement.title : "Locked", 
+                                 textAlign: TextAlign.center,
+                                 style: TextStyle(color: isUnlocked ? Colors.white : Colors.white38, fontSize: 10, fontWeight: FontWeight.bold),
+                                 maxLines: 2,
+                                 overflow: TextOverflow.ellipsis
+                               )
+                            ],
+                         ),
+                      );
+                   },
+                ),
+              ),
+              SizedBox(height: 20),
             ],
           ),
         ),
