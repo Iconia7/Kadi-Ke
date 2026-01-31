@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/services.dart';
-import 'firebase_options.dart'; // Ensure this is imported
-import 'screens/home_screen.dart';
+import 'screens/splash_screen.dart';
+import 'services/custom_auth_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -12,14 +11,12 @@ void main() async {
     DeviceOrientation.portraitUp,
   ]);
 
-  // 2. Initialize Firebase (CRITICAL)
+  // 2. Initialize Custom Auth Service
   try {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-    print("✅ Firebase Initialized in Main");
+    await CustomAuthService().initialize();
+    print("✅ Auth Service Initialized");
   } catch (e) {
-    print("❌ Firebase Init Error: $e");
+    print("❌ Auth Init Error: $e");
   }
 
   runApp(const MyApp());
@@ -38,7 +35,7 @@ class MyApp extends StatelessWidget {
         primarySwatch: Colors.green,
         scaffoldBackgroundColor: const Color(0xFF0F172A),
       ),
-      home: HomeScreen(),
+      home: const SplashScreen(),
     );
   }
 }

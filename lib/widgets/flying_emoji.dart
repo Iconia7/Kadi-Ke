@@ -55,7 +55,7 @@ class _FlyingEmojiState extends State<FlyingEmoji> with SingleTickerProviderStat
             opacity: _opacity.value,
             child: Transform.scale(
               scale: _scale.value,
-              child: Text(widget.emoji, style: TextStyle(fontSize: 40)),
+              child: Text(widget.emoji, style: TextStyle(fontSize: 28)),
             ),
           ),
         );

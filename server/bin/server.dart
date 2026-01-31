@@ -143,7 +143,130 @@ class MultiGameServer {
     print("[$time] [$level] $message");
   }
 
+  // ==========================================
+  //               AUTH & PERSISTENCE
+  // ==========================================
+
+  final File _usersFile = File('users.json');
+  Map<String, dynamic> _users = {};
+
+  void _loadUsers() {
+    if (_usersFile.existsSync()) {
+      try {
+        _users = jsonDecode(_usersFile.readAsStringSync());
+        _log("Loaded ${_users.length} users.");
+      } catch (e) {
+        _log("Error loading users: $e", level: 'ERROR');
+      }
+    }
+  }
+
+  void _saveUsers() {
+    try {
+      _usersFile.writeAsStringSync(jsonEncode(_users));
+    } catch (e) {
+      _log("Error saving users: $e", level: 'ERROR');
+    }
+  }
+
+  Future<Response> _handleAuth(Request request) async {
+    final path = request.url.path;
+    
+    // CORS Preflight
+    if (request.method == 'OPTIONS') {
+      return Response.ok('', headers: _corsHeaders);
+    }
+
+    try {
+      final payload = await request.readAsString();
+      final data = jsonDecode(payload);
+      final username = data['username'];
+      final password = data['password']; // In prod, HASH THIS!
+
+      if (path == 'register') {
+        if (_users.containsKey(username)) {
+          return Response.ok(jsonEncode({'error': 'Username taken'}), headers: _corsHeaders);
+        }
+        // Simple User Object
+        _users[username] = {
+           'password': password,
+           'id': DateTime.now().millisecondsSinceEpoch.toString(), // Generate simple ID
+           'wins': 0,
+           'created_at': DateTime.now().toIso8601String()
+        };
+        _saveUsers();
+        return Response.ok(jsonEncode({'status': 'success', 'userId': _users[username]['id']}), headers: _corsHeaders);
+      } 
+      
+      else if (path == 'login') {
+        if (!_users.containsKey(username) || _users[username]['password'] != password) {
+           return Response.ok(jsonEncode({'error': 'Invalid Credentials'}), headers: _corsHeaders);
+        }
+        return Response.ok(jsonEncode({
+           'status': 'success', 
+           'userId': _users[username]['id'],
+           'token': 'mock_token_${DateTime.now().millisecondsSinceEpoch}' // Mock Token
+        }), headers: _corsHeaders);
+      }
+      
+    } catch (e) {
+      return Response.internalServerError(body: "Auth Error: $e", headers: _corsHeaders);
+    }
+    
+    return Response.notFound('Not Found');
+  }
+
+  static const _corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Origin, Content-Type',
+    'Content-Type': 'application/json'
+  };
+
+  Future<Response> _handleLeaderboard(Request request) async {
+    try {
+      // Convert users map to list and sort by wins
+      var userList = _users.entries.map((entry) {
+        return {
+          'username': entry.key,
+          'wins': entry.value['wins'] ?? 0,
+          'userId': entry.value['id'],
+        };
+      }).toList();
+
+      userList.sort((a, b) => (b['wins'] as int).compareTo(a['wins'] as int));
+      
+      // Return top 20
+      var topUsers = userList.take(20).toList();
+      
+      return Response.ok(jsonEncode({'leaderboard': topUsers}), headers: _corsHeaders);
+    } catch (e) {
+      return Response.internalServerError(body: "Leaderboard Error: $e", headers: _corsHeaders);
+    }
+  }
+
+  Future<Response> _handleUpdateStats(Request request) async {
+    try {
+      final payload = await request.readAsString();
+      final data = jsonDecode(payload);
+      final username = data['username'];
+      final winsToAdd = data['wins'] ?? 1;
+
+      if (_users.containsKey(username)) {
+        _users[username]['wins'] = (_users[username]['wins'] ?? 0) + winsToAdd;
+        _saveUsers();
+        return Response.ok(jsonEncode({'status': 'success', 'wins': _users[username]['wins']}), headers: _corsHeaders);
+      } else {
+        return Response.ok(jsonEncode({'error': 'User not found'}), headers: _corsHeaders);
+      }
+    } catch (e) {
+      return Response.internalServerError(body: "Update Stats Error: $e", headers: _corsHeaders);
+    }
+  }
+
   Future<void> _start() async {
+    _loadUsers(); // Load DB on start
+
     // WebSocket Handler
     var wsHandler = webSocketHandler(
       (WebSocketChannel socket) {
@@ -167,8 +290,19 @@ class MultiGameServer {
                if (data['rules'] != null) {
                   _rooms[roomCode]!.rules = data['rules'];
                }
+               
+               // Auto-join the creator
+               currentRoomCode = roomCode;
+               playerId = DateTime.now().millisecondsSinceEpoch.toString();
+               String playerName = data['playerName'] ?? "Host"; // Ensure client sends this
+               
+               Player newPlayer = Player(playerId!, playerName, socket);
+               _rooms[roomCode]!.players.add(newPlayer);
+
                socket.sink.add(jsonEncode({"type": "ROOM_CREATED", "data": roomCode}));
-               _log("Room Created: $roomCode Rules: ${_rooms[roomCode]!.rules}");
+               _broadcastPlayerInfo(_rooms[roomCode]!); // Update lobby
+               
+               _log("Room Created: $roomCode by $playerName. Rules: ${_rooms[roomCode]!.rules}");
              }
              else if (type == 'JOIN_GAME') {
                String code = data['roomCode'].toString().toUpperCase();
@@ -204,7 +338,6 @@ class MultiGameServer {
 
           } catch (e, stack) {
              _log("Error processing message: $e", level: 'ERROR');
-             // Optionally print stack trace during dev: print(stack);
           }
 
         }, onDone: () {
@@ -231,12 +364,21 @@ class MultiGameServer {
       pingInterval: Duration(seconds: 10), 
     );
 
-    // Main Pipeline with Health Check
+    // Main Pipeline with Health & Auth
     var handler = Pipeline()
       .addMiddleware(logRequests())
       .addHandler((Request request) {
          if (request.url.path == 'health') {
-           return Response.ok('{"status": "ok", "rooms": ${_rooms.length}}', headers: {'content-type': 'application/json'});
+           return Response.ok('{"status": "ok", "rooms": ${_rooms.length}, "users": ${_users.length}}', headers: {'content-type': 'application/json'});
+         }
+         if (request.url.path == 'register' || request.url.path == 'login') {
+            return _handleAuth(request);
+         }
+         if (request.url.path == 'leaderboard') {
+            return _handleLeaderboard(request);
+         }
+         if (request.url.path == 'update_stats') {
+            return _handleUpdateStats(request);
          }
          return wsHandler(request);
       });
@@ -585,10 +727,7 @@ class MultiGameServer {
      return card.suit == room.topCard!.suit || card.rank == room.topCard!.rank || ['2','3','joker'].contains(card.rank);
   }
   
-  bool _isWinningCard(CardModel card) {
-    const nonWinning = ['2', '3', '8', 'jack', 'queen', 'king', 'joker'];
-    return !nonWinning.contains(card.rank);
-  }
+
 
   // ==========================================
   //               HELPERS

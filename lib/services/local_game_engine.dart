@@ -9,10 +9,10 @@ class AiBot {
   
   AiBot(this.id, this.difficulty);
 
-  BotMove chooseMove(CardModel topCard, String? forcedSuit, int bombStack, bool waitingForAnswer, String? jokerConstraint) {
+  BotMove chooseMove(CardModel topCard, String? forcedSuit, String? forcedRank, int bombStack, bool waitingForAnswer, String? jokerConstraint) {
     List<int> playableIndices = [];
     for (int i = 0; i < hand.length; i++) {
-      if (_isPlayable(hand[i], topCard, forcedSuit, bombStack, waitingForAnswer, jokerConstraint)) {
+      if (_isPlayable(hand[i], topCard, forcedSuit, forcedRank, bombStack, waitingForAnswer, jokerConstraint)) {
         playableIndices.add(i);
       }
     }
@@ -92,7 +92,8 @@ class AiBot {
   }
   
   // ignore: unused_element
-  bool _isPlayable(CardModel card, CardModel topCard, String? forcedSuit, int bombStack, bool waitingForAnswer, String? jokerConstraint) {
+  bool _isPlayable(CardModel card, CardModel topCard, String? forcedSuit, String? forcedRank, int bombStack, bool waitingForAnswer, String? jokerConstraint) {
+    // 1. Joker Constraint (Highest Priority)
     if (jokerConstraint != null) {
       bool isBomb = ['2', '3', 'joker'].contains(card.rank);
       if (isBomb) return true;
@@ -100,27 +101,48 @@ class AiBot {
       return cardColor == jokerConstraint;
     }
 
-    if (['2', '3', 'joker'].contains(card.rank)) return true;
-    
+    // 2. Bomb Stack Logic
     if (bombStack > 0) {
-      if (card.rank == 'ace') return true;
-      if (card.rank == 'king') return true;
-      if (card.rank == 'jack') return true;
+      if (['2', '3', 'joker'].contains(card.rank)) return true; // Stack
+      if (card.rank == 'ace') return true; // Block
+      if (card.rank == 'king') return true; // Return
+      if (card.rank == 'jack') return true; // Pass
       return false;
     }
 
+    // 3. Question/Answer Logic (CRITICAL FIX: Add chaining support)
     if (waitingForAnswer) {
-       if (card.suit != topCard.suit) return false; // Must match suit of Q/8
-       return ['4','5','6','7','9','10'].contains(card.rank);
+       // Case A: Chaining Questions (e.g., Q -> Q or Q -> 8)
+       // Can play another Question if it matches Suit OR Rank
+       if (card.rank == 'queen' || card.rank == '8') {
+           return card.suit == topCard.suit || card.rank == topCard.rank;
+       }
+
+       // Case B: Answering (e.g., Q -> 5)
+       // Must play standard card (4-10) matching the SUIT
+       if (['4','5','6','7','9','10'].contains(card.rank)) {
+           return card.suit == topCard.suit;
+       }
+
+       // Cannot play Power cards (2, 3, A, K, J) to answer a Question
+       return false;
     }
 
+    // 4. Ace Counter-Play (CRITICAL: Ace breaks any lock)
+    if (card.rank == 'ace') return true;
+
+    // 5. Forced Suit/Rank (Ace of Spades lock support)
+    if (forcedRank != null && forcedSuit != null) {
+       // Double lock: must match EXACT card
+       return card.rank == forcedRank && card.suit == forcedSuit;
+    }
     if (forcedSuit != null) {
-      if (card.rank == 'ace') return true;
+      // Suit lock only
       return card.suit == forcedSuit;
     }
     
-    if (card.rank == 'ace') return true;
-    return card.suit == topCard.suit || card.rank == topCard.rank;
+    // 6. Standard Play
+    return card.suit == topCard.suit || card.rank == topCard.rank || ['2','3','joker'].contains(card.rank);
   }
 
   String _getMostFrequentSuit() {
@@ -240,18 +262,34 @@ void start(int aiCount, String difficulty, {int decks = 1}) async {
 
     _broadcastTurn();
 
+    // Always schedule bot turn if it's not player 0
     if (_currentPlayerIndex > 0) {
+      print('Scheduling bot turn for player $_currentPlayerIndex');
       _botTimer?.cancel();
-      _botTimer = Timer(Duration(seconds: 1), () => _runBotTurn());
+      _botTimer = Timer(Duration(seconds: 1), () {
+        print('Bot timer fired for player $_currentPlayerIndex');
+        _runBotTurn();
+      });
+    } else {
+      print('Player turn: $_currentPlayerIndex');
     }
   }
 
   void _runBotTurn() {
     int botIndex = _currentPlayerIndex - 1;
-    if (botIndex < 0 || botIndex >= _bots.length) return;
+    
+    // Debug logging
+    print('Bot turn triggered: currentPlayerIndex=$_currentPlayerIndex, botIndex=$botIndex, totalBots=${_bots.length}');
+    
+    if (botIndex < 0 || botIndex >= _bots.length) {
+      print('ERROR: Invalid bot index! Advancing turn...');
+      // Instead of returning silently, advance turn to prevent freeze
+      _advanceTurn();
+      return;
+    }
 
     AiBot bot = _bots[botIndex];
-    BotMove move = bot.chooseMove(_topCard!, _forcedSuit, _bombStack, _waitingForAnswer, _jokerColorConstraint);
+    BotMove move = bot.chooseMove(_topCard!, _forcedSuit, _forcedRank, _bombStack, _waitingForAnswer, _jokerColorConstraint);
 
     if (move.cardIndex != -1) {
       bool sayNiko = false;

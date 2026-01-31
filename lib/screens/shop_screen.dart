@@ -3,7 +3,7 @@ import 'dart:ui';
 import '../services/progression_service.dart';
 import '../services/theme_service.dart';
 import '../services/sound_service.dart';
-import '../services/firebase_game_service.dart';
+import '../services/custom_auth_service.dart';
 import '../widgets/playing_card_widget.dart'; 
 
 class ShopScreen extends StatefulWidget {
@@ -28,9 +28,9 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
   }
 
   Future<void> _loadData() async {
-    // 1. Ensure Firebase is ready and get User ID
-    await FirebaseGameService().initialize();
-    String userId = FirebaseGameService().currentUserId;
+    // 1. Get User ID from CustomAuthService
+    // CustomAuthService should already be initialized in main.dart
+    String userId = CustomAuthService().userId ?? "offline";
 
     // 2. Initialize Progression with User ID
     await _progressionService.initialize(userId: userId);

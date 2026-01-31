@@ -1,13 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ui'; 
-import 'package:card_game_ke/services/firebase_game_service.dart';
-import 'package:card_game_ke/services/online_game_service.dart';
+import 'package:card_game_ke/services/custom_auth_service.dart';
+import 'package:card_game_ke/services/vps_game_service.dart';
 import 'package:card_game_ke/services/theme_service.dart';
 import 'package:card_game_ke/services/progression_service.dart';
 import 'package:flutter/services.dart'; // ADDED for Haptics
 import 'package:flutter/material.dart';
 import '../services/achievement_service.dart';
+import '../services/challenge_service.dart';
+import '../widgets/achievement_notification.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:confetti/confetti.dart';
 import 'package:in_app_update/in_app_update.dart'; 
@@ -50,7 +52,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   // --- CONNECTION ---
   WebSocketChannel? _channel;
   GameServer? _server;
-  FirebaseHostEngine? _onlineHostEngine;
+  // VPSGameService is a singleton, so we just access it directly
   StreamSubscription? _gameSubscription;
   StreamSubscription? _statusSubscription; // New subscription
   dynamic _localEngine;
@@ -149,22 +151,10 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     _initializeConnection();
     
     // Listen to Connection Status
+    // Listen to Connection Status - VPS Service doesn't explicitly expose status stream yet
+    // but check basic connectivity
     if (_isOnline) {
-       _statusSubscription = OnlineGameService().connectionStatus.listen((status) {
-          if (!mounted) return;
-          if (status == ConnectionStatus.disconnected) {
-             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                content: Row(children: [Icon(Icons.wifi_off, color: Colors.white), SizedBox(width: 10), Text("Disconnected! Reconnecting...")]),
-                backgroundColor: Colors.red,
-                duration: Duration(days: 1), // Persistent
-             ));
-          } else if (status == ConnectionStatus.connected) {
-             ScaffoldMessenger.of(context).hideCurrentSnackBar();
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                content: Text("Connected!"), backgroundColor: Colors.green, duration: Duration(seconds: 2)
-             ));
-          }
-       });
+       // Placeholder for connection status listener if added to VPSGameService
     }
 
     // Start Pulse Controller for Intense Mode
@@ -224,13 +214,14 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    precacheImage(AssetImage('assets/cards/back_blue.png'), context);
+    precacheImage(AssetImage('assets/cards/back.png'), context);
   }
 
   Future<void> _initializeConnection() async {
     // 1. Initialize Firebase first to get the User ID
-    await FirebaseGameService().initialize();
-    String uId = FirebaseGameService().currentUserId;
+    // 1. Initialize Auth
+    await CustomAuthService().initialize();
+    String uId = CustomAuthService().userId ?? "offline";
 
     // 2. Initialize Progression with this User ID (to load their specific profile/skins/stats)
     await ProgressionService().initialize(userId: uId);
@@ -239,16 +230,22 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     _loadTheme();
 
     // Inside _initializeConnection()
-if (_isOnline) {
-       // Join the room
-       OnlineGameService().joinGame(widget.onlineGameCode!, _myName);
+    // Inside _initializeConnection()
+    if (_isOnline) {
+       // Join the room if not host (Host joins in createGame)
+       if (!widget.isHost && widget.onlineGameCode != null) {
+          VPSGameService().joinGame(widget.onlineGameCode!, _myName);
+       } else if (widget.isHost && widget.onlineGameCode != null) {
+          // ensure we are connected if we are host
+          VPSGameService().connect(); 
+       }
 
        // LISTEN TO THE STREAM
-       _gameSubscription = OnlineGameService().gameStream.listen(
+       _gameSubscription = VPSGameService().gameStream.listen(
           (data) {
              _handleGameMessage(data);
           },
-          // ✅ ADD THIS: Handle Disconnection
+          // Ã¢Å“â€¦ ADD THIS: Handle Disconnection
           onDone: () {
              if (mounted) {
                _showDisconnectDialog("Connection Lost", "You were disconnected from the server.");
@@ -309,14 +306,17 @@ if (_isOnline) {
   }
 
   void _showAchievementSnackbar(String text) {
-     ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-           content: Row(children: [Icon(Icons.emoji_events, color: Colors.amber), SizedBox(width: 8), Text(text)]),
-           backgroundColor: Colors.purple.withOpacity(0.9),
-           behavior: SnackBarBehavior.floating,
-           duration: Duration(seconds: 4),
-        )
-     );
+     // Extract icon from text (e.g. "Bomb Squad Unlocked! 💣" -> "💣")
+     String icon = 'Ã°Å¸Ââ€ ';
+     String title = text;
+     
+     final emojiMatch = RegExp(r'[\p{Emoji}]+$', unicode: true).firstMatch(text);
+     if (emojiMatch != null) {
+       icon = emojiMatch.group(0)!;
+       title = text.substring(0, emojiMatch.start).trim();
+     }
+     
+     AchievementNotification.show(context, title, icon);
   }
 
 
@@ -363,40 +363,40 @@ if (_isOnline) {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _buildRuleSection("🏆 Objective", 
+                      _buildRuleSection("Ã°Å¸Ââ€  Objective", 
                         "Be the first to finish your cards. You MUST end on a valid 'Answer' card. You cannot win with a Power Card."),
                       
                       _buildRuleSection("💣 The Bombs", 
-                        "• 2 (+2 Cards)\n"
-                        "• 3 (+3 Cards)\n"
-                        "• Joker (+5 Cards)\n"
-                        "• Bombs can be stacked on each other."),
+                        "Ã¢â‚¬Â¢ 2 (+2 Cards)\n"
+                        "Ã¢â‚¬Â¢ 3 (+3 Cards)\n"
+                        "Ã¢â‚¬Â¢ Joker (+5 Cards)\n"
+                        "Ã¢â‚¬Â¢ Bombs can be stacked on each other."),
 
-                      _buildRuleSection("🛡️ Defense", 
-                        "• Ace: Blocks the bomb (Resets to 0).\n"
-                        "• King: Reverses bomb to previous player.\n"
-                        "• Jack: Passes bomb to next player (No penalty for you)."),
+                      _buildRuleSection("Ã°Å¸â€ºÂ¡Ã¯Â¸Â Defense", 
+                        "Ã¢â‚¬Â¢ Ace: Blocks the bomb (Resets to 0).\n"
+                        "Ã¢â‚¬Â¢ King: Reverses bomb to previous player.\n"
+                        "Ã¢â‚¬Â¢ Jack: Passes bomb to next player (No penalty for you)."),
 
-                      _buildRuleSection("❓ Questions (Q & 8)", 
-                        "• If you play a Q or 8, YOU keep the turn.\n"
-                        "• You can 'Chain' questions (e.g., Q♥ -> 8♥ -> 8♣).\n"
-                        "• You must finish the chain with an 'Answer' card (4,5,6,7,9,10) of the matching suit.\n"
-                        "• If you cannot answer, you must pick a card."),
+                      _buildRuleSection("Ã¢Ââ€œ Questions (Q & 8)", 
+                        "Ã¢â‚¬Â¢ If you play a Q or 8, YOU keep the turn.\n"
+                        "Ã¢â‚¬Â¢ You can 'Chain' questions (e.g., QÃ¢â„¢Â¥ -> 8Ã¢â„¢Â¥ -> 8Ã¢â„¢Â£).\n"
+                        "Ã¢â‚¬Â¢ You must finish the chain with an 'Answer' card (4,5,6,7,9,10) of the matching suit.\n"
+                        "Ã¢â‚¬Â¢ If you cannot answer, you must pick a card."),
 
-                      _buildRuleSection("🔒 The Ace Lock", 
-                        "• Ace of Spades Strategy: If you play Ace ♠ and have 1 card left, the game LOCKS the next move.\n"
-                        "• Opponents can ONLY play that specific Rank & Suit.\n"
-                        "• Exception: Any Ace breaks the lock."),
+                      _buildRuleSection("Ã°Å¸â€â€™ The Ace Lock", 
+                        "Ã¢â‚¬Â¢ Ace of Spades Strategy: If you play Ace Ã¢â„¢Â  and have 1 card left, the game LOCKS the next move.\n"
+                        "Ã¢â‚¬Â¢ Opponents can ONLY play that specific Rank & Suit.\n"
+                        "Ã¢â‚¬Â¢ Exception: Any Ace breaks the lock."),
 
-                      _buildRuleSection("📢 Niko Kadi", 
-                        "• You must press 'NIKO KADI' when you have 1 card left.\n"
-                        "• If combining (e.g. Q -> Answer), press it before the last card.\n"
-                        "• Penalty: +2 Cards if caught forgetting."),
+                      _buildRuleSection("Ã°Å¸â€œÂ¢ Niko Kadi", 
+                        "Ã¢â‚¬Â¢ You must press 'NIKO KADI' when you have 1 card left.\n"
+                        "Ã¢â‚¬Â¢ If combining (e.g. Q -> Answer), press it before the last card.\n"
+                        "Ã¢â‚¬Â¢ Penalty: +2 Cards if caught forgetting."),
                         
-                      _buildRuleSection("🚫 Winning Restrictions", 
-                        "• You CANNOT win with: 2, 3, 8, J, Q, K, A, Joker.\n"
-                        "• You CAN win with: 4, 5, 6, 7, 9, 10.\n"
-                        "• Combo Win: Q -> 8 -> 5 is a valid win because it ends on a 5."),
+                      _buildRuleSection("Ã°Å¸Å¡Â« Winning Restrictions", 
+                        "Ã¢â‚¬Â¢ You CANNOT win with: 2, 3, 8, J, Q, K, A, Joker.\n"
+                        "Ã¢â‚¬Â¢ You CAN win with: 4, 5, 6, 7, 9, 10.\n"
+                        "Ã¢â‚¬Â¢ Combo Win: Q -> 8 -> 5 is a valid win because it ends on a 5."),
                     ],
                   ),
                 ),
@@ -687,8 +687,14 @@ bool _validateLocalMove(CardModel card) {
     
     _lastPlayedCard = card;
     
+    // Track challenge progress
+    ChallengeService().updateProgress('cards_played');
+    
     // Achievement: Bomb Squad
     if (['2','3','joker'].contains(card.rank) && _currentBombStack > 0) {
+       // Track bomb cards for challenge
+       ChallengeService().updateProgress('bombs_played');
+       
        AchievementService().unlock('bomb_squad').then((unlocked) {
           if (unlocked) _showAchievementSnackbar("Bomb Squad Unlocked! 💣");
        });
@@ -718,7 +724,7 @@ bool _validateLocalMove(CardModel card) {
     };
 
     if (_isOnline) {
-      OnlineGameService().sendAction("PLAY_CARD", payload);
+      VPSGameService().sendAction("PLAY_CARD", payload);
     } else if (_isOffline) {_localEngine!.playCard(index, requestedSuit: reqSuit, requestedRank: reqRank, saidNikoKadi: capturedNikoState);}
     else {_channel?.sink.add(jsonEncode({"type": "PLAY_CARD", ...payload}));}
   }
@@ -727,7 +733,7 @@ bool _validateLocalMove(CardModel card) {
     if (!_isMyTurn) return;
     HapticFeedback.selectionClick(); // Interaction
     if (_isOnline) {
-        OnlineGameService().sendAction("PICK_CARD", {});
+        VPSGameService().sendAction("PICK_CARD", {});
     } else if (_isOffline) {_localEngine!.pickCard();}
     else {_channel?.sink.add(jsonEncode({"type": "PICK_CARD"}));}
   }
@@ -753,7 +759,7 @@ bool _validateLocalMove(CardModel card) {
     }
 
     if (_isOffline) {
-      // ✅ SAFETY CHECK: Prevent crash if engine isn't ready
+      // Ã¢Å“â€¦ SAFETY CHECK: Prevent crash if engine isn't ready
       if (_localEngine != null) {
          _localEngine.start(widget.aiCount, "Medium", decks: decks); 
       } else {
@@ -761,10 +767,10 @@ bool _validateLocalMove(CardModel card) {
       }
     } 
     else if (_isOnline && widget.isHost) {
-      OnlineGameService().sendAction("START_GAME", {"decks": decks});
+      VPSGameService().sendAction("START_GAME", {"decks": decks, "gameType": widget.gameType});
     } 
     else if (!_isOnline) {
-      _channel?.sink.add(jsonEncode({"type": "START_GAME", "decks": decks}));
+      _channel?.sink.add(jsonEncode({"type": "START_GAME", "decks": decks, "gameType": widget.gameType}));
     }
     
     SoundService.play('deal');
@@ -1245,7 +1251,7 @@ Future<void> _handleGameOver(String msg) async {
       coinsEarned = 100;
       if (_isOnline) {
          int totalWins = await ProgressionService().getTotalWins();
-         await FirebaseGameService().updateHighscore(_myName, totalWins);
+         await VPSGameService().updateStats(wins: 1);
          
          if (_entryFee > 0) {
             int winnings = _entryFee * _players.length;
@@ -1258,13 +1264,16 @@ Future<void> _handleGameOver(String msg) async {
       await AchievementService().unlock('first_win').then((u) { if(u) _showAchievementSnackbar("First Blood 🩸"); });
       
       if (_lastPlayedCard?.rank == 'ace') {
-         await AchievementService().unlock('sniper').then((u) { if(u) _showAchievementSnackbar("Sniper 🎯"); });
+         await AchievementService().unlock('sniper').then((u) { if(u) _showAchievementSnackbar("Sniper Ã°Å¸Å½Â¯"); });
       }
       
       int coins = await ProgressionService().getCoins();
       if (coins >= 1000) {
          await AchievementService().unlock('rich_kid').then((u) { if(u) _showAchievementSnackbar("Rich Kid 💰"); });
       }
+
+      // Track win for ALL modes (offline, LAN, online)
+      await ProgressionService().recordGameResult(true);
 
       _confettiController.play();
       SoundService.play('win');
@@ -1444,7 +1453,7 @@ Future<void> _handleGameOver(String msg) async {
     if (_selectedRankToAsk == null || _selectedOpponentIndex == null) return;
     Map<String, dynamic> payload = {"targetIndex": _selectedOpponentIndex, "rank": _selectedRankToAsk};
     if (_isOnline) {
-      OnlineGameService().sendAction("ASK_CARD", payload);
+      VPSGameService().sendAction("ASK_CARD", payload);
     } else if (_isOffline) {_localEngine.askForCard(_selectedOpponentIndex!, _selectedRankToAsk!);}
     setState(() { _selectedRankToAsk = null; _selectedOpponentIndex = null; });
   }
@@ -1546,7 +1555,7 @@ Future<void> _handleGameOver(String msg) async {
     if (text.isEmpty) return;
 
     if (_isOnline) {
-      OnlineGameService().sendAction("CHAT", {"senderName": _myName, "message": text});
+      VPSGameService().sendAction("CHAT", {"senderName": _myName, "message": text});
     } else if (_isOffline) {
        // Local play: just add to list, bots don't chat back usually in this setup yet
        setState(() {
@@ -1642,7 +1651,7 @@ Future<void> _handleGameOver(String msg) async {
                SizedBox(height: 20),
                Wrap(
                  spacing: 20, runSpacing: 20,
-                 children: ['😂','😎','😡','😭','❤️','👍','👋','🤔'].map((e) => 
+                 children: ['Ã°Å¸Ëœâ€š','Ã°Å¸ËœÅ½','Ã°Å¸ËœÂ¡','Ã°Å¸ËœÂ­','Ã¢ÂÂ¤Ã¯Â¸Â','Ã°Å¸â€˜Â','Ã°Å¸â€˜â€¹','Ã°Å¸Â¤â€'].map((e) => 
                     GestureDetector(
                        onTap: () {
                           Navigator.pop(context);
@@ -1662,9 +1671,9 @@ Future<void> _handleGameOver(String msg) async {
      if (_isOffline) {
         _triggerEmote(_myPlayerId, emote);
      } else if (_isOnline) {
-        OnlineGameService().sendAction("EMOTE", {"emote": emote});
+        VPSGameService().sendAction("EMOTE", {"emote": emote});
      }
-     AchievementService().unlock('social_butterfly').then((u) { if(u) _showAchievementSnackbar("Social Butterfly 🦋"); });
+     AchievementService().unlock('social_butterfly').then((u) { if(u) _showAchievementSnackbar("Social Butterfly Ã°Å¸Â¦â€¹"); });
   }
 
   void _showChatSnackbar(dynamic data) {
@@ -1777,9 +1786,8 @@ Future<void> _handleGameOver(String msg) async {
   void dispose() {
     _statusSubscription?.cancel();
     _gameSubscription?.cancel();
-    if (_isOnline) OnlineGameService().disconnect();
-    _onlineHostEngine?.stop();
-    FirebaseGameService().leaveGame();
+    if (_isOnline) VPSGameService().leaveGame();
+    // Replaced FirebaseGameService usage with VPS one above
     _localEngine?.dispose();
     _channel?.sink.close();
     _server?.stop(); 

@@ -4,6 +4,7 @@ import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'services/deck_service.dart';
+import 'dart:math';
 
 class GameServer {
   List<WebSocketChannel> _clients = [];
@@ -11,10 +12,12 @@ class GameServer {
   final DeckService _deckService = DeckService();
   
   // --- GAME STATE ---
+  String _gameType = 'kadi';
   bool _isGameRunning = false;
   int _currentPlayerIndex = 0;
   int _direction = 1; 
   List<List<CardModel>> _playerHands = []; 
+  List<int> _books = []; // Go Fish Books
   CardModel? _topCard;
   List<Map<String, dynamic>> _musicQueue = [];
   String? _currentMusicId;
@@ -50,7 +53,12 @@ class GameServer {
         final data = jsonDecode(message);
         
         if (data['type'] == 'START_GAME' && playerIndex == 0) {
-          if (_clients.length >= 2) _startGame(data['decks'] ?? 1);
+          // Allow 1 player for testing/debugging
+          if (_clients.length >= 1) {
+             _startGame(data['decks'] ?? 1, data['gameType'] ?? 'kadi');
+          } else {
+             _sendToPlayer(webSocket, "CHAT", {"sender": "System", "message": "Waiting for players..."});
+          }
         }
         else if (data['type'] == 'PLAY_CARD') {
           _handlePlayCard(
@@ -63,6 +71,9 @@ class GameServer {
         } 
         else if (data['type'] == 'PICK_CARD') {
           _handlePickCard(playerIndex);
+        }
+        else if (data['type'] == 'ASK_CARD') {
+           _handleGoFishAsk(playerIndex, data['targetIndex'], data['rank']);
         }
         else if (data['type'] == 'CHAT') {
           _broadcast("CHAT", {
@@ -111,29 +122,42 @@ void _playNextLanSong() {
       }
   }
 
-  void _startGame(int decks) {
+  void _startGame(int decks, String gameType) {
     _isGameRunning = true;
+    _gameType = gameType;
     _deckService.initializeDeck(decks: decks);
     _deckService.shuffle();
 
     _playerHands = List.generate(_clients.length, (_) => []);
+    
+    // SETUP
+    int dealCount = 4;
+    // Go Fish Deal Count override
+    if (_gameType == 'gofish') {
+       dealCount = _clients.length <= 3 ? 7 : 5;
+       _books = List.filled(_clients.length, 0);
+    }
 
     for (int i = 0; i < _clients.length; i++) {
-      _playerHands[i] = _deckService.drawCards(4);
+      _playerHands[i] = _deckService.drawCards(dealCount);
       _sendToPlayer(_clients[i], "DEAL_HAND", _playerHands[i]);
       _hasSaidNikoKadi[i] = false;
     }
 
-    _topCard = _deckService.drawCards(1).first;
-    // Ensure top card isn't a power card to start
-    while (['2','3','8','jack','queen','king','ace','joker'].contains(_topCard!.rank)) {
-       _deckService.addCardToBottom(_topCard!);
-       _topCard = _deckService.drawCards(1).first;
+    if (_gameType == 'kadi') {
+        _topCard = _deckService.drawCards(1).first;
+        // Ensure top card isn't a power card to start
+        while (['2','3','8','jack','queen','king','ace','joker'].contains(_topCard!.rank)) {
+           _deckService.addCardToBottom(_topCard!);
+           _topCard = _deckService.drawCards(1).first;
+        }
+        _discardPile.clear();
+        _jokerColorConstraint = null;
+        _broadcast("UPDATE_TABLE", _topCard);
+    } else {
+        // Go Fish Setup
+        _broadcast("GO_FISH_STATE", {'books': _books});
     }
-    
-    _discardPile.clear();
-    _jokerColorConstraint = null;
-    _broadcast("UPDATE_TABLE", _topCard);
 
     _currentPlayerIndex = 0;
     _direction = 1; 
@@ -143,6 +167,7 @@ void _playNextLanSong() {
     _forcedRank = null;
     
     _broadcastTurn();
+    _broadcast("CHAT", {"sender": "System", "message": "${_gameType.toUpperCase()} Started!"});
   }
 
   void _handlePlayCard(int playerIndex, int cardIndex, String? requestedSuit, String? requestedRank, bool saidNikoKadi) {
@@ -427,5 +452,77 @@ void _playNextLanSong() {
 
   void stop() {
     _server?.close();
+  }
+  // --- GO FISH LOGIC ---
+  void _handleGoFishAsk(int askerIdx, int targetIdx, String rank) {
+     if (askerIdx != _currentPlayerIndex) return;
+     if (targetIdx < 0 || targetIdx >= _clients.length || targetIdx == askerIdx) return;
+
+     List<CardModel> targetHand = _playerHands[targetIdx];
+     List<CardModel> found = targetHand.where((c) => c.rank == rank).toList();
+
+     if (found.isNotEmpty) {
+        // SUCCESS
+        targetHand.removeWhere((c) => c.rank == rank);
+        _playerHands[askerIdx].addAll(found);
+        
+        _broadcast("CHAT", {
+           "sender": "System", 
+           "message": "Player ${askerIdx+1} took ${found.length} ${rank}s from Player ${targetIdx+1}"
+        });
+        
+        _checkBooks(askerIdx);
+        _sendToPlayer(_clients[askerIdx], "DEAL_HAND", _playerHands[askerIdx]);
+        _sendToPlayer(_clients[targetIdx], "DEAL_HAND", _playerHands[targetIdx]);
+        
+        // Go again
+        _broadcastTurn();
+     } else {
+        // FAIL -> GO FISH
+        _broadcast("CHAT", {"sender": "System", "message": "Player ${targetIdx+1} says: GO FISH!"});
+        
+        if (_deckService.remainingCards > 0) {
+           List<CardModel> drawn = _deckService.drawCards(1);
+           CardModel card = drawn.first;
+           _playerHands[askerIdx].add(card);
+           _checkBooks(askerIdx);
+           _sendToPlayer(_clients[askerIdx], "DEAL_HAND", _playerHands[askerIdx]);
+           
+           if (card.rank == rank) {
+               _broadcast("CHAT", {"sender": "System", "message": "Fished the $rank! Go again."});
+               _broadcastTurn();
+               return;
+           }
+        } else {
+           _broadcast("CHAT", {"sender": "System", "message": "Pond is empty."});
+        }
+        
+        _advanceTurn();
+     }
+  }
+
+  void _checkBooks(int playerIndex) {
+     Map<String, int> counts = {};
+     for (var c in _playerHands[playerIndex]) counts[c.rank] = (counts[c.rank] ?? 0) + 1;
+     
+     counts.forEach((rank, count) {
+        if (count == 4) {
+           _playerHands[playerIndex].removeWhere((c) => c.rank == rank);
+           _books[playerIndex]++;
+           _broadcast("CHAT", {"sender": "System", "message": "Player ${playerIndex+1} made a Book of ${rank}s!"});
+        }
+     });
+     
+     _broadcast("GO_FISH_STATE", {'books': _books});
+     
+     // WIN CONDITION
+     int totalBooks = _books.fold(0, (a, b) => a + b);
+     if (totalBooks == 13 || (_deckService.remainingCards == 0 && _playerHands.every((h) => h.isEmpty))) {
+         int maxBooks = _books.reduce(max);
+         List<int> winners = [];
+         for(int i=0; i<_books.length; i++) if(_books[i] == maxBooks) winners.add(i);
+         _broadcast("GAME_OVER", "Player ${winners.first + 1} Wins!");
+         _isGameRunning = false;
+     }
   }
 }

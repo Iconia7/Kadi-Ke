@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/progression_service.dart';
 import '../services/theme_service.dart';
-import '../services/firebase_game_service.dart';
+import '../services/custom_auth_service.dart';
 import '../services/achievement_service.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -24,9 +24,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _loadStats() async {
-    // 1. Ensure Firebase is ready and get User ID
-    await FirebaseGameService().initialize();
-    String userId = FirebaseGameService().currentUserId;
+    // 1. Get User ID from CustomAuthService
+    // Note: ensure CustomAuthService is initialized in main.dart
+    String userId = CustomAuthService().userId ?? "offline";
 
     // 2. Initialize Progression with User ID
     await _progressionService.initialize(userId: userId);

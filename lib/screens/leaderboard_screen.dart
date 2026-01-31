@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../services/firebase_game_service.dart';
+import '../services/vps_game_service.dart';
 
 class LeaderboardScreen extends StatelessWidget {
   @override
@@ -12,21 +12,21 @@ class LeaderboardScreen extends StatelessWidget {
         elevation: 0,
         centerTitle: true,
       ),
-      body: StreamBuilder<List<Map<String, dynamic>>>(
-        stream: FirebaseGameService().getLeaderboard(),
+      body: FutureBuilder<List<Map<String, dynamic>>>(
+        future: VPSGameService().getLeaderboard(),
         builder: (context, snapshot) {
-          if (snapshot.hasError) return Center(child: Text("Error loading stats", style: TextStyle(color: Colors.red)));
+          if (snapshot.hasError) return Center(child: Text("Error loading leaderboard\n${snapshot.error}", style: TextStyle(color: Colors.red), textAlign: TextAlign.center));
           if (!snapshot.hasData) return Center(child: CircularProgressIndicator(color: Colors.amber));
 
           final users = snapshot.data!;
-          if (users.isEmpty) return Center(child: Text("No data yet.", style: TextStyle(color: Colors.white54)));
+          if (users.isEmpty) return Center(child: Text("No players yet.\nBe the first to play!", style: TextStyle(color: Colors.white54, fontSize: 18), textAlign: TextAlign.center));
 
           return ListView.builder(
             padding: EdgeInsets.all(16),
             itemCount: users.length,
             itemBuilder: (context, index) {
               final user = users[index];
-              final name = user['name'] ?? 'Unknown';
+              final name = user['username'] ?? 'Unknown';
               final wins = user['wins'] ?? 0;
               final isTop3 = index < 3;
               
@@ -50,26 +50,44 @@ class LeaderboardScreen extends StatelessWidget {
                         width: 40, height: 40,
                         alignment: Alignment.center,
                         decoration: BoxDecoration(
+                           shape: BoxShape.circle,
                            color: isTop3 ? rankColor : Colors.white10,
-                           shape: BoxShape.circle
                         ),
                         child: Text(
-                          "#${index + 1}", 
+                          '${index + 1}',
                           style: TextStyle(
-                            color: isTop3 ? Colors.black : Colors.white, 
-                            fontWeight: FontWeight.bold
-                          )
+                             color: isTop3 ? Colors.black : Colors.white,
+                             fontWeight: FontWeight.bold,
+                             fontSize: 18
+                          ),
                         ),
                       ),
                       SizedBox(width: 16),
                       Expanded(
-                        child: Text(name, style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w600)),
+                        child: Text(
+                          name,
+                          style: TextStyle(
+                             color: Colors.white,
+                             fontSize: 18,
+                             fontWeight: isTop3 ? FontWeight.bold : FontWeight.normal
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                           Text("$wins WINS", style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold)),
-                        ],
+                      Container(
+                        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                           color: Colors.green.withValues(alpha: 0.2),
+                           borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          '$wins wins',
+                          style: TextStyle(
+                             color: Colors.greenAccent,
+                             fontWeight: FontWeight.bold,
+                             fontSize: 14
+                          ),
+                        ),
                       )
                    ],
                  ),
@@ -77,7 +95,7 @@ class LeaderboardScreen extends StatelessWidget {
             },
           );
         },
-      )
+      ),
     );
   }
 }

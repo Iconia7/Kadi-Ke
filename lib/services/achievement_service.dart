@@ -27,10 +27,18 @@ class AchievementService {
   ];
 
   List<String> _unlockedIds = [];
+  String _userIdPrefix = 'guest_';
 
-  Future<void> initialize() async {
+  Future<void> initialize({String? userId}) async {
     final prefs = await SharedPreferences.getInstance();
-    _unlockedIds = prefs.getStringList('unlocked_achievements') ?? [];
+    
+    if (userId != null && userId.isNotEmpty && userId != "unknown") {
+      _userIdPrefix = "${userId}_";
+    } else {
+      _userIdPrefix = "guest_";
+    }
+
+    _unlockedIds = prefs.getStringList('${_userIdPrefix}unlocked_achievements') ?? [];
   }
 
   List<Achievement> get allAchievements => _allAchievements;
@@ -44,7 +52,7 @@ class AchievementService {
 
     _unlockedIds.add(id);
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList('unlocked_achievements', _unlockedIds);
+    await prefs.setStringList('${_userIdPrefix}unlocked_achievements', _unlockedIds);
     return true; // Newly unlocked
   }
   

@@ -8,11 +8,14 @@ import 'shop_screen.dart';
 import 'profile_screen.dart';
 import 'tournament_screen.dart'; // ADDED
 import 'leaderboard_screen.dart'; // ADDED
-import '../services/firebase_game_service.dart'; // Keep for Auth/Profile
-import '../services/online_game_service.dart';   // ADD THIS for Game Logic
+import '../services/custom_auth_service.dart'; // Replaced Firebase Auth
+import '../services/vps_game_service.dart';   // Replaced Firebase Game Service
 
 import '../services/progression_service.dart';
+import '../services/achievement_service.dart';
+import '../services/challenge_service.dart';
 import '../widgets/daily_reward_dialog.dart';
+import '../widgets/daily_challenge_card.dart';
 
 class HomeScreen extends StatefulWidget {
   @override
@@ -45,13 +48,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-Future<void> _initFirebaseCheck() async {
+  Future<void> _initFirebaseCheck() async {
     try {
       // Just ensure the Game Service is ready (Auth login)
-      await FirebaseGameService().initialize();
+      await CustomAuthService().initialize();
       // Initialize Progression
-      String uid = FirebaseGameService().currentUserId;
+      String uid = CustomAuthService().userId ?? "offline";
       await ProgressionService().initialize(userId: uid);
+      await AchievementService().initialize(userId: uid);
+      await ChallengeService().initialize();
       
       if (mounted) {
          setState(() => _isFirebaseReady = true);
@@ -200,7 +205,7 @@ Future<void> _initFirebaseCheck() async {
      );
   }
 
-  void _createOnlineRoom(int fee, Map<String, dynamic> rules) {
+  void _createOnlineRoom(int fee, Map<String, dynamic> rules) async {
     Navigator.pop(context); // Close Rules Dialog
 
     if (fee > 0) {
@@ -220,39 +225,28 @@ Future<void> _initFirebaseCheck() async {
       builder: (c) => Center(child: CircularProgressIndicator(color: Colors.amber)),
     );
 
-    // 2. Listen for Server Response
-    StreamSubscription? subscription;
-    bool hasNavigated = false; 
-
-    subscription = OnlineGameService().gameStream.listen((data) {
-      if (data['type'] == 'ROOM_CREATED') {
-        hasNavigated = true;
-        
-        String roomCode = data['data'];
-        subscription?.cancel(); 
-        
-        if (mounted) {
-          Navigator.pop(context); // Close spinner
-
-          Navigator.push(context, MaterialPageRoute(builder: (context) => 
-            GameScreen(
-              isHost: true, 
-              hostAddress: 'online', 
-              onlineGameCode: roomCode,
-              gameType: _selectedGameMode, 
-            )
-          ));
-        }
-      }
-    });
-    
-    OnlineGameService().createGame("Player", _selectedGameMode, entryFee: fee, rules: rules);
-
-    Future.delayed(Duration(seconds: 15), () {
-      if (!hasNavigated && mounted && Navigator.canPop(context)) {
+    try {
+      // 2. Call VPS Service
+      String roomCode = await VPSGameService().createGame(_selectedGameMode, entryFee: fee, rules: rules);
+      
+      if (mounted) {
         Navigator.pop(context); // Close spinner
+
+        Navigator.push(context, MaterialPageRoute(builder: (context) => 
+          GameScreen(
+            isHost: true, 
+            hostAddress: 'online', 
+            onlineGameCode: roomCode,
+            gameType: _selectedGameMode, 
+          )
+        ));
       }
-    });
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context); // Close spinner
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error creating room: $e")));
+      }
+    }
   }
 
   void _joinOnlineGame() {
@@ -554,7 +548,7 @@ Future<void> _initFirebaseCheck() async {
                       SizedBox(height: 20),
                       _buildMenuButton("MULTIPLAYER", Icons.groups, Colors.deepPurpleAccent, _showMultiplayerDialog),
                       SizedBox(height: 20),
-                      _buildMenuButton("TOURNAMENT", Icons.emoji_events, Colors.orange, () => Navigator.push(context, MaterialPageRoute(builder: (c) => TournamentScreen()))),
+                      _buildMenuButton("TOURNAMENT", Icons.emoji_events, Colors.orange, () => Navigator.push(context, MaterialPageRoute(builder: (c) => TournamentScreen(gameType: _selectedGameMode)))),
                       SizedBox(height: 20),
                       _buildMenuButton("LEADERBOARD", Icons.bar_chart, Colors.purpleAccent, () => Navigator.push(context, MaterialPageRoute(builder: (c) => LeaderboardScreen()))),
                       SizedBox(height: 60),
@@ -645,4 +639,82 @@ Future<void> _initFirebaseCheck() async {
       ],
     );
   }
+
+  Widget _buildChallengesSection() {
+    final challenges = ChallengeService().getActiveChallenges();
+    final timeUntilRefresh = ChallengeService().getTimeUntilRefresh();
+    
+    return Container(
+      margin: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Color(0xFF2E1E5F).withOpacity(0.6), Color(0xFF1E1E3A).withOpacity(0.6)],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.flag, color: Color(0xFF00E5FF), size: 24),
+                  SizedBox(width: 8),
+                  Text(
+                    'DAILY CHALLENGES',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                ],
+              ),
+              Text(
+                'Resets in ${timeUntilRefresh.inHours}h ${timeUntilRefresh.inMinutes % 60}m',
+                style: TextStyle(color: Colors.white54, fontSize: 11),
+              ),
+            ],
+          ),
+          SizedBox(height: 12),
+          ...challenges.map((challenge) => DailyChallengeCard(
+            challenge: challenge,
+            onClaim: () => _claimChallengeReward(challenge.id),
+          )).toList(),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _claimChallengeReward(String challengeId) async {
+    try {
+      final rewards = await ChallengeService().claimReward(challengeId);
+      if (rewards != null) {
+        // Add coins and XP
+        ProgressionService().addCoins(rewards['coins']!);
+        // TODO: Add XP system (future enhancement)
+        
+        setState(() {}); // Refresh UI
+        
+        // Show reward notification
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Challenge Complete! +${rewards['coins']} coins'),
+              backgroundColor: Color(0xFF00E5FF),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      print('Error claiming reward: $e');
+    }
+  }
+
 }

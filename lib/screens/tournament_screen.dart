@@ -3,6 +3,9 @@ import 'game_screen.dart';
 import 'home_screen.dart';
 
 class TournamentScreen extends StatefulWidget {
+  final String gameType;
+  const TournamentScreen({super.key, this.gameType = 'kadi'});
+
   @override
   _TournamentScreenState createState() => _TournamentScreenState();
 }
@@ -30,6 +33,7 @@ class _TournamentScreenState extends State<TournamentScreen> {
            isHost: false, // Local Engine handles it
            hostAddress: 'offline',
            aiCount: _opponents[_currentRound], // 3 bots -> 4 players total
+           gameType: widget.gameType,
         )
       )
     );
@@ -93,7 +97,7 @@ class _TournamentScreenState extends State<TournamentScreen> {
     return Scaffold(
       backgroundColor: Color(0xFF0F172A),
       appBar: AppBar(
-        title: Text("🏆 TOURNAMENT"),
+        title: Text("🏆 ${widget.gameType.toUpperCase()} TOURNAMENT"),
         backgroundColor: Colors.transparent,
         elevation: 0,
       ),
