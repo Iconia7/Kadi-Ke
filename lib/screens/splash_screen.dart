@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'home_screen.dart';
 import 'onboarding_screen.dart';
+import 'tutorial_screen.dart';
+import '../services/tutorial_service.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -46,10 +48,21 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
     if (!mounted) return;
 
     if (token != null && token.isNotEmpty) {
-      // User is logged in
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => HomeScreen()),
-      );
+      // User is logged in - Check tutorial status
+      final tutorialService = TutorialService();
+      final shouldShowTutorial = await tutorialService.shouldShowTutorial();
+      
+      if (shouldShowTutorial) {
+        // First time after login - show tutorial
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => TutorialScreen()),
+        );
+      } else {
+        // Tutorial already completed
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => HomeScreen()),
+        );
+      }
     } else if (!hasSeenOnboarding) {
       // First time user
       Navigator.of(context).pushReplacement(
@@ -73,14 +86,14 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
   Widget build(BuildContext context) {
     return Scaffold(
       body: Container(
-        decoration: BoxDecoration(
+        decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              Colors.deepPurple.shade700,
-              Colors.purple.shade500,
-              Colors.pink.shade400,
+              Color(0xFF1E293B),
+              Color(0xFF0F172A),
+              Color(0xFF1E1B4B),
             ],
           ),
         ),
@@ -92,52 +105,16 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // Game Logo/Icon
-                  Container(
-                    width: 120,
-                    height: 120,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(30),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.3),
-                          blurRadius: 20,
-                          offset: const Offset(0, 10),
-                        ),
-                      ],
-                    ),
-                    child: const Icon(
-                      Icons.style,
-                      size: 70,
-                      color: Colors.deepPurple,
-                    ),
+                  // Game Logo
+                  Image.asset(
+                    'assets/Kadi.png',
+                    height: 250,
+                    fit: BoxFit.contain,
                   ),
-                  const SizedBox(height: 30),
-                  const Text(
-                    'KADI KE',
-                    style: TextStyle(
-                      fontSize: 48,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                      letterSpacing: 4,
-                      shadows: [
-                        Shadow(
-                          color: Colors.black26,
-                          offset: Offset(2, 2),
-                          blurRadius: 4,
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    'Card Game Experience',
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.white.withOpacity(0.9),
-                      letterSpacing: 2,
-                    ),
+                  const SizedBox(height: 40),
+                  const CircularProgressIndicator(
+                    color: Colors.amber,
+                    strokeWidth: 2,
                   ),
                 ],
               ),

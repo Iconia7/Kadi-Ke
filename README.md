@@ -1,7 +1,31 @@
 # Kadi KE 🃏
 
 **Kadi KE** is a premium, cross-platform digital card game built with **Flutter**.  
-It brings the popular Kenyan **Kadi** and **Go Fish** card games to your mobile device with a sleek **“Midnight Elite”** aesthetic and robust multiplayer capabilities.
+It brings the popular Kenyan **Kadi** and **Go Fish** card games to your mobile device with a sleek **"Midnight Elite"** aesthetic and robust multiplayer capabilities.
+
+---
+
+## 🎉 What's New in v13.0
+
+### 🎓 Interactive Tutorial System
+- Step-by-step guided tour for new players
+- Learn Kadi rules, power cards, and game mechanics
+- Replay anytime from Settings
+- Beautiful visual demonstrations
+
+### 👥 Friend System
+- **Add Friends** - Search and connect with other players
+- **Friend Requests** - Send, accept, or decline invitations
+- **Online Status** - See who's online with real-time indicators
+- **Game Invites** - Challenge friends directly from their profile
+- **Friend Achievements** - Unlock social milestones
+
+### 🔔 Enhanced Push Notifications
+- **Smart Notifications** - Friend online, game invites, tournaments
+- **Granular Control** - Toggle each notification type individually
+- **Deep Linking** - Tap notifications to jump directly to relevant screens
+- **Notification Channels** - Social, Events, and Progress categories
+- **Test Mode** - Try all notification types from Settings
 
 ---
 
@@ -12,7 +36,7 @@ It brings the popular Kenyan **Kadi** and **Go Fish** card games to your mobile 
   Challenge smart AI bots without needing an internet connection.
 
 - **Online Multiplayer**  
-  Play with friends anywhere in the world using private **Room Codes** (powered by Firebase).
+  Play with friends anywhere in the world using private **Room Codes** and WebSocket connections.
 
 - **Local LAN Party**  
   Host lag-free games on your local Wi-Fi network for the ultimate party experience.
@@ -44,6 +68,12 @@ It brings the popular Kenyan **Kadi** and **Go Fish** card games to your mobile 
 - **Progression System**  
   Earn coins, track win rates, and unlock custom **Card Skins** and **Table Themes** in the Shop.
 
+- **Daily Challenges**  
+  Complete objectives for bonus rewards and streak bonuses.
+
+- **Achievements**  
+  Unlock milestones including friend-based achievements.
+
 ---
 
 ## 📜 Game Rules (Kadi)
@@ -70,14 +100,14 @@ Be the first player to finish all your cards.
   (a non-power card of the same suit).
 
 ### Niko Kadi Rule
-You **MUST** press the **“Niko Kadi”** warning button if you are left with:
+You **MUST** press the **"Niko Kadi"** warning button if you are left with:
 - One card, or
 - Multiple cards of the same rank  
 
 Failure to do so results in a **+2 card penalty**.
 
 ### Cardless State
-If you finish with a **Power Card**, you are **Cardless (0 cards)** but **haven’t won yet**.  
+If you finish with a **Power Card**, you are **Cardless (0 cards)** but **haven't won yet**.  
 You must pick on your next turn.
 
 ---
@@ -86,12 +116,13 @@ You must pick on your next turn.
 
 - **Framework:** Flutter (Dart)
 - **Backend:**  
-  - Firebase Firestore (Online state)  
-  - Firebase Auth (Anonymous login)
+  - Custom Dart Server (WebSocket + REST API)
+  - VPS deployment with systemd
 
 - **Networking:**  
   - `web_socket_channel`  
-  - `shelf` (Local LAN server)
+  - `shelf` server framework
+  - Real-time presence tracking
 
 - **State Management:**  
   - `setState`  
@@ -99,6 +130,10 @@ You must pick on your next turn.
 
 - **Persistence:**  
   - `shared_preferences` (Local stats & unlocks)
+  - JSON-based user database
+
+- **Notifications:**
+  - `awesome_notifications` (Local push notifications)
 
 ---
 
@@ -107,17 +142,78 @@ You must pick on your next turn.
 ### Clone the repository
 ```bash
 git clone https://github.com/Iconia7/Kadi-Ke.git
+cd Kadi-Ke
 ```
 
 ### Install dependencies
 ```bash
 flutter pub get
+cd server
+dart pub get
+```
+
+### Run the server (Optional - for online multiplayer)
+```bash
+cd server
+dart run bin/server.dart
 ```
 
 ### Run the app
 ```bash
 flutter run
 ```
+
+---
+
+## 🚀 Deployment
+
+### Deploy Server to VPS
+```bash
+cd scripts
+./deploy_server_fixed.sh YOUR_VPS_IP YOUR_SSH_USER
+```
+
+The script will:
+- ✅ Upload server code
+- ✅ Install Dart dependencies
+- ✅ Run database migrations
+- ✅ Set up systemd service
+- ✅ Verify endpoints
+
+### Build App for Production
+```bash
+# Android APK
+flutter build apk --release
+
+# Android App Bundle (for Play Store)
+flutter build appbundle --release
+
+# iOS (requires macOS)
+flutter build ios --release
+```
+
+---
+
+## 📱 Server Configuration
+
+Update the server URL in your app:
+1. Open `lib/services/vps_game_service.dart`
+2. Set `_serverUrl` to your VPS address:
+   ```dart
+   final String _serverUrl = 'ws://YOUR_VPS_IP:8080';
+   ```
+
+---
+
+## 🎮 How to Play
+
+1. **First Launch** - Complete the tutorial to learn the basics
+2. **Add Friends** - Tap the friends icon and search for players
+3. **Create Game** - Choose game mode, set entry fee (optional)
+4. **Invite Friends** - Share room code or send direct invites
+5. **Play & Win** - Follow the rules and be the first to finish!
+
+---
 
 ## 🤝 Contributing
 
@@ -142,9 +238,38 @@ git push origin feature/AmazingFeature
 
 ### Open a Pull Request
 
-### 📄 License
+---
 
-Distributed under the MIT License.
+## 🐛 Troubleshooting
+
+**Server won't start:**
+```bash
+ssh user@vps "tail -50 /root/kadi-server/server.log"
+```
+
+**Friend system not working:**
+- Verify server has WebSocket support
+- Check users have sent JOIN action on connect
+
+**Notifications not appearing:**
+- Enable notification permissions in device settings
+- Check preferences in app Settings → Notification Preferences
+
+---
+
+## 📄 License
+
+Distributed under the MIT License.  
 See LICENSE for more information.
+
+---
+
+## 🏆 Version History
+
+- **v13.0** (2026-02-12) - Tutorial System, Friend System, Enhanced Notifications
+- **v12.0** - Progression System, Daily Challenges, Achievements
+- **v11.0** - Shop System, Card Skins, Table Themes
+
+---
 
 ### Made with ❤️ by Nexora Creative Solutions.

@@ -1,20 +1,24 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ui'; 
+import 'package:flutter/services.dart'; 
+import 'package:flutter/material.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:confetti/confetti.dart';
+import 'package:in_app_update/in_app_update.dart'; 
+
 import 'package:card_game_ke/services/custom_auth_service.dart';
 import 'package:card_game_ke/services/vps_game_service.dart';
 import 'package:card_game_ke/services/theme_service.dart';
 import 'package:card_game_ke/services/progression_service.dart';
-import 'package:flutter/services.dart'; // ADDED for Haptics
-import 'package:flutter/material.dart';
 import '../services/achievement_service.dart';
 import '../services/challenge_service.dart';
-import '../widgets/achievement_notification.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:confetti/confetti.dart';
-import 'package:in_app_update/in_app_update.dart'; 
+import '../services/notification_service.dart';
+import '../models/challenge_model.dart';
 import '../game_server.dart'; 
 import '../widgets/playing_card_widget.dart';
+import '../widgets/achievement_notification.dart';
+import '../widgets/chat_bubble.dart';
 import '../services/deck_service.dart';
 import '../services/sound_service.dart';
 import '../services/local_game_engine.dart';
@@ -25,6 +29,7 @@ class GameScreen extends StatefulWidget {
   final bool isHost;
   final String hostAddress; // 'offline', 'localhost', '192...', or 'online'
   final int aiCount;
+  final String difficulty; // 'Easy', 'Medium', 'Hard'
   final String? onlineGameCode;
   final String gameType; // 'kadi' or 'gofish'
 
@@ -32,6 +37,7 @@ class GameScreen extends StatefulWidget {
     required this.isHost, 
     required this.hostAddress, 
     this.aiCount = 1,
+    this.difficulty = 'Medium',
     this.onlineGameCode,
     this.gameType = 'kadi', 
   });
@@ -98,9 +104,13 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   String _myName = "Player"; 
   final List<Map<String, dynamic>> _chatMessages = []; 
   bool _chatDialogOpen = false;
+  int _cardsPlayedThisTurn = 0; // NEW: Multi-drop support
+  // Game State
   final TextEditingController _chatController = TextEditingController();
   bool _hasUnreadMessages = false; 
   Map<int, List<String>> _activeEmotes = {}; // Maps Player Index to list of active emoji strings 
+  Map<int, String> _activeChatBubbles = {}; // NEW: Chat Bubbles
+  Timer? _chatBubbleTimer;
 
   // --- ANIMATION CONTROLLERS ---
   late ConfettiController _confettiController;
@@ -165,6 +175,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   bool _isIntenseMode = false;
   CardModel? _lastPlayedCard; // Track for Achievements
   int _entryFee = 0; // Betting Stakes
+  int _startingPlayerCount = 0; // Locked in at game start
   bool _hasPaidEntry = false; // Ensure we pay only once
 
 
@@ -307,10 +318,11 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
   void _showAchievementSnackbar(String text) {
      // Extract icon from text (e.g. "Bomb Squad Unlocked! 💣" -> "💣")
-     String icon = 'Ã°Å¸Ââ€ ';
+     String icon = '🏆';
      String title = text;
      
-     final emojiMatch = RegExp(r'[\p{Emoji}]+$', unicode: true).firstMatch(text);
+     // Robustly find any emoji in the text
+     final emojiMatch = RegExp(r'[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}]', unicode: true).firstMatch(text);
      if (emojiMatch != null) {
        icon = emojiMatch.group(0)!;
        title = text.substring(0, emojiMatch.start).trim();
@@ -363,40 +375,40 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _buildRuleSection("Ã°Å¸Ââ€  Objective", 
+                      _buildRuleSection("🏆 Objective", 
                         "Be the first to finish your cards. You MUST end on a valid 'Answer' card. You cannot win with a Power Card."),
                       
                       _buildRuleSection("💣 The Bombs", 
-                        "Ã¢â‚¬Â¢ 2 (+2 Cards)\n"
-                        "Ã¢â‚¬Â¢ 3 (+3 Cards)\n"
-                        "Ã¢â‚¬Â¢ Joker (+5 Cards)\n"
-                        "Ã¢â‚¬Â¢ Bombs can be stacked on each other."),
+                        "• 2 (+2 Cards)\n"
+                        "• 3 (+3 Cards)\n"
+                        "• Joker (+5 Cards)\n"
+                        "• Bombs can be stacked on each other."),
 
-                      _buildRuleSection("Ã°Å¸â€ºÂ¡Ã¯Â¸Â Defense", 
-                        "Ã¢â‚¬Â¢ Ace: Blocks the bomb (Resets to 0).\n"
-                        "Ã¢â‚¬Â¢ King: Reverses bomb to previous player.\n"
-                        "Ã¢â‚¬Â¢ Jack: Passes bomb to next player (No penalty for you)."),
+                      _buildRuleSection("🛡️ Defense", 
+                        "• Ace: Blocks the bomb (Resets to 0).\n"
+                        "• King: Reverses bomb to previous player.\n"
+                        "• Jack: Passes bomb to next player (No penalty for you)."),
 
-                      _buildRuleSection("Ã¢Ââ€œ Questions (Q & 8)", 
-                        "Ã¢â‚¬Â¢ If you play a Q or 8, YOU keep the turn.\n"
-                        "Ã¢â‚¬Â¢ You can 'Chain' questions (e.g., QÃ¢â„¢Â¥ -> 8Ã¢â„¢Â¥ -> 8Ã¢â„¢Â£).\n"
-                        "Ã¢â‚¬Â¢ You must finish the chain with an 'Answer' card (4,5,6,7,9,10) of the matching suit.\n"
-                        "Ã¢â‚¬Â¢ If you cannot answer, you must pick a card."),
+                      _buildRuleSection("❓ Questions (Q & 8)", 
+                        "• If you play a Q or 8, YOU keep the turn.\n"
+                        "• You can 'Chain' questions (e.g., Q♥ -> 8♥ -> 8♣).\n"
+                        "• You must finish the chain with an 'Answer' card (4,5,6,7,9,10) of the matching suit.\n"
+                        "• If you cannot answer, you must pick a card."),
 
-                      _buildRuleSection("Ã°Å¸â€â€™ The Ace Lock", 
-                        "Ã¢â‚¬Â¢ Ace of Spades Strategy: If you play Ace Ã¢â„¢Â  and have 1 card left, the game LOCKS the next move.\n"
-                        "Ã¢â‚¬Â¢ Opponents can ONLY play that specific Rank & Suit.\n"
-                        "Ã¢â‚¬Â¢ Exception: Any Ace breaks the lock."),
+                      _buildRuleSection("🔒 The Ace Lock", 
+                        "• Ace of Spades Strategy: If you play Ace ♠ and have 1 card left, the game LOCKS the next move.\n"
+                        "• Opponents can ONLY play that specific Rank & Suit.\n"
+                        "• Exception: Any Ace breaks the lock."),
 
-                      _buildRuleSection("Ã°Å¸â€œÂ¢ Niko Kadi", 
-                        "Ã¢â‚¬Â¢ You must press 'NIKO KADI' when you have 1 card left.\n"
-                        "Ã¢â‚¬Â¢ If combining (e.g. Q -> Answer), press it before the last card.\n"
-                        "Ã¢â‚¬Â¢ Penalty: +2 Cards if caught forgetting."),
+                      _buildRuleSection("📢 Niko Kadi", 
+                        "• You must press 'NIKO KADI' when you have 1 card left.\n"
+                        "• If combining (e.g. Q -> Answer), press it before the last card.\n"
+                        "• Penalty: +2 Cards if caught forgetting."),
                         
-                      _buildRuleSection("Ã°Å¸Å¡Â« Winning Restrictions", 
-                        "Ã¢â‚¬Â¢ You CANNOT win with: 2, 3, 8, J, Q, K, A, Joker.\n"
-                        "Ã¢â‚¬Â¢ You CAN win with: 4, 5, 6, 7, 9, 10.\n"
-                        "Ã¢â‚¬Â¢ Combo Win: Q -> 8 -> 5 is a valid win because it ends on a 5."),
+                      _buildRuleSection("🚫 Winning Restrictions", 
+                        "• You CANNOT win with: 2, 3, 8, J, Q, K, A, Joker.\n"
+                        "• You CAN win with: 4, 5, 6, 7, 9, 10.\n"
+                        "• Combo Win: Q -> 8 -> 5 is a valid win because it ends on a 5."),
                     ],
                   ),
                 ),
@@ -511,6 +523,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     else if (type == 'DEAL_HAND') {
       setState(() {
         _gameHasStarted = true;
+        _startingPlayerCount = _players.length; // Lock in for betting
         var list = data['data'] as List;
         var newHand = list.map((i) => CardModel.fromJson(i)).toList();
         if (newHand.length > _myHand.length) SoundService.play('deal');
@@ -531,6 +544,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         _currentBombStack = data['data']['bombStack'] ?? 0;
         _waitingForAnswer = data['data']['waitingForAnswer'] ?? false;
         _jokerColorConstraint = data['data']['jokerColorConstraint']; // Sync constraint
+        _cardsPlayedThisTurn = data['data']['cardsPlayedThisTurn'] ?? 0;
         
         bool wasMyTurn = _isMyTurn;
         _isMyTurn = (activePlayer == _myPlayerId);
@@ -687,14 +701,14 @@ bool _validateLocalMove(CardModel card) {
     
     _lastPlayedCard = card;
     
-    // Track challenge progress
-    ChallengeService().updateProgress('cards_played');
-    
+    // Track challenge progress (NEW)
+    ProgressionService().updateChallengeProgress(ChallengeType.playGames, 0); // Active in game
+    if (['ace', 'joker', '2', '3', 'jack'].contains(card.rank)) {
+       ProgressionService().updateChallengeProgress(ChallengeType.playSpecialCards, 1);
+    }
+
     // Achievement: Bomb Squad
     if (['2','3','joker'].contains(card.rank) && _currentBombStack > 0) {
-       // Track bomb cards for challenge
-       ChallengeService().updateProgress('bombs_played');
-       
        AchievementService().unlock('bomb_squad').then((unlocked) {
           if (unlocked) _showAchievementSnackbar("Bomb Squad Unlocked! 💣");
        });
@@ -727,6 +741,51 @@ bool _validateLocalMove(CardModel card) {
       VPSGameService().sendAction("PLAY_CARD", payload);
     } else if (_isOffline) {_localEngine!.playCard(index, requestedSuit: reqSuit, requestedRank: reqRank, saidNikoKadi: capturedNikoState);}
     else {_channel?.sink.add(jsonEncode({"type": "PLAY_CARD", ...payload}));}
+
+    // AUTO-PASS LOGIC (Question Answer / Playing Question)
+    bool wasAnswering = _waitingForAnswer; 
+    
+    // Check if we should allow multi-drop (Chaining Qs or Multi-Answer)
+    // Condition: 
+    // 1. If we played a Q/8, do we have another Q/8?
+    // 2. If we answered (Wait=true), do we have another matching answer?
+    
+    bool canContinue = false;
+    
+    // STARTING A CHAIN (Q/8)
+    if (['queen','8'].contains(card.rank)) {
+       // We can continue if we have:
+       // 1. Another Q/8 (Rank Match - Chain)
+       // 2. An Answer (Suit Match)
+       canContinue = _myHand.any((c) => c != card && (c.rank == card.rank || c.suit == card.suit)); 
+    }
+    // ANSWERING A QUESTION
+    else if (wasAnswering) {
+       // Multi-drop answers must be SAME RANK.
+       canContinue = _myHand.any((c) => c != card && c.rank == card.rank);
+    }
+
+    if ((wasAnswering || ['queen','8'].contains(card.rank)) && !canContinue) {
+       // Only auto-pass if we CANNOT continue the chain/answer set
+       Future.delayed(Duration(milliseconds: 600), () {
+          if (mounted && _isMyTurn) _passTurn();
+       });
+    }
+    // If canContinue is true, we simply WAIT. The user must press "DONE" or play the next card.
+
+  }
+
+
+
+  void _passTurn() {
+    if (!_isMyTurn) return;
+    if (_isOnline) {
+       VPSGameService().sendAction("PASS_TURN", {});
+    } else if (_isOffline) {
+       _localEngine!.passTurn();
+    } else {
+       _channel?.sink.add(jsonEncode({"type": "PASS_TURN"}));
+    }
   }
 
   void _pickCard() {
@@ -761,7 +820,7 @@ bool _validateLocalMove(CardModel card) {
     if (_isOffline) {
       // Ã¢Å“â€¦ SAFETY CHECK: Prevent crash if engine isn't ready
       if (_localEngine != null) {
-         _localEngine.start(widget.aiCount, "Medium", decks: decks); 
+         _localEngine.start(widget.aiCount, widget.difficulty, decks: decks); 
       } else {
          print("Error: Local Engine not initialized yet");
       }
@@ -902,15 +961,17 @@ bool _validateLocalMove(CardModel card) {
             ),
             SizedBox(width: 12),
 
-            GestureDetector(
-            onTap: () => _showRulesDialog(),
-            child: Container(
-              padding: EdgeInsets.all(8),
-              decoration: BoxDecoration(color: Colors.blueAccent.withOpacity(0.2), shape: BoxShape.circle),
-              child: Icon(Icons.menu_book_rounded, color: Colors.blueAccent, size: 20),
-            ),
-          ),
-          SizedBox(width: 12),
+            if (!_isGoFish) ...[
+              GestureDetector(
+                onTap: _showRulesDialog,
+                child: Container(
+                  padding: EdgeInsets.all(8),
+                  decoration: BoxDecoration(color: Colors.blueAccent.withOpacity(0.2), shape: BoxShape.circle),
+                  child: Icon(Icons.menu_book_rounded, color: Colors.blueAccent, size: 20),
+                ),
+              ),
+              SizedBox(width: 12),
+            ],
             
             Expanded(
               child: ClipRRect(
@@ -924,55 +985,67 @@ bool _validateLocalMove(CardModel card) {
                     child: Row(
                       children: [
                          if (_isOnline && widget.onlineGameCode != null)
-                           Text("ROOM: ${widget.onlineGameCode}", style: TextStyle(color: theme.accentColor, fontWeight: FontWeight.bold, fontSize: 10)),
-                         Expanded(
-                           child: ListView.builder(
-                             scrollDirection: Axis.horizontal,
-                             itemCount: opponents.length,
-                             itemBuilder: (context, index) {
-                               final player = opponents[index];
-                               final pIndex = player.index;
-                               
-                               bool isTurn = pIndex == _activePlayerIndex;
-                               bool isSelected = _isGoFish && _selectedOpponentIndex == pIndex;
-                               int bookCount = (_isGoFish && _playerBooks.length > pIndex) ? _playerBooks[pIndex] : 0;
-                               
-                               return GestureDetector(
-                                 onTap: () => setState(() => _selectedOpponentIndex = pIndex),
-                                 child: Container(
-                                   margin: EdgeInsets.only(left: 12),
-                                   child: Column(
-                                     mainAxisAlignment: MainAxisAlignment.center,
-                                     children: [
-                                       Container(
-                                         padding: EdgeInsets.all(2),
-                                         decoration: BoxDecoration(
-                                            shape: BoxShape.circle, 
-                                            border: Border.all(
-                                              color: isSelected ? theme.accentColor : (isTurn ? Colors.green : Colors.white24), 
-                                              width: 2
-                                            )
-                                         ),
-                                         child: CircleAvatar(
-                                           radius: 14, 
-                                           backgroundColor: Colors.black38,
-                                           child: Icon(Icons.person, size: 16, color: Colors.white70),
-                                         ),
-                                       ),
-                                       Row(
+                            Text("ROOM: ${widget.onlineGameCode}", style: TextStyle(color: theme.accentColor, fontWeight: FontWeight.bold, fontSize: 10)),
+                          Expanded(
+                            child: ListView.builder(
+                              scrollDirection: Axis.horizontal,
+                              itemCount: opponents.length,
+                              itemBuilder: (context, index) {
+                                final player = opponents[index];
+                                final pIndex = player.index;
+                                
+                                bool isTurn = pIndex == _activePlayerIndex;
+                                bool isSelected = _isGoFish && _selectedOpponentIndex == pIndex;
+                                int bookCount = (_isGoFish && _playerBooks.length > pIndex) ? _playerBooks[pIndex] : 0;
+                                
+                                return GestureDetector(
+                                  onTap: () => setState(() => _selectedOpponentIndex = pIndex),
+                                  child: Container(
+                                    margin: EdgeInsets.only(left: 12),
+                                    child: Stack(
+                                      clipBehavior: Clip.none,
+                                      alignment: Alignment.center,
+                                      children: [
+                                        Column(
+                                          mainAxisAlignment: MainAxisAlignment.center,
                                           children: [
-                                            Text(player.name, style: TextStyle(color: Colors.white54, fontSize: 10)),
-                                            if(_isGoFish)
-                                               Text(" ($bookCount)", style: TextStyle(color: theme.accentColor, fontSize: 10, fontWeight: FontWeight.bold)),
+                                            Container(
+                                              padding: EdgeInsets.all(2),
+                                              decoration: BoxDecoration(
+                                                 shape: BoxShape.circle, 
+                                                 border: Border.all(
+                                                   color: isSelected ? theme.accentColor : (isTurn ? Colors.green : Colors.white24), 
+                                                   width: 2
+                                                 )
+                                              ),
+                                              child: CircleAvatar(
+                                                radius: 14, 
+                                                backgroundColor: Colors.black38,
+                                                child: Icon(Icons.person, size: 16, color: Colors.white70),
+                                              ),
+                                            ),
+                                            Row(
+                                               children: [
+                                                 Text(player.name, style: TextStyle(color: Colors.white54, fontSize: 10)),
+                                                 if(_isGoFish)
+                                                    Text(" ($bookCount)", style: TextStyle(color: theme.accentColor, fontSize: 10, fontWeight: FontWeight.bold)),
+                                               ],
+                                            )
                                           ],
-                                       )
-                                     ],
-                                   ),
-                                 ),
-                               );
-                             },
-                           ),
-                         ),
+                                        ),
+                                        // CHAT BUBBLE
+                                        if (_activeChatBubbles.containsKey(pIndex))
+                                           Positioned(
+                                             bottom: -30,
+                                             child: ChatBubble(message: _activeChatBubbles[pIndex]!, isMe: false),
+                                           ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
                       ],
                     ),
                   ),
@@ -1083,9 +1156,17 @@ bool _validateLocalMove(CardModel card) {
           colors: [Colors.black.withOpacity(0.0), Colors.black.withOpacity(0.8)],
         ),
       ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.end,
+      child: Stack(
+        clipBehavior: Clip.none,
+        alignment: Alignment.bottomCenter,
         children: [
+          // MY CHAT BUBBLE
+
+
+          Column(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+
           Padding(
             padding: const EdgeInsets.only(bottom: 20.0),
             child: _isMyTurn
@@ -1093,12 +1174,17 @@ bool _validateLocalMove(CardModel card) {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       if (!_isGoFish) ...[
-                        _buildGameButton(
-                          _currentBombStack > 0 ? "PICK $_currentBombStack" : "PICK",
-                          Icons.add,
-                          Colors.orange,
-                          _pickCard,
-                        ),
+                        // Show DONE only if we are NOT waiting for an answer to a Question.
+                        // If we played a Q/8 and haven't answered, we must Answer or Pick.
+                        if (_cardsPlayedThisTurn > 0 && !_waitingForAnswer)
+                          _buildGameButton("DONE", Icons.check, Colors.green, _passTurn)
+                        else
+                          _buildGameButton(
+                            _currentBombStack > 0 ? "PICK $_currentBombStack" : "PICK",
+                            Icons.add,
+                            Colors.orange,
+                            _pickCard,
+                          ),
                         SizedBox(width: 16),
                         GestureDetector(
                           onTap: () => setState(() => _declaredNikoKadi = !_declaredNikoKadi),
@@ -1179,6 +1265,8 @@ bool _validateLocalMove(CardModel card) {
           ),
         ],
       ),
+        ],
+      ),
     );
   }
 
@@ -1190,7 +1278,12 @@ bool _validateLocalMove(CardModel card) {
         SizedBox(height: 20),
         Text("LOBBY", style: TextStyle(color: theme.accentColor, fontSize: 24, fontWeight: FontWeight.bold, letterSpacing: 4)),
         SizedBox(height: 10),
-        Text("$_connectedPlayers Players Ready", style: TextStyle(color: Colors.white54)),
+        if (_connectedPlayers < 2 && _isOnline) ...[
+            CircularProgressIndicator(color: theme.accentColor, strokeWidth: 2),
+            SizedBox(height: 16),
+            Text("WAITING FOR COMPETITORS...", style: TextStyle(color: Colors.white54, fontSize: 12, letterSpacing: 2)),
+        ] else 
+            Text("$_connectedPlayers Players Ready", style: TextStyle(color: Colors.white54)),
         SizedBox(height: 10),
         if (_isOnline && widget.onlineGameCode != null)
           Container(
@@ -1234,7 +1327,19 @@ bool _validateLocalMove(CardModel card) {
             angle: _cardRotationAnimation.value,
             child: Transform.scale(
               scale: _cardScaleAnimation.value,
-              child: PlayingCardWidget(suit: _animatingCard!.suit, rank: _animatingCard!.rank, width: 90, height: 130),
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.3),
+                      blurRadius: 15,
+                      offset: Offset(5, 10),
+                    ),
+                  ],
+                ),
+                child: PlayingCardWidget(suit: _animatingCard!.suit, rank: _animatingCard!.rank, width: 90, height: 130),
+              ),
             ),
           ),
         );
@@ -1242,47 +1347,56 @@ bool _validateLocalMove(CardModel card) {
     );
   }
   
-Future<void> _handleGameOver(String msg) async {
-    bool didIWin = msg.contains("You") || msg.contains(_myName);
+Future<void> _handleGameOver(dynamic data) async {
+    bool didIWin = data['winner'] == _myPlayerId;
+    // Map data might be string or map, handle both
+    if (data is String) {
+       didIWin = data.contains("You") || data.contains(_myName);
+    }
+    
     int coinsEarned = 0;
 
     // 1. Handle Stats & Coins
     if (didIWin) {
       coinsEarned = 100;
-      if (_isOnline) {
-         int totalWins = await ProgressionService().getTotalWins();
-         await VPSGameService().updateStats(wins: 1);
-         
-         if (_entryFee > 0) {
-            int winnings = _entryFee * _players.length;
-            await ProgressionService().addCoins(winnings);
-            _showAchievementSnackbar("won $winnings Coins!");
-         }
-      }
       
-      // Achievement: First Win & Sniper & Rich Kid
-      await AchievementService().unlock('first_win').then((u) { if(u) _showAchievementSnackbar("First Blood 🩸"); });
+      // Update leaderboard stats for ALL game modes (solo, LAN, online)
+      await VPSGameService().updateStats(wins: 1);
       
-      if (_lastPlayedCard?.rank == 'ace') {
-         await AchievementService().unlock('sniper').then((u) { if(u) _showAchievementSnackbar("Sniper Ã°Å¸Å½Â¯"); });
+      if (_isOnline && _entryFee > 0) {
+         // Winner takes the WHOLE pot (based on starting count)
+         int winnerCount = _startingPlayerCount > 0 ? _startingPlayerCount : _players.length;
+         int winnings = _entryFee * winnerCount;
+         await ProgressionService().addCoins(winnings);
+         _showAchievementSnackbar("Won pot of $winnings Coins!");
       }
+    } else {
+      await ProgressionService().recordGameResult(false);
+    }
       
-      int coins = await ProgressionService().getCoins();
-      if (coins >= 1000) {
-         await AchievementService().unlock('rich_kid').then((u) { if(u) _showAchievementSnackbar("Rich Kid 💰"); });
-      }
+    // Achievement: First Win & Sniper & Rich Kid
+    if(didIWin) {
+       await AchievementService().unlock('first_win').then((u) { if(u) _showAchievementSnackbar("First Blood 🩸"); });
+       
+       if (_lastPlayedCard?.rank == 'ace') {
+          await AchievementService().unlock('sniper').then((u) { if(u) _showAchievementSnackbar("Sniper 🎯"); });
+       }
+    }
 
-      // Track win for ALL modes (offline, LAN, online)
-      await ProgressionService().recordGameResult(true);
-
+    // Track Daily Challenges (Game Played)
+    await ProgressionService().updateChallengeProgress(ChallengeType.playGames, 1);
+    
+    if (didIWin) {
+      await NotificationService().showGameVictoryNotification(coinsEarned);
       _confettiController.play();
       SoundService.play('win');
       HapticFeedback.heavyImpact(); // VICTORY!
     } else {
-      await ProgressionService().recordGameResult(false);
-      SoundService.play('error'); // or a 'defeat' sound
+      SoundService.play('error');
       HapticFeedback.heavyImpact(); // DEFEAT :(
     }
+
+    if (!mounted) return;
 
     // 2. Show Dialog
     showDialog(
@@ -1297,118 +1411,101 @@ Future<void> _handleGameOver(String msg) async {
           children: [
             // --- MAIN CARD ---
             Container(
-              padding: EdgeInsets.fromLTRB(24, 60, 24, 24),
+              width: double.infinity,
+              height: 400,
+              padding: EdgeInsets.fromLTRB(20, 60, 20, 20),
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: didIWin 
-                    ? [Color(0xFF1E293B), Color(0xFF0F172A)] // Victory Blue/Black
-                    : [Color(0xFF2C1E1E), Color(0xFF1A1111)], // Defeat Red/Black
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight
-                ),
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(
-                  color: didIWin ? Colors.amber.withOpacity(0.5) : Colors.red.withOpacity(0.3), 
-                  width: 2
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: didIWin ? Colors.amber.withOpacity(0.2) : Colors.black45, 
-                    blurRadius: 30, 
-                    spreadRadius: 5
-                  )
-                ]
+                 color: Color(0xFF1E293B),
+                 borderRadius: BorderRadius.circular(24),
+                 boxShadow: [
+                    BoxShadow(color: Colors.black45, blurRadius: 20, offset: Offset(0, 10))
+                 ],
+                 border: Border.all(
+                    color: didIWin ? Colors.amber.withOpacity(0.3) : Colors.white10,
+                    width: 1
+                 )
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // TITLE
-                  Text(
-                    didIWin ? "VICTORY!" : "GAME OVER", 
-                    style: TextStyle(
-                      fontSize: 32, 
-                      fontWeight: FontWeight.w900, 
-                      color: didIWin ? Colors.amber : Colors.grey, 
-                      letterSpacing: 2, 
-                      shadows: [Shadow(color: Colors.black, blurRadius: 10, offset: Offset(0,2))]
-                    )
-                  ),
-                  
-                  SizedBox(height: 12),
-                  
-                  // MESSAGE (e.g., "Player 2 Wins!")
-                  Text(
-                    msg, 
-                    textAlign: TextAlign.center, 
-                    style: TextStyle(color: Colors.white70, fontSize: 16)
-                  ),
-                  
-                  SizedBox(height: 24),
-                  
-                  // COINS REWARD (Only for Winner)
-                  if (didIWin)
-                    Container(
-                      padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                   Text(
+                     didIWin ? "VICTORY!" : "DEFEAT",
+                     style: TextStyle(
+                        fontFamily: 'Orbitron',
+                        fontSize: 32,
+                        fontWeight: FontWeight.bold,
+                        color: didIWin ? Colors.amber : Colors.grey,
+                        shadows: [
+                          if (didIWin) Shadow(color: Colors.amberAccent, blurRadius: 20)
+                        ]
+                     ),
+                   ),
+                   SizedBox(height: 10),
+                   Text(
+                     didIWin ? "You dominated the table!" : "Better luck next time.",
+                     style: TextStyle(color: Colors.white70, fontSize: 16),
+                   ),
+                   SizedBox(height: 30),
+                   
+                   // REWARDS
+                   Container(
+                      padding: EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: Colors.amber.withOpacity(0.1), 
-                        borderRadius: BorderRadius.circular(16), 
-                        border: Border.all(color: Colors.amber.withOpacity(0.3))
+                         color: Colors.black26,
+                         borderRadius: BorderRadius.circular(16)
                       ),
                       child: Row(
-                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                         children: [
-                          Icon(Icons.monetization_on, color: Colors.amber, size: 28),
-                          SizedBox(width: 10),
-                          Text(
-                            "+$coinsEarned Coins", 
-                            style: TextStyle(color: Colors.amber, fontSize: 20, fontWeight: FontWeight.bold)
-                          ),
-                        ],
-                      ),
-                    ),
-                    
-                  SizedBox(height: 32),
-                  
-                  // BUTTONS ROW
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                           _buildRewardItem(Icons.emoji_events, "${didIWin ? 1 : 0}", "Wins"),
+                           _buildRewardItem(Icons.monetization_on, "$coinsEarned", "Coins"),
+                           _buildRewardItem(Icons.star, "50", "XP"),
+                        ]
+                      )
+                   ),
+                   
+                   Spacer(),
+                   
+                   Row(
                     children: [
-                      // --- EXIT BUTTON (Goes to Home) ---
-                      TextButton(
-                        onPressed: () {
-                          Navigator.pop(context); 
-                          Navigator.pop(context, didIWin ? 'WON' : 'LOST'); 
-                        }, 
-                        child: Text(
-                          "EXIT", 
-                          style: TextStyle(color: Colors.white54, fontWeight: FontWeight.bold)
-                        )
-                      ),
-                      
-                      // --- PLAY AGAIN BUTTON ---
-                      ElevatedButton.icon(
+                      Expanded(
+                        child: ElevatedButton.icon(
                         onPressed: () {
                            Navigator.pop(context); // Close Dialog
-                           
-                           if (widget.isHost || _isOffline) {
-                             // Host/Offline: Actually restarts the game logic
-                             _startGame(); 
+                           Navigator.pop(context); // Back to Home
+                        },
+                        icon: Icon(Icons.home),
+                        label: Text("HOME"),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.white10,
+                          padding: EdgeInsets.symmetric(vertical: 12),
+                          shape: StadiumBorder()
+                        ),
+                      )),
+                      SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                        onPressed: () {
+                           Navigator.pop(context); // Close Dialog
+                           // Restart logic
+                           if (widget.isHost || _isOffline) {        
+                             _startGame();
+                             // Notify others? Usually room persists.
                            } else {
-                             // Client: Just closes dialog to wait for Host
+                             // Guest waiting for host
                              ScaffoldMessenger.of(context).showSnackBar(
-                               SnackBar(content: Text("Waiting for Host to restart..."))
+                               SnackBar(content: Text("Waiting for Host to restart...", style: TextStyle(color: Colors.white)))
                              );
                            }
-                        }, 
+                        },
                         icon: Icon(Icons.refresh),
                         label: Text("PLAY AGAIN"),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: didIWin ? Colors.green : Colors.grey[700], 
-                          foregroundColor: Colors.white, 
-                          padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12), 
+                          backgroundColor: didIWin ? Colors.green : Colors.grey[700],
+                          padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                           shape: StadiumBorder()
-                        )
-                      )
+                        ),
+                      )),
                     ],
                   )
                 ],
@@ -1464,27 +1561,49 @@ Future<void> _handleGameOver(String msg) async {
       _channel!.stream.listen((message) => _handleGameMessage(jsonDecode(message)));
     } catch (e) { print(e); }
   }
-  
 
+
+
+  Widget _buildRewardItem(IconData icon, String value, String label) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, color: Colors.amber, size: 28),
+        SizedBox(height: 4),
+        Text(value, style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        Text(label, style: TextStyle(color: Colors.white70, fontSize: 12)),
+      ],
+    );
+  }
 
   Widget _chatBubble(Map<String, dynamic> msg) {
-    final bool isMe = msg['sender'] == _myName;
-    return Align(
-      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-        padding: EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: isMe ? Colors.blueAccent : Colors.grey[800],
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Column(
-          crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-          children: [
-            if (!isMe) Text(msg['sender'], style: TextStyle(fontSize: 10, color: Colors.white54, fontWeight: FontWeight.bold)),
-            Text(msg['message'], style: TextStyle(color: Colors.white)),
-          ],
-        ),
+    final isMe = msg['sender'] == _myName;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Column(
+        crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        children: [
+          if (!isMe)
+            Padding(
+              padding: const EdgeInsets.only(left: 8, bottom: 4),
+              child: Text(msg['sender'], style: TextStyle(fontSize: 10, color: Colors.blueAccent, fontWeight: FontWeight.w900, letterSpacing: 1)),
+            ),
+          Container(
+            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: isMe ? Colors.blueAccent.withOpacity(0.8) : Colors.white.withOpacity(0.05),
+              borderRadius: BorderRadius.only(
+                topLeft: Radius.circular(20),
+                topRight: Radius.circular(20),
+                bottomLeft: isMe ? Radius.circular(20) : Radius.circular(4),
+                bottomRight: isMe ? Radius.circular(4) : Radius.circular(20),
+              ),
+              border: Border.all(color: isMe ? Colors.white24 : Colors.white.withOpacity(0.1)),
+              boxShadow: isMe ? [BoxShadow(color: Colors.blueAccent.withOpacity(0.2), blurRadius: 8)] : [],
+            ),
+            child: Text(msg['message'], style: TextStyle(color: Colors.white, fontWeight: FontWeight.normal, fontSize: 14)),
+          ),
+        ],
       ),
     );
   }
@@ -1496,53 +1615,75 @@ Future<void> _handleGameOver(String msg) async {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) {
-        return Padding(
-          padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-          child: Container(
-            height: MediaQuery.of(context).size.height * 0.5, // 50% height
-            decoration: BoxDecoration(
-              color: Color(0xFF0F172A),
-              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-              border: Border.all(color: Colors.white10),
-            ),
-            child: Column(
-              children: [
-                SizedBox(height: 12),
-                Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2))),
-                Padding(padding: EdgeInsets.all(12), child: Text("GAME CHAT", style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, letterSpacing: 2))),
-                Divider(color: Colors.white12, height: 1),
-                Expanded(
-                  child: ListView.builder(
-                    reverse: true,
-                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    itemCount: _chatMessages.length,
-                    itemBuilder: (c, i) => _chatBubble(_chatMessages[_chatMessages.length - 1 - i]),
+        return ClipRRect(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+            child: Container(
+              height: MediaQuery.of(context).size.height * 0.6,
+              decoration: BoxDecoration(
+                color: Color(0xFF0F172A).withOpacity(0.8),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
+                border: Border.all(color: Colors.white.withOpacity(0.1)),
+              ),
+              child: Column(
+                children: [
+                  SizedBox(height: 12),
+                  Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2))),
+                  Padding(padding: EdgeInsets.all(16), child: Text("BATTLE CHAT", style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, letterSpacing: 4, fontSize: 14))),
+                  Divider(color: Colors.white12, height: 1),
+                  Expanded(
+                    child: ListView.builder(
+                      reverse: true,
+                      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      itemCount: _chatMessages.length,
+                      itemBuilder: (c, i) => _chatBubble(_chatMessages[_chatMessages.length - 1 - i]),
+                    ),
                   ),
-                ),
-                Padding(
-                  padding: EdgeInsets.all(12),
-                  child: Row(
-                    children: [
-                      Expanded(child: TextField(
-                        controller: _chatController,
-                        style: TextStyle(color: Colors.white),
-                        cursorColor: Colors.blueAccent, // Added visible cursor
-                        decoration: InputDecoration(
-                          hintText: "Type message...", 
-                          hintStyle: TextStyle(color: Colors.white38), 
-                          filled: true, 
-                          fillColor: Colors.black26, 
-                          contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none)
+                  Container(
+                    padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + MediaQuery.of(context).viewInsets.bottom),
+                    decoration: BoxDecoration(
+                      color: Colors.black26,
+                      border: Border(top: BorderSide(color: Colors.white10)),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _chatController,
+                            style: TextStyle(color: Colors.white),
+                            cursorColor: Colors.blueAccent,
+                            decoration: InputDecoration(
+                              hintText: "Type a message...",
+                              hintStyle: TextStyle(color: Colors.white24, fontSize: 14),
+                              filled: true,
+                              fillColor: Colors.white.withOpacity(0.05),
+                              contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(30), borderSide: BorderSide.none),
+                              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(30), borderSide: BorderSide.none),
+                              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(30), borderSide: BorderSide(color: Colors.blueAccent.withOpacity(0.3))),
+                            ),
+                            onSubmitted: (_) => _sendChat(),
+                          ),
                         ),
-                        onSubmitted: (_) => _sendChat(),
-                      )),
-                      SizedBox(width: 8),
-                      IconButton(icon: Icon(Icons.send, color: Colors.blueAccent), onPressed: _sendChat),
-                    ],
+                        SizedBox(width: 12),
+                        GestureDetector(
+                          onTap: _sendChat,
+                          child: Container(
+                            padding: EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.blueAccent,
+                              shape: BoxShape.circle,
+                              boxShadow: [BoxShadow(color: Colors.blueAccent.withOpacity(0.3), blurRadius: 10)],
+                            ),
+                            child: Icon(Icons.send_rounded, color: Colors.white, size: 24),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         );
@@ -1564,8 +1705,8 @@ Future<void> _handleGameOver(String msg) async {
     } else {
       // LAN
       _channel?.sink.add(jsonEncode({
-        "type": "CHAT", 
-        "senderName": _myName, 
+        "type": "CHAT",
+        "senderName": _myName,
         "message": text
       }));
     }
@@ -1592,7 +1733,7 @@ Future<void> _handleGameOver(String msg) async {
   Widget _buildEmoteLayer() {
      // Overlay that maps players to positions
      List<Widget> emojis = [];
-     
+
      _activeEmotes.forEach((pIndex, emoteList) {
         // Determine position
         bool isMe = pIndex == _myPlayerId;
@@ -1617,7 +1758,7 @@ Future<void> _handleGameOver(String msg) async {
              Positioned(
                top: top, left: left - 20, // Center it
                child: FlyingEmoji(
-                 emoji: emote, 
+                 emoji: emote,
                  onComplete: () {
                     if (mounted) {
                       setState(() {
@@ -1630,41 +1771,94 @@ Future<void> _handleGameOver(String msg) async {
            );
         }
      });
-     
+
      return IgnorePointer(child: Stack(children: emojis));
   }
 
+  Widget _buildChatBubblesLayer() {
+     List<Widget> bubbles = [];
+     _activeChatBubbles.forEach((pIndex, message) {
+        bool isMe = pIndex == _myPlayerId;
+        // Position bubbles higher than emotes
+        double top = isMe ? MediaQuery.of(context).size.height - 280 : 140; 
+        double left = MediaQuery.of(context).size.width / 2;
+
+        if (!isMe && opponents.isNotEmpty) {
+           int screenIdx = opponents.indexWhere((p) => p.index == pIndex);
+           if (screenIdx != -1) {
+              double step = MediaQuery.of(context).size.width / (opponents.length + 1);
+              left = step * (screenIdx + 1);
+              top = 120; 
+           }
+        }
+
+        bubbles.add(
+           Positioned(
+             top: top, 
+             left: left - 70, // Center 140 width bubble
+             child: ChatBubble(
+               message: message,
+               isMe: isMe,
+             )
+           )
+        );
+     });
+
+     return IgnorePointer(child: Stack(children: bubbles));
+  }
+
   void _showEmoteMenu() {
-     showModalBottomSheet(
-       context: context, 
-       backgroundColor: Colors.transparent,
-       builder: (c) => Container(
-          padding: EdgeInsets.all(24),
-          decoration: BoxDecoration(
-             color: Color(0xFF1E293B),
-             borderRadius: BorderRadius.vertical(top: Radius.circular(24))
+      showModalBottomSheet(
+        context: context,
+        backgroundColor: Colors.transparent,
+        builder: (c) => ClipRRect(
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            child: Container(
+               padding: const EdgeInsets.all(32),
+               decoration: BoxDecoration(
+                  color: const Color(0xFF1E293B).withOpacity(0.8),
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+                  border: Border.all(color: Colors.white.withOpacity(0.1)),
+               ),
+               child: Column(
+                 mainAxisSize: MainAxisSize.min,
+                 children: [
+                    Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2))),
+                    const SizedBox(height: 20),
+                    const Text("SEND EMOTE", style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, letterSpacing: 4, fontSize: 14)),
+                    const SizedBox(height: 32),
+                    GridView.count(
+                      shrinkWrap: true,
+                      crossAxisCount: 4,
+                      mainAxisSpacing: 16,
+                      crossAxisSpacing: 16,
+                      children: ['😂','😎','😡','😭','❤️','👍','👋','🤔'].map((e) =>
+                         GestureDetector(
+                            onTap: () {
+                               Navigator.pop(context);
+                               _sendEmote(e);
+                            },
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.05),
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(color: Colors.white.withOpacity(0.05)),
+                              ),
+                              alignment: Alignment.center,
+                              child: Text(e, style: const TextStyle(fontSize: 32)),
+                            ),
+                         )
+                      ).toList(),
+                    ),
+                    const SizedBox(height: 20),
+                 ],
+               ),
+            ),
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-               Text("SEND EMOTE", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-               SizedBox(height: 20),
-               Wrap(
-                 spacing: 20, runSpacing: 20,
-                 children: ['Ã°Å¸Ëœâ€š','Ã°Å¸ËœÅ½','Ã°Å¸ËœÂ¡','Ã°Å¸ËœÂ­','Ã¢ÂÂ¤Ã¯Â¸Â','Ã°Å¸â€˜Â','Ã°Å¸â€˜â€¹','Ã°Å¸Â¤â€'].map((e) => 
-                    GestureDetector(
-                       onTap: () {
-                          Navigator.pop(context);
-                          _sendEmote(e);
-                       },
-                       child: Text(e, style: TextStyle(fontSize: 40)),
-                    )
-                 ).toList(),
-               )
-            ],
-          ),
-       )
-     );
+        ),
+      );
   }
 
   void _sendEmote(String emote) {
@@ -1673,12 +1867,46 @@ Future<void> _handleGameOver(String msg) async {
      } else if (_isOnline) {
         VPSGameService().sendAction("EMOTE", {"emote": emote});
      }
-     AchievementService().unlock('social_butterfly').then((u) { if(u) _showAchievementSnackbar("Social Butterfly Ã°Å¸Â¦â€¹"); });
+     AchievementService().unlock('social_butterfly').then((u) { if(u) _showAchievementSnackbar("Social Butterfly 🦋"); });
   }
 
   void _showChatSnackbar(dynamic data) {
     if (_chatDialogOpen) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("${data['sender']}: ${data['message']}"), duration: Duration(seconds: 2)));
+    
+    String senderName = data['sender'];
+    String message = data['message'];
+    
+    // Find player index
+    int pIndex = -1;
+    if (senderName == _myName) {
+       pIndex = _myPlayerId;
+    } else {
+       var p = _players.firstWhere((pl) => pl.name == senderName, orElse: () => PlayerInfo(id: '', name: '', index: -1));
+       pIndex = p.index;
+    }
+
+    if (pIndex != -1) {
+       setState(() {
+          _activeChatBubbles[pIndex] = message;
+       });
+       
+       // Clear after 3 seconds
+       Timer(Duration(seconds: 3), () {
+          if (mounted) {
+             setState(() {
+                _activeChatBubbles.remove(pIndex);
+             });
+          }
+       });
+    } else {
+       // Fallback for system messages or unidentified players
+       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text("$senderName: $message", style: TextStyle(color: Colors.white)), 
+          duration: Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.black87,
+       ));
+    }
   }
   
   Future<Map<String, String?>?> _showAceDialog(String currentSuit) async {

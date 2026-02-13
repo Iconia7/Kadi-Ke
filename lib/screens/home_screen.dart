@@ -8,14 +8,20 @@ import 'shop_screen.dart';
 import 'profile_screen.dart';
 import 'tournament_screen.dart'; // ADDED
 import 'leaderboard_screen.dart'; // ADDED
+import 'tutorial_screen.dart';
+import 'friends_screen.dart';
 import '../services/custom_auth_service.dart'; // Replaced Firebase Auth
 import '../services/vps_game_service.dart';   // Replaced Firebase Game Service
+import '../services/friend_service.dart';
 
 import '../services/progression_service.dart';
 import '../services/achievement_service.dart';
 import '../services/challenge_service.dart';
+import '../models/friend_model.dart';
 import '../widgets/daily_reward_dialog.dart';
 import '../widgets/daily_challenge_card.dart';
+import '../widgets/challenge_dialog.dart';
+import '../widgets/friend_invite_bottom_sheet.dart';
 
 class HomeScreen extends StatefulWidget {
   @override
@@ -100,12 +106,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     super.dispose();
   }
 
-  Future<void> _getIpAddress() async {
+  Future<String> _getIpAddress() async {
     final info = NetworkInfo();
     var ip = await info.getWifiIP();
-    setState(() {
-      _myIpAddress = ip ?? "Unknown";
-    });
+    if (mounted) {
+      setState(() {
+        _myIpAddress = ip ?? "Unknown";
+      });
+    }
+    return ip ?? "Unknown";
   }
 
   // --- ONLINE METHODS (UPDATED FOR RENDER SERVER) ---
@@ -132,7 +141,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return SimpleDialogOption(
        onPressed: () {
           Navigator.pop(context);
-          _showRulesConfigDialog(fee); // NEXT: Rules
+          if (_selectedGameMode == 'gofish') {
+             _createOnlineRoom(fee, {}); // No rules for Go Fish
+          } else {
+             _showRulesConfigDialog(fee); // Kadi Rules
+          }
        },
        child: Padding(
          padding: const EdgeInsets.symmetric(vertical: 8.0),
@@ -232,6 +245,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       if (mounted) {
         Navigator.pop(context); // Close spinner
 
+        // Show friend invite option
+        await _showFriendInvitePrompt(roomCode, null);
+
         Navigator.push(context, MaterialPageRoute(builder: (context) => 
           GameScreen(
             isHost: true, 
@@ -247,6 +263,182 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error creating room: $e")));
       }
     }
+  }
+
+  void _quickMatch() {
+    _showLobbyDialog();
+  }
+
+  void _showLobbyDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: Container(
+          width: MediaQuery.of(context).size.width * 0.9,
+          height: MediaQuery.of(context).size.height * 0.7,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(colors: [Color(0xFF1E293B), Color(0xFF0F172A)]),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: Colors.white24, width: 1.5),
+          ),
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text("GAME LOBBY", style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold, letterSpacing: 2)),
+                    IconButton(icon: Icon(Icons.close, color: Colors.white54), onPressed: () => Navigator.pop(context)),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: FutureBuilder<List<Map<String, dynamic>>>(
+                  future: VPSGameService().getActiveRooms(),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return Center(child: CircularProgressIndicator(color: Colors.amber));
+                    }
+                    if (snapshot.hasError || !snapshot.hasData || snapshot.data!.isEmpty) {
+                      return Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.sensor_door_outlined, size: 64, color: Colors.white24),
+                            SizedBox(height: 16),
+                            Text("No open rooms found", style: TextStyle(color: Colors.white54)),
+                            SizedBox(height: 24),
+                            ElevatedButton(
+                              onPressed: _startQuickMatchAutomated,
+                              style: ElevatedButton.styleFrom(backgroundColor: Colors.amber, foregroundColor: Colors.black),
+                              child: Text("CREATE QUICK ROOM"),
+                            )
+                          ],
+                        ),
+                      );
+                    }
+
+                    final rooms = snapshot.data!;
+                    return ListView.builder(
+                      itemCount: rooms.length,
+                      padding: EdgeInsets.symmetric(horizontal: 16),
+                      itemBuilder: (context, index) {
+                        final room = rooms[index];
+                        final fee = room['entryFee'] ?? 0;
+                        return Container(
+                          margin: EdgeInsets.only(bottom: 12),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.05),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: Colors.white10),
+                          ),
+                          child: ListTile(
+                            leading: CircleAvatar(
+                              backgroundColor: fee > 0 ? Colors.amber : Colors.blueAccent,
+                              child: Icon(fee > 0 ? Icons.monetization_on : Icons.casino, color: Colors.black, size: 20),
+                            ),
+                            title: Text("Room: ${room['code']}", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                            subtitle: Text("${room['gameType'].toString().toUpperCase()} • ${room['players']} Players", style: TextStyle(color: Colors.white54, fontSize: 12)),
+                            trailing: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              mainAxisSize: MainAxisSize.min, // Fix Overflow
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Text(fee > 0 ? "$fee Coins" : "FREE", style: TextStyle(color: fee > 0 ? Colors.amber : Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 10)),
+                                SizedBox(height: 2),
+                                SizedBox(
+                                  height: 24, 
+                                  child: ElevatedButton(
+                                    onPressed: () => _joinRoomFromLobby(room['code'].toString()),
+                                    style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.blueAccent,
+                                        padding: EdgeInsets.symmetric(horizontal: 8),
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                    ),
+                                    child: Text("JOIN", style: TextStyle(fontSize: 10)),
+                                  ),
+                                )
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _startQuickMatchAutomated,
+                    icon: Icon(Icons.bolt),
+                    label: Text("QUICK START ANY"),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.amber,
+                      side: BorderSide(color: Colors.amber),
+                      padding: EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _joinRoomFromLobby(String roomCode) {
+    Navigator.pop(context); // Close lobby
+    Navigator.push(context, MaterialPageRoute(builder: (context) => 
+      GameScreen(
+        isHost: false, 
+        hostAddress: 'online', 
+        onlineGameCode: roomCode,
+        gameType: _selectedGameMode, 
+      )
+    ));
+  }
+
+  Future<void> _startQuickMatchAutomated() async {
+     Navigator.pop(context); // Close lobby
+     
+     // 1. Show Loading Spinner
+     showDialog(
+       context: context,
+       barrierDismissible: false,
+       builder: (c) => Center(child: CircularProgressIndicator(color: Colors.amber)),
+     );
+ 
+     try {
+       // 2. Automated Matchmaking
+       final result = await VPSGameService().findMatch(_selectedGameMode, entryFee: 0);
+       String roomCode = result['roomCode'];
+       bool isHost = result['isHost'];
+       
+       if (mounted) {
+         Navigator.pop(context); // Close spinner
+ 
+         Navigator.push(context, MaterialPageRoute(builder: (context) => 
+           GameScreen(
+             isHost: isHost, 
+             hostAddress: 'online', 
+             onlineGameCode: roomCode,
+             gameType: _selectedGameMode, 
+           )
+         ));
+       }
+     } catch (e) {
+       if (mounted) {
+         Navigator.pop(context); // Close spinner
+         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Matchmaking failed: $e")));
+       }
+     }
   }
 
   void _joinOnlineGame() {
@@ -271,8 +463,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   // --- LOCAL METHODS ---
-  void _startHosting() {
-    Navigator.pop(context); 
+  void _startHosting() async {
+    Navigator.pop(context);
+    
+    // Get IP for LAN invite
+    String myIp = await _getIpAddress();
+    
+    // Show friend invite option
+    await _showFriendInvitePrompt(null, myIp);
+    
     Navigator.push(context, MaterialPageRoute(builder: (context) => 
       GameScreen(
         isHost: true, 
@@ -319,41 +518,191 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           builder: (context, setDialogState) {
             return Dialog(
               backgroundColor: Colors.transparent,
-              child: Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(colors: [Color(0xFF1E3A5F), Color(0xFF0F1E3A)]),
-                  borderRadius: BorderRadius.circular(24),
-                  border: Border.all(color: Colors.white24, width: 1.5),
-                ),
-                padding: EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text("SINGLE PLAYER", style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
-                    SizedBox(height: 10),
-                    Text("Mode: ${_selectedGameMode == 'kadi' ? 'Kadi' : 'Go Fish'}", style: TextStyle(color: Colors.amber)),
-                    SizedBox(height: 24),
-                    Slider(
-                      value: aiCount.toDouble(),
-                      min: 1, max: 3, divisions: 2,
-                      activeColor: Colors.amber,
-                      label: "$aiCount Bots",
-                      onChanged: (val) => setDialogState(() => aiCount = val.toInt()),
-                    ),
-                    SizedBox(height: 16),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: () => _startOfflineGame(aiCount, difficulty),
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-                        child: Text("START MATCH", style: TextStyle(fontWeight: FontWeight.bold)),
+              insetPadding: EdgeInsets.symmetric(horizontal: 20),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(30),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Color(0xFF1E293B).withOpacity(0.9),
+                          Color(0xFF0F172A).withOpacity(0.95),
+                        ],
                       ),
+                      borderRadius: BorderRadius.circular(30),
+                      border: Border.all(color: Colors.white12, width: 1.5),
                     ),
-                  ],
+                    padding: EdgeInsets.all(30),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Header
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              "SINGLE PLAYER",
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 22,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 2,
+                              ),
+                            ),
+                            IconButton(
+                              onPressed: () => Navigator.pop(context),
+                              icon: Icon(Icons.close, color: Colors.white54, size: 20),
+                            ),
+                          ],
+                        ),
+                        Divider(color: Colors.white10, height: 30),
+                        
+                        // Game Mode Badge
+                        Container(
+                          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: Color(0xFF00E5FF).withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Color(0xFF00E5FF).withOpacity(0.3)),
+                          ),
+                          child: Text(
+                            "MODE: ${_selectedGameMode.toUpperCase()}",
+                            style: TextStyle(
+                              color: Color(0xFF00E5FF),
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                              letterSpacing: 1.5,
+                            ),
+                          ),
+                        ),
+                        SizedBox(height: 30),
+
+                        // Bot Count Selection
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            "NUMBER OF BOTS",
+                            style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.2),
+                          ),
+                        ),
+                        SizedBox(height: 12),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [1, 2, 3].map((count) {
+                            bool isSelected = aiCount == count;
+                            return GestureDetector(
+                              onTap: () => setDialogState(() => aiCount = count),
+                              child: Container(
+                                width: (MediaQuery.of(context).size.width - 150) / 3,
+                                height: 50,
+                                decoration: BoxDecoration(
+                                  color: isSelected ? Color(0xFF00E5FF).withOpacity(0.2) : Colors.white.withOpacity(0.05),
+                                  borderRadius: BorderRadius.circular(15),
+                                  border: Border.all(
+                                    color: isSelected ? Color(0xFF00E5FF) : Colors.white10,
+                                    width: isSelected ? 2 : 1,
+                                  ),
+                                ),
+                                alignment: Alignment.center,
+                                child: Text(
+                                  "$count",
+                                  style: TextStyle(
+                                    color: isSelected ? Colors.white : Colors.white60,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 18,
+                                  ),
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                        SizedBox(height: 24),
+
+                        // Difficulty Selection
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            "DIFFICULTY",
+                            style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.2),
+                          ),
+                        ),
+                        SizedBox(height: 12),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: ["Easy", "Medium", "Hard"].map((diff) {
+                            bool isSelected = difficulty == diff;
+                            return GestureDetector(
+                              onTap: () => setDialogState(() => difficulty = diff),
+                              child: Container(
+                                width: (MediaQuery.of(context).size.width - 150) / 3,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  color: isSelected ? Colors.white.withOpacity(0.1) : Colors.transparent,
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(
+                                    color: isSelected ? Color(0xFF00E5FF).withOpacity(0.5) : Colors.white10,
+                                  ),
+                                ),
+                                alignment: Alignment.center,
+                                child: Text(
+                                  diff.toUpperCase(),
+                                  style: TextStyle(
+                                    color: isSelected ? Color(0xFF00E5FF) : Colors.white38,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                        SizedBox(height: 40),
+
+                        // Action Button
+                        Container(
+                          width: double.infinity,
+                          height: 60,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(20),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Color(0xFF00E5FF).withOpacity(0.2),
+                                blurRadius: 15,
+                                offset: Offset(0, 5),
+                              ),
+                            ],
+                          ),
+                          child: ElevatedButton(
+                            onPressed: () => _startOfflineGame(aiCount, difficulty),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Color(0xFF00E5FF),
+                              foregroundColor: Colors.black,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              elevation: 0,
+                            ),
+                            child: Text(
+                              "START MATCH",
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                                letterSpacing: 2,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             );
-          }
+          },
         );
       },
     );
@@ -362,103 +711,263 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   void _showMultiplayerDialog() {
     showDialog(
       context: context,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.transparent,
-        child: Container(
-          padding: EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(colors: [Color(0xFF2E1E5F), Color(0xFF1E1E3A)]),
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: Colors.white24, width: 1.5),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text("MULTIPLAYER", style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
-              Text("Mode: ${_selectedGameMode == 'kadi' ? 'Kadi' : 'Go Fish'}", style: TextStyle(color: Colors.amber, fontSize: 12)),
-              SizedBox(height: 20),
-              
-              DefaultTabController(
-                length: 2,
-                child: Column(
-                  children: [
-                    TabBar(
-                      indicatorColor: Colors.amber,
-                      tabs: [Tab(text: "ONLINE"), Tab(text: "LOCAL LAN")],
-                    ),
-                    Container(
-                      height: 250,
-                      child: TabBarView(
-                        children: [
-                          // ONLINE TAB
-                          _isFirebaseReady 
-                          ? Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                ElevatedButton.icon(
-                                  onPressed: _startOnlineHost, // Uses new Logic
-                                  icon: Icon(Icons.add),
-                                  label: Text("Create Room"),
-                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.amber, foregroundColor: Colors.black),
-                                ),
-                                SizedBox(height: 20),
-                                TextField(
-                                  controller: _codeController,
-                                  style: TextStyle(color: Colors.white),
-                                  decoration: InputDecoration(
-                                    hintText: "Enter Room Code",
-                                    hintStyle: TextStyle(color: Colors.white30),
-                                    filled: true,
-                                    fillColor: Colors.white10,
-                                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                                  ),
-                                ),
-                                SizedBox(height: 10),
-                                ElevatedButton(onPressed: _joinOnlineGame, child: Text("Join Room")),
-                              ],
-                            )
-                          : Center(
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  CircularProgressIndicator(color: Colors.amber),
-                                  SizedBox(height: 10),
-                                  Text("Connecting...", style: TextStyle(color: Colors.white54)),
-                                ],
-                              ),
-                            ),
-                          // LOCAL TAB
-                          Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              ListTile(
-                                leading: Icon(Icons.wifi, color: Colors.green),
-                                title: Text("Host LAN", style: TextStyle(color: Colors.white)),
-                                subtitle: Text("IP: $_myIpAddress", style: TextStyle(color: Colors.white54, fontSize: 10)),
-                                onTap: _startHosting,
-                              ),
-                              SizedBox(height: 10),
-                              TextField(
-                                controller: _ipController,
-                                style: TextStyle(color: Colors.white),
-                                decoration: InputDecoration(
-                                  hintText: "Host IP",
-                                  filled: true,
-                                  fillColor: Colors.white10,
-                                  border: OutlineInputBorder(),
-                                ),
-                              ),
-                              ElevatedButton(onPressed: _joinGame, child: Text("Connect LAN")),
-                            ],
-                          )
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding: EdgeInsets.symmetric(horizontal: 20),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(30),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Color(0xFF1E293B).withOpacity(0.9),
+                          Color(0xFF0F172A).withOpacity(0.95),
                         ],
                       ),
-                    )
-                  ],
+                      borderRadius: BorderRadius.circular(30),
+                      border: Border.all(color: Colors.white12, width: 1.5),
+                    ),
+                    padding: EdgeInsets.all(24),
+                    child: DefaultTabController(
+                      length: 2,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Header
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                "MULTIPLAYER",
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 2,
+                                ),
+                              ),
+                              IconButton(
+                                onPressed: () => Navigator.pop(context),
+                                icon: Icon(Icons.close, color: Colors.white54, size: 20),
+                              ),
+                            ],
+                          ),
+                          Divider(color: Colors.white10, height: 20),
+                          
+                          // TabBar
+                          Container(
+                            height: 45,
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.05),
+                              borderRadius: BorderRadius.circular(15),
+                            ),
+                            child: TabBar(
+                              indicator: BoxDecoration(
+                                borderRadius: BorderRadius.circular(15),
+                                color: Color(0xFF00E5FF).withOpacity(0.2),
+                                border: Border.all(color: Color(0xFF00E5FF).withOpacity(0.5)),
+                              ),
+                              labelColor: Color(0xFF00E5FF),
+                              unselectedLabelColor: Colors.white38,
+                              labelStyle: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, letterSpacing: 1.2),
+                              tabs: [Tab(text: "ONLINE"), Tab(text: "LOCAL LAN")],
+                            ),
+                          ),
+                          SizedBox(height: 20),
+
+                          SizedBox(
+                            height: 300,
+                            child: TabBarView(
+                              children: [
+                                // ONLINE TAB
+                                _buildOnlineTab(),
+                                // LOCAL TAB
+                                _buildLocalTab(),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
-              )
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildOnlineTab() {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        if (!_isFirebaseReady)
+          Column(
+            children: [
+              CircularProgressIndicator(color: Color(0xFF00E5FF)),
+              SizedBox(height: 16),
+              Text("Connecting to Game Services...", style: TextStyle(color: Colors.white54, fontSize: 13)),
+            ],
+          )
+        else ...[
+          // Create Button
+          _buildActionButton(
+            onPressed: _startOnlineHost,
+            icon: Icons.add_circle_outline,
+            label: "CREATE PRIVATE ROOM",
+            isPrimary: true,
+          ),
+          SizedBox(height: 30),
+          // Join Section
+          Text("OR JOIN WITH CODE", style: TextStyle(color: Colors.white38, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 2)),
+          SizedBox(height: 16),
+          _buildCodeInput(),
+          SizedBox(height: 16),
+          _buildActionButton(
+            onPressed: _joinOnlineGame,
+            icon: Icons.login_outlined,
+            label: "JOIN ROOM",
+            isPrimary: false,
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildLocalTab() {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        // Host Section
+        Container(
+          padding: EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Colors.white10),
+          ),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.green.withOpacity(0.1),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(Icons.wifi, color: Colors.greenAccent, size: 24),
+                  ),
+                  SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text("HOST LOCAL GAME", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                        Text("Your IP: $_myIpAddress", style: TextStyle(color: Colors.white54, fontSize: 11)),
+                      ],
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _startHosting,
+                    child: Text("START", style: TextStyle(color: Color(0xFF00E5FF), fontWeight: FontWeight.bold)),
+                  ),
+                ],
+              ),
             ],
           ),
+        ),
+        SizedBox(height: 24),
+        Text("OR CONNECT VIA IP", style: TextStyle(color: Colors.white38, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 2)),
+        SizedBox(height: 16),
+        _buildIpInput(),
+        SizedBox(height: 16),
+        _buildActionButton(
+          onPressed: _joinGame,
+          icon: Icons.lan_outlined,
+          label: "CONNECT TO HOST",
+          isPrimary: false,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildActionButton({required VoidCallback onPressed, required IconData icon, required String label, bool isPrimary = false}) {
+    return Container(
+      width: double.infinity,
+      height: 54,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(15),
+        boxShadow: isPrimary ? [
+          BoxShadow(
+            color: Color(0xFF00E5FF).withOpacity(0.2),
+            blurRadius: 12,
+            offset: Offset(0, 4),
+          )
+        ] : [],
+      ),
+      child: ElevatedButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon, size: 20),
+        label: Text(label, style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.5, fontSize: 13)),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: isPrimary ? Color(0xFF00E5FF) : Colors.white.withOpacity(0.1),
+          foregroundColor: isPrimary ? Colors.black : Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          elevation: 0,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCodeInput() {
+    return Container(
+      height: 54,
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: TextField(
+        controller: _codeController,
+        textAlign: TextAlign.center,
+        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, letterSpacing: 4, fontSize: 18),
+        decoration: InputDecoration(
+          hintText: "ROOM CODE",
+          hintStyle: TextStyle(color: Colors.white24, letterSpacing: 1, fontSize: 12),
+          border: InputBorder.none,
+          contentPadding: EdgeInsets.symmetric(vertical: 15),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildIpInput() {
+    return Container(
+      height: 54,
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: TextField(
+        controller: _ipController,
+        textAlign: TextAlign.center,
+        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, letterSpacing: 1, fontSize: 16),
+        decoration: InputDecoration(
+          hintText: "192.168.1.100",
+          hintStyle: TextStyle(color: Colors.white24, letterSpacing: 1, fontSize: 12),
+          border: InputBorder.none,
+          contentPadding: EdgeInsets.symmetric(vertical: 15),
         ),
       ),
     );
@@ -470,14 +979,32 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return Scaffold(
       body: Container(
         decoration: BoxDecoration(
-          gradient: RadialGradient(
-            center: Alignment.topCenter,
-            radius: 1.3,
-            colors: [Color(0xFF2E5077), Color(0xFF0F1E3A)],
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Color(0xFF1E293B),
+              Color(0xFF0F172A),
+              Color(0xFF1E1B4B),
+            ],
           ),
         ),
         child: Stack(
           children: [
+            // 0. Animated Background Glows
+            Positioned(
+              top: -100,
+              right: -100,
+              child: Container(
+                width: 300,
+                height: 300,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.amber.withOpacity(0.05),
+                  boxShadow: [BoxShadow(color: Colors.amber.withOpacity(0.1), blurRadius: 100, spreadRadius: 50)],
+                ),
+              ),
+            ),
             // 1. Floating Icon (Background)
             AnimatedBuilder(
               animation: _floatingAnimation,
@@ -488,27 +1015,151 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ),
             ),
 
-            // 2. SETTINGS BUTTON (MOVED HERE - Correct Spot inside Stack)
+            // 2. HEADER ACTIONS & STATS
             Positioned(
               top: 50,
+              left: 20,
               right: 20,
-              child: GestureDetector(
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => SettingsScreen()),
-                  );
-                },
-                child: Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.1),
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white24),
-                    boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 8)],
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  // Challenges Button
+                  GestureDetector(
+                    onTap: () => showDialog(context: context, builder: (c) => const ChallengeDialog()),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: Colors.amber.withOpacity(0.3)),
+                        boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 8)],
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.military_tech, color: Colors.amber, size: 20),
+                          SizedBox(width: 8),
+                          Text("CHALLENGES", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12, letterSpacing: 1)),
+                        ],
+                      ),
+                    ),
                   ),
-                  child: const Icon(Icons.settings, color: Colors.white, size: 28),
-                ),
+
+                  Row(
+                    children: [
+                      // Coins Display
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.black38,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: Colors.white10),
+                        ),
+                        child: Row(
+                          children: [
+                            const Text("🪙", style: TextStyle(fontSize: 16)),
+                            const SizedBox(width: 8),
+                            Text(
+                              "${ProgressionService().getCoins()}",
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      // Friends Button
+                      FutureBuilder<List<Friend>>(
+                        future: FriendService().getOnlineFriends(),
+                        builder: (context, snapshot) {
+                          final onlineCount = snapshot.data?.length ?? 0;
+                          return GestureDetector(
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (context) => FriendsScreen()),
+                              );
+                            },
+                            child: Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.1),
+                                    shape: BoxShape.circle,
+                                    border: Border.all(color: Colors.white24),
+                                  ),
+                                  child: const Icon(Icons.people_outline, color: Colors.white, size: 24),
+                                ),
+                                if (onlineCount > 0)
+                                  Positioned(
+                                    right: -4,
+                                    top: -4,
+                                    child: Container(
+                                      padding: EdgeInsets.all(4),
+                                      decoration: BoxDecoration(
+                                        color: Colors.green,
+                                        shape: BoxShape.circle,
+                                        border: Border.all(color: Color(0xFF1E293B), width: 2),
+                                      ),
+                                      constraints: BoxConstraints(minWidth: 20, minHeight: 20),
+                                      child: Center(
+                                        child: Text(
+                                          '$onlineCount',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(width: 12),
+                      // Tutorial Button
+                      GestureDetector(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (context) => TutorialScreen()),
+                          );
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.1),
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white24),
+                          ),
+                          child: const Icon(Icons.help_outline, color: Colors.white, size: 24),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      // Settings Button
+                      GestureDetector(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (context) => SettingsScreen()),
+                          );
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.1),
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white24),
+                          ),
+                          child: const Icon(Icons.settings, color: Colors.white, size: 24),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
 
@@ -519,10 +1170,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.play_circle_fill_rounded, size: 64, color: Colors.amber),
-                      SizedBox(height: 12),
-                      Text("KADI KE", style: TextStyle(fontSize: 56, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: 6)),
-                      Text("PREMIUM CARD EXPERIENCE", style: TextStyle(color: Colors.blueGrey[200], letterSpacing: 3, fontSize: 12, fontWeight: FontWeight.bold)),
+                      Image.asset(
+                        'assets/Kadi.png',
+                        height: 200,
+                        fit: BoxFit.contain,
+                      ),
                       
                       SizedBox(height: 40),
                       
@@ -543,15 +1195,30 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         ),
                       ),
                       
-                      SizedBox(height: 30),
-                      _buildMenuButton("SINGLE PLAYER", Icons.person, Colors.blueAccent, _showSinglePlayerDialog),
-                      SizedBox(height: 20),
-                      _buildMenuButton("MULTIPLAYER", Icons.groups, Colors.deepPurpleAccent, _showMultiplayerDialog),
-                      SizedBox(height: 20),
-                      _buildMenuButton("TOURNAMENT", Icons.emoji_events, Colors.orange, () => Navigator.push(context, MaterialPageRoute(builder: (c) => TournamentScreen(gameType: _selectedGameMode)))),
-                      SizedBox(height: 20),
-                      _buildMenuButton("LEADERBOARD", Icons.bar_chart, Colors.purpleAccent, () => Navigator.push(context, MaterialPageRoute(builder: (c) => LeaderboardScreen()))),
-                      SizedBox(height: 60),
+                      const SizedBox(height: 30),
+                      
+                      // QUICK MATCH (NEW PREMIUM BUTTON)
+                      _buildQuickMatchButton(),
+                      
+                      const SizedBox(height: 24),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          _buildModernMenuCard("SOLO", Icons.person, Colors.blueAccent, _showSinglePlayerDialog),
+                          const SizedBox(width: 16),
+                          _buildModernMenuCard("BATTLE", Icons.groups, Colors.deepPurpleAccent, _showMultiplayerDialog),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          _buildModernMenuCard("LEVELS", Icons.emoji_events, Colors.orange, () => Navigator.push(context, MaterialPageRoute(builder: (c) => TournamentScreen(gameType: _selectedGameMode)))),
+                          const SizedBox(width: 16),
+                          _buildModernMenuCard("RANK", Icons.bar_chart, Colors.purpleAccent, () => Navigator.push(context, MaterialPageRoute(builder: (c) => LeaderboardScreen()))),
+                        ],
+                      ),
+                      const SizedBox(height: 40),
                       
                       // Bottom Row (Fixed: Removed the Positioned widget from here)
                       Row(
@@ -595,25 +1262,79 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildMenuButton(String label, IconData icon, Color color, VoidCallback onTap) {
+  Widget _buildQuickMatchButton() {
+    return GestureDetector(
+      onTap: _quickMatch,
+      child: Container(
+        width: 320,
+        height: 80,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(24),
+          gradient: LinearGradient(
+            colors: [Colors.amber, Colors.orangeAccent],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          boxShadow: [
+            BoxShadow(color: Colors.amber.withOpacity(0.3), blurRadius: 20, offset: Offset(0, 10)),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(24),
+          child: Stack(
+            children: [
+              Positioned(
+                right: -20, top: -20,
+                child: Icon(Icons.flash_on, size: 100, color: Colors.white.withOpacity(0.2)),
+              ),
+              Center(
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.bolt, color: Colors.black, size: 32),
+                    SizedBox(width: 12),
+                    Text("QUICK MATCH", style: TextStyle(color: Colors.black, fontSize: 22, fontWeight: FontWeight.w900, letterSpacing: 2)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildModernMenuCard(String label, IconData icon, Color color, VoidCallback onTap) {
     return GestureDetector(
       onTap: onTap,
-      child: Container(
-        width: 300,
-        height: 70,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(colors: [color.withOpacity(0.8), color.withOpacity(0.4)]),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.white24),
-          boxShadow: [BoxShadow(color: color.withOpacity(0.3), blurRadius: 16)],
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: Colors.white, size: 28),
-            SizedBox(width: 16),
-            Text(label, style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
-          ],
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+          child: Container(
+            width: 152,
+            height: 120,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: Colors.white.withOpacity(0.1)),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  padding: EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.2),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(icon, color: color, size: 28),
+                ),
+                SizedBox(height: 12),
+                Text(label, style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -715,6 +1436,59 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     } catch (e) {
       print('Error claiming reward: $e');
     }
+  }
+
+  /// Show friend invite prompt after room creation
+  Future<void> _showFriendInvitePrompt(String? roomCode, String? ipAddress) async {
+    // 1. Ask User if they want to invite
+    final bool? shouldInvite = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E293B),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.person_add, color: Color(0xFF00E5FF)),
+            SizedBox(width: 12),
+            Text('Invite Friends?', style: TextStyle(color: Colors.white)),
+          ],
+        ),
+        content: const Text(
+          'Want to invite your friends to this game?',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Skip', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF00E5FF),
+              foregroundColor: Colors.black,
+            ),
+            child: const Text('Invite'),
+          ),
+        ],
+      ),
+    );
+
+    // 2. If Yes, Show Bottom Sheet and WAIT for it to close
+    if (shouldInvite == true) {
+      await showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (context) => FriendInviteBottomSheet(
+          roomCode: roomCode,
+          ipAddress: ipAddress,
+          gameMode: _selectedGameMode,
+        ),
+      );
+    }
+    // 3. Return (then navigation happens)
   }
 
 }

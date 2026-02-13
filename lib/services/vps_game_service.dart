@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'custom_auth_service.dart';
+import 'app_config.dart';
 
 /// VPS-based online game service using WebSockets
 /// Replaces FirebaseGameService for online multiplayer
@@ -11,9 +12,8 @@ class VPSGameService {
   factory VPSGameService() => _instance;
   VPSGameService._internal();
 
-  // TODO: Replace with your VPS URL when deploying
-  static const String wsUrl = 'ws://5.189.178.132:8080'; // Live VPS Server
-  static const String httpUrl = 'http://5.189.178.132:8080'; // Live VPS Server
+  String get wsUrl => AppConfig.wsUrl;
+  String get httpUrl => AppConfig.baseUrl;
 
   WebSocketChannel? _channel;
   final StreamController<Map<String, dynamic>> _gameStreamController = StreamController.broadcast();
@@ -126,6 +126,43 @@ class VPSGameService {
     }
     _isConnected = false;
     _currentGameCode = null;
+  }
+
+  /// Fetch active rooms for matchmaking
+  Future<List<Map<String, dynamic>>> getActiveRooms() async {
+    try {
+      final response = await http.get(Uri.parse('$httpUrl/active_rooms'));
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        return List<Map<String, dynamic>>.from(data);
+      }
+      return [];
+    } catch (e) {
+      print('Error fetching active rooms: $e');
+      return [];
+    }
+  }
+
+  /// Automated matchmaking: Join an existing room or create a new one
+  Future<Map<String, dynamic>> findMatch(String gameType, {int entryFee = 0}) async {
+    final rooms = await getActiveRooms();
+    
+    // Find a room that matches game type and has space
+    final match = rooms.firstWhere(
+      (r) => r['gameType'] == gameType && r['entryFee'] <= entryFee,
+      orElse: () => {},
+    );
+
+    if (match.isNotEmpty) {
+      String code = match['code'];
+      String playerName = CustomAuthService().username ?? "Player";
+      await joinGame(code, playerName);
+      return {'roomCode': code, 'isHost': false};
+    } else {
+      // No match found, create a new room
+      String code = await createGame(gameType, entryFee: entryFee);
+      return {'roomCode': code, 'isHost': true};
+    }
   }
 
   /// Fetch leaderboard from VPS

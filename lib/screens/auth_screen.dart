@@ -20,8 +20,10 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
 
   // Register controllers
   final _registerUsernameController = TextEditingController();
+  final _registerEmailController = TextEditingController();
   final _registerPasswordController = TextEditingController();
   final _registerConfirmPasswordController = TextEditingController();
+
 
   bool _isLoading = false;
   String? _errorMessage;
@@ -43,7 +45,9 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
     _loginUsernameController.dispose();
     _loginPasswordController.dispose();
     _registerUsernameController.dispose();
+    _registerEmailController.dispose();
     _registerPasswordController.dispose();
+
     _registerConfirmPasswordController.dispose();
     super.dispose();
   }
@@ -86,6 +90,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
       await CustomAuthService().register(
         _registerUsernameController.text.trim(),
         _registerPasswordController.text,
+        email: _registerEmailController.text.trim(),
       );
 
       if (!mounted) return;
@@ -100,7 +105,32 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
     }
   }
 
-  @override
+  Future<void> _handleGoogleLogin() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      await CustomAuthService().signInWithGoogle();
+
+      if (!mounted) return;
+      if (CustomAuthService().isAuthenticated) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => HomeScreen()),
+        );
+      } else {
+        setState(() => _isLoading = false);
+      }
+    } catch (e) {
+      setState(() {
+        _errorMessage = e.toString().replaceAll('Exception: ', '');
+        _isLoading = false;
+      });
+    }
+  }
+
+    @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Container(
@@ -108,7 +138,11 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [Color(0xFF1A1F38), Color(0xFF0F111A)],
+            colors: [
+              Color(0xFF1E293B),
+              Color(0xFF0F172A),
+              Color(0xFF1E1B4B),
+            ],
           ),
         ),
         child: SafeArea(
@@ -118,26 +152,36 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // Logo / Branding
+                  // Game Logo
                   Container(
-                    padding: EdgeInsets.all(20),
+                    width: 180,
+                    height: 180,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       boxShadow: [
-                         BoxShadow(color: Color(0xFF00E5FF).withOpacity(0.4), blurRadius: 20, spreadRadius: 5)
-                      ]
+                        BoxShadow(
+                          color: Color(0xFF00E5FF).withOpacity(0.2),
+                          blurRadius: 40,
+                          spreadRadius: 10,
+                        ),
+                      ],
                     ),
-                    child: Icon(Icons.style, size: 60, color: Color(0xFF00E5FF)),
+                    child: Image.asset(
+                      'assets/Kadi.png',
+                      fit: BoxFit.contain,
+                    ),
                   ),
                   SizedBox(height: 20),
                   Text(
-                    'KADI KE',
+                    'Welcome',
                     style: TextStyle(
-                      fontSize: 32,
+                      fontSize: 36,
                       fontWeight: FontWeight.bold,
                       color: Colors.white,
-                      letterSpacing: 3,
-                      shadows: [Shadow(color: Color(0xFF00E5FF), blurRadius: 10)]
+                      letterSpacing: 4,
+                      shadows: [
+                        Shadow(color: Color(0xFF00E5FF).withOpacity(0.5), blurRadius: 15)
+                      ]
                     ),
                   ),
                   SizedBox(height: 40),
@@ -205,11 +249,9 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                             ),
                           ),
 
-                        // Tab Views container using AnimatedSwitcher or fixed height? 
-                        // Using AnimatedSize implicitly via column invalidation or fixed height?
-                        // Let's rely on standard constraints.
+                        // Fixed height for TabBarView to prevent overflow
                         SizedBox(
-                           height: 400, // Fixed height for form area
+                           height: 400,
                            child: TabBarView(
                              controller: _tabController,
                              children: [
@@ -217,6 +259,49 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                                _buildRegisterForm(),
                              ],
                            ),
+                        ),
+                        
+                        // Google Login Button
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                          child: Column(
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(child: Divider(color: Colors.white12)),
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                                    child: Text('OR', style: TextStyle(color: Colors.white24, fontSize: 12)),
+                                  ),
+                                  Expanded(child: Divider(color: Colors.white12)),
+                                ],
+                              ),
+                              SizedBox(height: 20),
+                              OutlinedButton(
+                                onPressed: _isLoading ? null : _handleGoogleLogin,
+                                style: OutlinedButton.styleFrom(
+                                  fixedSize: Size(double.maxFinite, 56),
+                                  side: BorderSide(color: Colors.white24),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                  backgroundColor: Colors.white.withOpacity(0.05),
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Image.network(
+                                      'https://cdn1.iconfinder.com/data/icons/google-s-logo/150/Google_Icons-09-512.png',
+                                      height: 24,
+                                    ),
+                                    SizedBox(width: 12),
+                                    Text(
+                                      'SIGN IN WITH GOOGLE',
+                                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, letterSpacing: 1),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ],
                     ),
@@ -230,7 +315,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
     );
   }
 
-  Widget _buildLoginForm() {
+Widget _buildLoginForm() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Form(
@@ -241,18 +326,29 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
             _buildTextField(
                controller: _loginUsernameController,
                label: 'Username',
-               icon: Icons.person_outline
+               icon: Icons.person_outline,
+               autofillHints: [AutofillHints.username],
             ),
             SizedBox(height: 20),
             _buildTextField(
                controller: _loginPasswordController,
                label: 'Password',
                icon: Icons.lock_outline,
-               isPassword: true
+               isPassword: true,
+               autofillHints: [AutofillHints.password],
             ),
-            SizedBox(height: 40),
+            SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: _showForgotPasswordDialog,
+                child: Text('Forgot Password?', style: TextStyle(color: Color(0xFF00E5FF))),
+              ),
+            ),
+            SizedBox(height: 20),
             _buildActionButton('ENTER GAME', _isLoading ? null : _handleLogin),
           ],
+
         ),
       ),
     );
@@ -268,14 +364,24 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
             _buildTextField(
                controller: _registerUsernameController,
                label: 'Username',
-               icon: Icons.person_outline
+               icon: Icons.person_outline,
+               autofillHints: [AutofillHints.newUsername],
+            ),
+            SizedBox(height: 16),
+            _buildTextField(
+               controller: _registerEmailController,
+               label: 'Email Address',
+               icon: Icons.email_outlined,
+               autofillHints: [AutofillHints.email],
+               validator: (val) => val == null || !val.contains('@') ? 'Invalid Email' : null,
             ),
             SizedBox(height: 16),
             _buildTextField(
                controller: _registerPasswordController,
                label: 'Password',
                icon: Icons.lock_outline,
-               isPassword: true
+               isPassword: true,
+               autofillHints: [AutofillHints.newPassword],
             ),
             SizedBox(height: 16),
             _buildTextField(
@@ -283,7 +389,8 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                label: 'Confirm Password',
                icon: Icons.lock_outline,
                isPassword: true,
-               validator: (val) => val != _registerPasswordController.text ? 'Passwords do not match' : null
+               validator: (val) => val != _registerPasswordController.text ? 'Passwords do not match' : null,
+               autofillHints: [AutofillHints.newPassword],
             ),
             SizedBox(height: 30),
             _buildActionButton('CREATE ACCOUNT', _isLoading ? null : _handleRegister),
@@ -298,11 +405,13 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
      required String label, 
      required IconData icon, 
      bool isPassword = false,
-     String? Function(String?)? validator
+     String? Function(String?)? validator,
+     Iterable<String>? autofillHints,
   }) {
     return TextFormField(
       controller: controller,
       obscureText: isPassword,
+      autofillHints: autofillHints,
       style: TextStyle(color: Colors.white),
       decoration: InputDecoration(
         labelText: label,
@@ -351,6 +460,118 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                 letterSpacing: 1.5,
               ),
             ),
+      ),
+    );
+  }
+
+  Future<void> _showForgotPasswordDialog() async {
+    final emailController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Color(0xFF0F172A),
+        title: Text('Reset Password', style: TextStyle(color: Colors.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('Enter your email to receive a reset code.', style: TextStyle(color: Colors.white70)),
+            SizedBox(height: 20),
+            TextField(
+              controller: emailController,
+              style: TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                labelText: 'Email',
+                labelStyle: TextStyle(color: Colors.white54),
+                enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Color(0xFF00E5FF))),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: Text('Cancel', style: TextStyle(color: Colors.white54))),
+          TextButton(
+            child: Text('Send Code', style: TextStyle(color: Color(0xFF00E5FF))),
+            onPressed: () async {
+              Navigator.pop(context);
+              if (emailController.text.trim().isEmpty) return;
+              
+              setState(() => _isLoading = true);
+              try {
+                final msg = await CustomAuthService().forgotPassword(emailController.text.trim());
+                if (!mounted) return;
+                
+                // Show success and ask for token
+                _showResetTokenDialog(emailController.text.trim(), msg);
+              } catch (e) {
+                setState(() {
+                  _errorMessage = e.toString().replaceAll('Exception: ', '');
+                  _isLoading = false;
+                });
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showResetTokenDialog(String email, String message) async {
+    final tokenController = TextEditingController();
+    final passwordController = TextEditingController();
+    
+    // Auto-fill token if present in debug message (for dev convenience)
+    if (message.contains('Debug Code: ')) {
+       tokenController.text = message.split('Debug Code: ').last.trim();
+    }
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Color(0xFF0F172A),
+        title: Text('Enter Reset Code', style: TextStyle(color: Colors.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(message, style: TextStyle(color: Colors.greenAccent, fontSize: 12)),
+            SizedBox(height: 20),
+            TextField(
+              controller: tokenController,
+              style: TextStyle(color: Colors.white),
+              decoration: InputDecoration(labelText: 'Reset Code', labelStyle: TextStyle(color: Colors.white54)),
+            ),
+            SizedBox(height: 10),
+            TextField(
+              controller: passwordController,
+              obscureText: true,
+              style: TextStyle(color: Colors.white),
+              decoration: InputDecoration(labelText: 'New Password', labelStyle: TextStyle(color: Colors.white54)),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => setState(() => _isLoading = false), child: Text('Cancel', style: TextStyle(color: Colors.white54))),
+          TextButton(
+            child: Text('Reset Password', style: TextStyle(color: Color(0xFF00E5FF))),
+            onPressed: () async {
+              Navigator.pop(context);
+              try {
+                await CustomAuthService().resetPassword(email, tokenController.text.trim(), passwordController.text);
+                if (!mounted) return;
+                setState(() {
+                   _isLoading = false;
+                   _errorMessage = "Password Reset Successful! Please Login.";
+                   _tabController.animateTo(0); // Switch to Login tab
+                });
+              } catch (e) {
+                setState(() {
+                   _errorMessage = e.toString().replaceAll('Exception: ', '');
+                   _isLoading = false;
+                });
+              }
+            },
+          ),
+        ],
       ),
     );
   }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:ui';
 import '../services/progression_service.dart';
 import '../services/theme_service.dart';
 import '../services/custom_auth_service.dart';
@@ -68,124 +69,170 @@ class _ProfileScreenState extends State<ProfileScreen> {
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: theme.gradientColors,
+            colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
           ),
         ),
-        child: SafeArea(
-          child: Column(
-            children: [
-              SizedBox(height: 20),
-              // Avatar Section
-              Container(
-                width: 110, height: 110,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: LinearGradient(colors: [theme.accentColor, Colors.blueAccent]),
-                  boxShadow: [BoxShadow(color: theme.accentColor.withOpacity(0.4), blurRadius: 20)],
-                  border: Border.all(color: Colors.white, width: 2)
-                ),
-                child: Icon(Icons.person, size: 60, color: Colors.white),
+        child: Stack(
+          children: [
+            // Background Pattern
+            Positioned.fill(
+              child: Opacity(
+                opacity: 0.03,
+                child: Image.asset("assets/images/pattern.png", repeat: ImageRepeat.repeat, errorBuilder: (c,e,s)=>SizedBox()),
               ),
-              SizedBox(height: 16),
-              Text("Player One", style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w900)),
-              Container(
-                margin: EdgeInsets.only(top: 8),
-                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(10)),
-                child: Text("Rookie Card Player", style: TextStyle(color: theme.accentColor, fontSize: 12, fontWeight: FontWeight.bold)),
+            ),
+            SafeArea(
+              child: Column(
+                children: [
+                  SizedBox(height: 20),
+                  // Avatar Section
+                  Container(
+                    width: 120, height: 120,
+                    padding: EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: theme.accentColor.withOpacity(0.5), width: 2),
+                    ),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: LinearGradient(
+                          colors: [theme.accentColor, theme.accentColor.withOpacity(0.6)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        boxShadow: [
+                          BoxShadow(color: theme.accentColor.withOpacity(0.3), blurRadius: 20, spreadRadius: 5)
+                        ],
+                      ),
+                      child: Icon(Icons.person, size: 64, color: Colors.black),
+                    ),
+                  ),
+                  SizedBox(height: 20),
+                  Text(CustomAuthService().username ?? "Player One", style: TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.w900, letterSpacing: 1)),
+                  Container(
+                    margin: EdgeInsets.only(top: 8),
+                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: theme.accentColor.withOpacity(0.1), 
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: theme.accentColor.withOpacity(0.3)),
+                    ),
+                    child: Text(
+                      _totalWins > 50 ? "CARD MASTER" : (_totalWins > 10 ? "ELITE PLAYER" : "ROOKIE"), 
+                      style: TextStyle(color: theme.accentColor, fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 2)
+                    ),
+                  ),
+                  SizedBox(height: 40),
+                  
+                  // Stats Grid
+                  Expanded(
+                    child: GridView.count(
+                      crossAxisCount: 2,
+                      padding: EdgeInsets.symmetric(horizontal: 20),
+                      mainAxisSpacing: 20,
+                      crossAxisSpacing: 20,
+                      childAspectRatio: 1.1,
+                      children: [
+                        _buildModernStatCard("Total Coins", "$_coins", Icons.monetization_on, Colors.amber),
+                        _buildModernStatCard("Wins", "$_totalWins", Icons.emoji_events, Colors.greenAccent),
+                        _buildModernStatCard("Played", "$_totalGames", Icons.casino, Colors.blueAccent),
+                        _buildModernStatCard("Win Rate", "${_winRate.toStringAsFixed(1)}%", Icons.pie_chart, Colors.purpleAccent),
+                      ],
+                    ),
+                  ),
+                  
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text("ACHIEVEMENTS", style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, letterSpacing: 3, fontSize: 14)),
+                        Text("${AchievementService().getUnlockedCount()} / ${AchievementService().allAchievements.length}", style: TextStyle(color: Colors.white38, fontSize: 12, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  ),
+                  
+                  Container(
+                    height: 120,
+                    margin: EdgeInsets.only(bottom: 24),
+                    child: ListView.builder(
+                       scrollDirection: Axis.horizontal,
+                       padding: EdgeInsets.symmetric(horizontal: 20),
+                       physics: BouncingScrollPhysics(),
+                       itemCount: AchievementService().allAchievements.length,
+                       itemBuilder: (context, index) {
+                          final achievement = AchievementService().allAchievements[index];
+                          final isUnlocked = AchievementService().isUnlocked(achievement.id);
+                          
+                          return Container(
+                             width: 100,
+                             margin: EdgeInsets.only(right: 16),
+                             decoration: BoxDecoration(
+                                color: isUnlocked ? Colors.white.withOpacity(0.05) : Colors.black12,
+                                borderRadius: BorderRadius.circular(24),
+                                border: Border.all(color: isUnlocked ? theme.accentColor.withOpacity(0.3) : Colors.white.withOpacity(0.05)),
+                             ),
+                             child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                   Text(isUnlocked ? achievement.icon : "🔒", style: TextStyle(fontSize: 32)),
+                                   SizedBox(height: 8),
+                                   Padding(
+                                     padding: const EdgeInsets.symmetric(horizontal: 8),
+                                     child: Text(
+                                       isUnlocked ? achievement.title.toUpperCase() : "LOCKED", 
+                                       textAlign: TextAlign.center,
+                                       style: TextStyle(color: isUnlocked ? Colors.white : Colors.white24, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1),
+                                       maxLines: 1,
+                                       overflow: TextOverflow.ellipsis
+                                     ),
+                                   )
+                                ],
+                             ),
+                          );
+                       },
+                    ),
+                  ),
+                ],
               ),
-              SizedBox(height: 40),
-              
-              // Stats Grid
-              Expanded(
-                child: GridView.count(
-                  crossAxisCount: 2,
-                  padding: EdgeInsets.all(20),
-                  mainAxisSpacing: 16,
-                  crossAxisSpacing: 16,
-                  childAspectRatio: 1.1,
-                  children: [
-                    _buildStatCard("Total Coins", "$_coins", Icons.monetization_on, Colors.amber),
-                    _buildStatCard("Wins", "$_totalWins", Icons.emoji_events, Colors.greenAccent),
-                    _buildStatCard("Games Played", "$_totalGames", Icons.casino, Colors.blueAccent),
-                    _buildStatCard("Win Rate", "${_winRate.toStringAsFixed(1)}%", Icons.pie_chart, Colors.purpleAccent),
-                  ],
-                ),
-              ),
-              
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                child: Align(alignment: Alignment.centerLeft, child: Text("ACHIEVEMENTS", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, letterSpacing: 2))),
-              ),
-              
-              Container(
-                height: 100,
-                child: ListView.builder(
-                   scrollDirection: Axis.horizontal,
-                   padding: EdgeInsets.symmetric(horizontal: 20),
-                   itemCount: AchievementService().allAchievements.length,
-                   itemBuilder: (context, index) {
-                      final achievement = AchievementService().allAchievements[index];
-                      final isUnlocked = AchievementService().isUnlocked(achievement.id);
-                      
-                      return Container(
-                         width: 80,
-                         margin: EdgeInsets.only(right: 12),
-                         decoration: BoxDecoration(
-                            color: isUnlocked ? Colors.amber.withOpacity(0.1) : Colors.white.withOpacity(0.05),
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: isUnlocked ? Colors.amber : Colors.white10),
-                         ),
-                         child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                               Text(isUnlocked ? achievement.icon : "🔒", style: TextStyle(fontSize: 24)),
-                               SizedBox(height: 8),
-                               Text(
-                                 isUnlocked ? achievement.title : "Locked", 
-                                 textAlign: TextAlign.center,
-                                 style: TextStyle(color: isUnlocked ? Colors.white : Colors.white38, fontSize: 10, fontWeight: FontWeight.bold),
-                                 maxLines: 2,
-                                 overflow: TextOverflow.ellipsis
-                               )
-                            ],
-                         ),
-                      );
-                   },
-                ),
-              ),
-              SizedBox(height: 20),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildStatCard(String title, String value, IconData icon, Color color) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.05),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Colors.white10),
-      ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            padding: EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.2),
-              shape: BoxShape.circle,
-              boxShadow: [BoxShadow(color: color.withOpacity(0.2), blurRadius: 10)]
-            ),
-            child: Icon(icon, color: color, size: 28),
+  Widget _buildModernStatCard(String title, String value, IconData icon, Color color) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(32),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.03),
+            borderRadius: BorderRadius.circular(32),
+            border: Border.all(color: Colors.white.withOpacity(0.05)),
           ),
-          SizedBox(height: 12),
-          Text(value, style: TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.bold)),
-          SizedBox(height: 4),
-          Text(title, style: TextStyle(color: Colors.white38, fontSize: 12)),
-        ],
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                padding: EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.1),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: color.withOpacity(0.2)),
+                ),
+                child: Icon(icon, color: color, size: 28),
+              ),
+              SizedBox(height: 12),
+              Text(value, style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w900)),
+              SizedBox(height: 4),
+              Text(title.toUpperCase(), style: TextStyle(color: Colors.white38, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1)),
+            ],
+          ),
+        ),
       ),
     );
   }

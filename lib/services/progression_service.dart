@@ -1,4 +1,7 @@
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/challenge_model.dart';
+import 'dart:convert';
+import 'dart:math';
 
 class ProgressionService {
   static const String _coinsKey = 'player_coins';
@@ -8,8 +11,10 @@ class ProgressionService {
   static const String _selectedThemeKey = 'selected_theme';
   static const String _totalWinsKey = 'total_wins';
   static const String _totalGamesKey = 'total_games';
+  static const String _challengesKey = 'daily_challenges';
+  static const String _lastChallengeResetKey = 'last_challenge_reset';
+  static const String _notificationsEnabledKey = 'notifications_enabled';
   
-
 
   static final ProgressionService _instance = ProgressionService._internal();
   factory ProgressionService() => _instance;
@@ -33,10 +38,10 @@ class ProgressionService {
     
     // Initialize default data for this specific user if missing
     if (!_prefs.containsKey(_getKey(_coinsKey))) {
-      await _prefs.setInt(_getKey(_coinsKey), 250); 
-      await _prefs.setStringList(_getKey(_unlockedSkinsKey), ['classic', 'neon_geometric']); 
-      await _prefs.setStringList(_getKey(_unlockedThemesKey), ['midnight_elite', 'green_table']); 
-      await _prefs.setString(_getKey(_selectedSkinKey), 'neon_geometric');
+      await _prefs.setInt(_getKey(_coinsKey), 0); // Production default is 0
+      await _prefs.setStringList(_getKey(_unlockedSkinsKey), ['classic']); 
+      await _prefs.setStringList(_getKey(_unlockedThemesKey), ['midnight_elite']); 
+      await _prefs.setString(_getKey(_selectedSkinKey), 'classic');
       await _prefs.setString(_getKey(_selectedThemeKey), 'midnight_elite');
       await _prefs.setInt(_getKey(_totalWinsKey), 0);
       await _prefs.setInt(_getKey(_totalGamesKey), 0);
@@ -47,7 +52,7 @@ class ProgressionService {
   String _getKey(String key) => "$_userIdPrefix$key";
 
   // --- COINS & STATS ---
-  int getCoins() => _prefs.getInt(_getKey(_coinsKey)) ?? 100;
+  int getCoins() => _prefs.getInt(_getKey(_coinsKey)) ?? 0;
   Future<void> addCoins(int amount) async => await _prefs.setInt(_getKey(_coinsKey), getCoins() + amount);
   
   Future<bool> spendCoins(int amount) async {
@@ -75,7 +80,7 @@ class ProgressionService {
 
   // --- UNLOCKABLES ---
   List<String> getUnlockedSkins() => _prefs.getStringList(_getKey(_unlockedSkinsKey)) ?? ['classic'];
-  List<String> getUnlockedThemes() => _prefs.getStringList(_getKey(_unlockedThemesKey)) ?? ['green_table'];
+  List<String> getUnlockedThemes() => _prefs.getStringList(_getKey(_unlockedThemesKey)) ?? ['midnight_elite'];
 
   Future<void> unlockSkin(String skinId) async {
     List<String> unlocked = getUnlockedSkins();
@@ -94,10 +99,13 @@ class ProgressionService {
   }
 
   String getSelectedSkin() => _prefs.getString(_getKey(_selectedSkinKey)) ?? 'classic';
-  String getSelectedTheme() => _prefs.getString(_getKey(_selectedThemeKey)) ?? 'green_table';
+  String getSelectedTheme() => _prefs.getString(_getKey(_selectedThemeKey)) ?? 'midnight_elite';
 
   Future<void> selectSkin(String skinId) async => await _prefs.setString(_getKey(_selectedSkinKey), skinId);
   Future<void> selectTheme(String themeId) async => await _prefs.setString(_getKey(_selectedThemeKey), themeId);
+
+  bool areNotificationsEnabled() => _prefs.getBool(_getKey(_notificationsEnabledKey)) ?? true;
+  Future<void> setNotificationsEnabled(bool enabled) async => await _prefs.setBool(_getKey(_notificationsEnabledKey), enabled);
 
   int calculateWinReward(int opponentCount, String difficulty) {
     int base = 50 + (opponentCount - 1) * 15;
@@ -149,6 +157,87 @@ class ProgressionService {
   Future<void> _logLogin(DateTime when, int streak) async {
     await _prefs.setString(_getKey(_lastLoginKey), when.toIso8601String());
     await _prefs.setInt(_getKey(_streakKey), streak);
+  }
+
+  // --- CHALLENGES ---
+  List<ChallengeModel> getChallenges() {
+    final String? jsonStr = _prefs.getString(_getKey(_challengesKey));
+    if (jsonStr == null) return [];
+    final List<dynamic> decoded = jsonDecode(jsonStr);
+    return decoded.map((item) => ChallengeModel.fromJson(item)).toList();
+  }
+
+  Future<void> saveChallenges(List<ChallengeModel> challenges) async {
+    final String jsonStr = jsonEncode(challenges.map((c) => c.toJson()).toList());
+    await _prefs.setString(_getKey(_challengesKey), jsonStr);
+  }
+
+  Future<void> checkAndResetChallenges() async {
+    final now = DateTime.now();
+    final lastResetStr = _prefs.getString(_getKey(_lastChallengeResetKey));
+    
+    if (lastResetStr == null || !_isSameDay(now, DateTime.parse(lastResetStr))) {
+      await _generateNewChallenges();
+      await _prefs.setString(_getKey(_lastChallengeResetKey), now.toIso8601String());
+    }
+  }
+
+  Future<void> _generateNewChallenges() async {
+    final random = Random();
+    final List<ChallengeModel> newChallenges = [
+      ChallengeModel(
+        id: 'win_${random.nextInt(1000)}',
+        title: 'Victor',
+        description: 'Win 3 Games',
+        type: ChallengeType.winGames,
+        goal: 3,
+        reward: 150,
+      ),
+      ChallengeModel(
+        id: 'play_${random.nextInt(1000)}',
+        title: 'Competitor',
+        description: 'Play 5 Games',
+        type: ChallengeType.playGames,
+        goal: 5,
+        reward: 100,
+      ),
+      ChallengeModel(
+        id: 'special_${random.nextInt(1000)}',
+        title: 'Expert',
+        description: 'Play 10 Special Cards',
+        type: ChallengeType.playSpecialCards,
+        goal: 10,
+        reward: 200,
+      ),
+    ];
+    await saveChallenges(newChallenges);
+  }
+
+  Future<void> updateChallengeProgress(ChallengeType type, int amount) async {
+    List<ChallengeModel> challenges = getChallenges();
+    bool changed = false;
+    for (var challenge in challenges) {
+      if (challenge.type == type && !challenge.isClaimed) {
+        challenge.progress = min(challenge.goal, challenge.progress + amount);
+        changed = true;
+      }
+    }
+    if (changed) {
+      await saveChallenges(challenges);
+    }
+  }
+
+  Future<bool> claimChallengeReward(String id) async {
+    List<ChallengeModel> challenges = getChallenges();
+    for (var challenge in challenges) {
+      if (challenge.id == id && challenge.isCompleted && !challenge.isClaimed) {
+        challenge.isClaimed = true;
+        await addCoins(challenge.reward);
+        await saveChallenges(challenges);
+        return true;
+      }
+    }
+    return false;
   }
 
   bool _isSameDay(DateTime a, DateTime b) {

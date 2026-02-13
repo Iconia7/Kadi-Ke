@@ -6,6 +6,7 @@ import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:crypto/crypto.dart';
 
 // ==========================================
 //           MODELS & DECK SERVICE
@@ -74,6 +75,7 @@ class Player {
   
   // Game-Specific State
   bool hasSaidNikoKadi = false; // Kadi
+  int cardsPlayedThisTurn = 0; // Kadi Multi-drop
   int books = 0; // Go Fish
   
   Player(this.id, this.name, this.socket);
@@ -131,12 +133,19 @@ class GameRoom {
       'direction': direction,
       // Go Fish
       'books': players.map((p) => p.books).toList(),
+      'cardsPlayedThisTurn': players[currentPlayerIndex].cardsPlayedThisTurn,
     };
   }
 }
 
 class MultiGameServer {
   final Map<String, GameRoom> _rooms = {}; 
+  
+  // Track online users by userId -> username
+  final Map<String, String> _onlineUsers = {};
+  
+  // Track user WebSocket connections for notifications
+  final Map<String, WebSocketSink> _userSockets = {};
 
   static void _log(String message, {String level = 'INFO'}) {
     final time = DateTime.now().toIso8601String();
@@ -149,6 +158,12 @@ class MultiGameServer {
 
   final File _usersFile = File('users.json');
   Map<String, dynamic> _users = {};
+
+  String _hashPassword(String password) {
+    final salt = "kadi_ke_salt_2026"; // In a real production app, use a unique salt per user
+    final bytes = utf8.encode(password + salt);
+    return sha256.convert(bytes).toString();
+  }
 
   void _loadUsers() {
     if (_usersFile.existsSync()) {
@@ -187,11 +202,26 @@ class MultiGameServer {
         if (_users.containsKey(username)) {
           return Response.ok(jsonEncode({'error': 'Username taken'}), headers: _corsHeaders);
         }
+        
+        // Check email uniqueness if provided
+        final email = data['email'];
+        if (email != null && email.toString().isNotEmpty) {
+           bool emailExists = false;
+           _users.forEach((_, u) {
+              if (u['email'] == email) emailExists = true;
+           });
+           if (emailExists) {
+             return Response.ok(jsonEncode({'error': 'Email already registered'}), headers: _corsHeaders);
+           }
+        }
+
         // Simple User Object
         _users[username] = {
-           'password': password,
+           'password': _hashPassword(password),
+           'email': email, // Store email
            'id': DateTime.now().millisecondsSinceEpoch.toString(), // Generate simple ID
            'wins': 0,
+           'coins': 0, // Initial coins explicitly 0 for production
            'created_at': DateTime.now().toIso8601String()
         };
         _saveUsers();
@@ -199,9 +229,39 @@ class MultiGameServer {
       } 
       
       else if (path == 'login') {
-        if (!_users.containsKey(username) || _users[username]['password'] != password) {
+        final currentHash = _hashPassword(password);
+        final legacyHash = sha256.convert(utf8.encode(password)).toString(); // Legacy (unsalted)
+        
+        _log("Login attempt for user: $username");
+        
+        if (!_users.containsKey(username)) {
+           _log("Login failed: User '$username' not found in database", level: 'WARNING');
            return Response.ok(jsonEncode({'error': 'Invalid Credentials'}), headers: _corsHeaders);
         }
+
+        final storedHash = _users[username]['password'];
+        bool success = false;
+
+        if (storedHash == currentHash) {
+          success = true;
+        } else if (storedHash == legacyHash) {
+          _log("Legacy unsalted hash detected for '$username'. Upgrading...");
+          _users[username]['password'] = currentHash;
+          _saveUsers();
+          success = true;
+        } else if (storedHash == password) {
+          _log("Legacy plain-text password detected for '$username'. Upgrading to salted hash...");
+          _users[username]['password'] = currentHash;
+          _saveUsers();
+          success = true;
+        }
+
+        if (!success) {
+           _log("Login failed: Password hash mismatch for '$username'", level: 'WARNING');
+           return Response.ok(jsonEncode({'error': 'Invalid Credentials'}), headers: _corsHeaders);
+        }
+
+        _log("Login successful: $username");
         return Response.ok(jsonEncode({
            'status': 'success', 
            'userId': _users[username]['id'],
@@ -216,6 +276,146 @@ class MultiGameServer {
     return Response.notFound('Not Found');
   }
 
+  Future<Response> _handleGoogleAuth(Request request) async {
+    try {
+      final payload = await request.readAsString();
+      final data = jsonDecode(payload);
+      final googleId = data['googleId'];
+      final email = data['email'];
+      final displayName = data['displayName'] ?? "Google User";
+
+      _log("Google Login attempt: $email ($googleId)");
+
+      // Check if user already exists by googleId
+      String? username;
+      _users.forEach((key, value) {
+        if (value['googleId'] == googleId) {
+          username = key;
+        }
+      });
+
+      if (username == null) {
+        // Register new user
+        username = email.split('@')[0]; // Use email prefix as initial username
+        
+        // Ensure uniqueness
+        String originalUsername = username!;
+        int count = 1;
+        while (_users.containsKey(username)) {
+          username = "${originalUsername}_${count++}";
+        }
+
+        _users[username!] = {
+          'googleId': googleId,
+          'email': email,
+          'id': DateTime.now().millisecondsSinceEpoch.toString(),
+          'wins': 0,
+          'coins': 0,
+          'created_at': DateTime.now().toIso8601String()
+        };
+        _saveUsers();
+        _log("Created new Google-linked user: $username");
+      }
+
+      return Response.ok(jsonEncode({
+        'status': 'success',
+        'userId': _users[username]['id'],
+        'username': username,
+        'token': 'google_token_${DateTime.now().millisecondsSinceEpoch}'
+      }), headers: _corsHeaders);
+
+    } catch (e) {
+      _log("Google Auth Error: $e", level: 'ERROR');
+      return Response.internalServerError(body: "Google Auth Error: $e", headers: _corsHeaders);
+    }
+  }
+
+  Future<Response> _handleForgotPassword(Request request) async {
+    try {
+      final payload = await request.readAsString();
+      final data = jsonDecode(payload);
+      final email = data['email'];
+      
+      _log("Forgot password request for: $email");
+      
+      String? targetUsername;
+      _users.forEach((u, v) {
+        if (v['email'] == email) targetUsername = u;
+      });
+      
+      if (targetUsername == null) {
+         // Generic response for security
+         return Response.ok(jsonEncode({'status': 'success', 'message': 'If an account exists, a reset code has been sent.'}), headers: _corsHeaders);
+      }
+      
+      // Generate Reset Token
+      final token = _generateRoomCode(); // Reuse 6-char code generator for simplicity
+      _users[targetUsername!]['resetToken'] = token;
+      _users[targetUsername!]['resetTokenExpiry'] = DateTime.now().add(Duration(minutes: 15)).toIso8601String();
+      _saveUsers();
+      
+      _log("Reset Token for $targetUsername: $token");
+      
+      // Return token in response for DEBUGGING/DEVELOPMENT purposes only
+      return Response.ok(jsonEncode({
+        'status': 'success', 
+        'message': 'Reset code generated.',
+        'debug_token': token 
+      }), headers: _corsHeaders);
+      
+    } catch (e) {
+       _log("Forgot Password Error: $e", level: 'ERROR');
+       return Response.internalServerError(body: "Error processing request", headers: _corsHeaders);
+    }
+  }
+
+  Future<Response> _handleResetPassword(Request request) async {
+    try {
+      final payload = await request.readAsString();
+      final data = jsonDecode(payload);
+      final email = data['email'];
+      final token = data['token'];
+      final newPassword = data['newPassword'];
+      
+      _log("Password reset attempt for: $email with token $token");
+      
+      String? targetUsername;
+      _users.forEach((u, v) {
+        if (v['email'] == email) targetUsername = u;
+      });
+      
+      if (targetUsername == null) {
+         return Response.ok(jsonEncode({'error': 'Invalid request'}), headers: _corsHeaders);
+      }
+      
+      var userData = _users[targetUsername];
+      if (userData['resetToken'] != token) {
+         return Response.ok(jsonEncode({'error': 'Invalid reset token'}), headers: _corsHeaders);
+      }
+      
+      // Check expiry
+      if (userData['resetTokenExpiry'] != null) {
+         DateTime expiry = DateTime.parse(userData['resetTokenExpiry']);
+         if (DateTime.now().isAfter(expiry)) {
+            return Response.ok(jsonEncode({'error': 'Token expired'}), headers: _corsHeaders);
+         }
+      }
+      
+      // Success - Update Password
+      _users[targetUsername!]['password'] = _hashPassword(newPassword);
+      _users[targetUsername!].remove('resetToken');
+      _users[targetUsername!].remove('resetTokenExpiry');
+      _saveUsers();
+      
+      _log("Password successfully reset for $targetUsername");
+      return Response.ok(jsonEncode({'status': 'success', 'message': 'Password updated'}), headers: _corsHeaders);
+      
+    } catch (e) {
+       _log("Reset Password Error: $e", level: 'ERROR');
+       return Response.internalServerError(body: "Error processing request", headers: _corsHeaders);
+    }
+  }
+
   static const _corsHeaders = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -225,11 +425,12 @@ class MultiGameServer {
 
   Future<Response> _handleLeaderboard(Request request) async {
     try {
+      _log("Fetching leaderboard. Total users: ${_users.length}");
       // Convert users map to list and sort by wins
       var userList = _users.entries.map((entry) {
         return {
           'username': entry.key,
-          'wins': entry.value['wins'] ?? 0,
+          'wins': int.tryParse(entry.value['wins'].toString()) ?? 0,
           'userId': entry.value['id'],
         };
       }).toList();
@@ -238,11 +439,26 @@ class MultiGameServer {
       
       // Return top 20
       var topUsers = userList.take(20).toList();
+      _log("Returning ${topUsers.length} users for leaderboard.");
       
       return Response.ok(jsonEncode({'leaderboard': topUsers}), headers: _corsHeaders);
-    } catch (e) {
-      return Response.internalServerError(body: "Leaderboard Error: $e", headers: _corsHeaders);
+    } catch (e, stack) {
+      _log("Leaderboard Error: $e\n$stack", level: 'ERROR');
+      return Response.internalServerError(body: jsonEncode({'error': "Leaderboard Error: $e"}), headers: _corsHeaders);
     }
+  }
+
+  Future<Response> _handleActiveRooms(Request request) async {
+     final activeRooms = _rooms.values
+        .where((r) => !r.isGameStarted && r.players.length < 8)
+        .map((r) => {
+           'code': r.code,
+           'players': r.players.length,
+           'gameType': r.gameType,
+           'entryFee': r.entryFee
+        }).toList();
+     
+     return Response.ok(jsonEncode(activeRooms), headers: _corsHeaders);
   }
 
   Future<Response> _handleUpdateStats(Request request) async {
@@ -250,19 +466,305 @@ class MultiGameServer {
       final payload = await request.readAsString();
       final data = jsonDecode(payload);
       final username = data['username'];
-      final winsToAdd = data['wins'] ?? 1;
+      final winsToAdd = int.tryParse(data['wins']?.toString() ?? "1") ?? 1;
+
+      _log("Update Stats Request: $username increment by $winsToAdd");
 
       if (_users.containsKey(username)) {
-        _users[username]['wins'] = (_users[username]['wins'] ?? 0) + winsToAdd;
+        int currentWins = int.tryParse(_users[username]['wins']?.toString() ?? "0") ?? 0;
+        _users[username]['wins'] = currentWins + winsToAdd;
         _saveUsers();
+        _log("Wins updated for $username: ${_users[username]['wins']}");
         return Response.ok(jsonEncode({'status': 'success', 'wins': _users[username]['wins']}), headers: _corsHeaders);
       } else {
+        _log("Update Stats Fail: User $username not found", level: 'WARNING');
         return Response.ok(jsonEncode({'error': 'User not found'}), headers: _corsHeaders);
       }
-    } catch (e) {
-      return Response.internalServerError(body: "Update Stats Error: $e", headers: _corsHeaders);
+    } catch (e, stack) {
+      _log("Update Stats Error: $e\n$stack", level: 'ERROR');
+      return Response.internalServerError(body: jsonEncode({'error': "Update Stats Error: $e"}), headers: _corsHeaders);
     }
   }
+
+  Future<Response> _handleUpdateProfile(Request request) async {
+    try {
+      final payload = await request.readAsString();
+      final data = jsonDecode(payload);
+      final oldUsername = data['oldUsername'];
+      final newUsername = data['newUsername'];
+
+      _log("Profile Update Request: $oldUsername -> $newUsername");
+
+      if (!_users.containsKey(oldUsername)) {
+        return Response.ok(jsonEncode({'error': 'User not found'}), headers: _corsHeaders);
+      }
+
+      if (_users.containsKey(newUsername)) {
+        return Response.ok(jsonEncode({'error': 'Username already taken'}), headers: _corsHeaders);
+      }
+
+      // Re-key the user map
+      final userData = _users.remove(oldUsername);
+      _users[newUsername] = userData;
+      
+      _saveUsers();
+      _log("Profile updated successfully: $newUsername");
+      
+      return Response.ok(jsonEncode({'status': 'success', 'username': newUsername}), headers: _corsHeaders);
+    } catch (e, stack) {
+      _log("Update Profile Error: $e\n$stack", level: 'ERROR');
+      return Response.internalServerError(body: jsonEncode({'error': 'Update Profile Error'}), headers: _corsHeaders);
+    }
+  }
+
+  // ==========================================
+  //         FRIEND MANAGEMENT
+  // ==========================================
+
+  Future<Response> _handleFriendRequest(Request request) async {
+    try {
+      final payload = await request.readAsString();
+      final data = jsonDecode(payload);
+      final targetUsername = data['targetUsername'];
+      
+      // Get requesting user from auth (in production, extract from JWT)
+      final authHeader = request.headers['authorization'];
+      if (authHeader == null) {
+        return Response.ok(jsonEncode({'error': 'Not authenticated'}), headers: _corsHeaders);
+      }
+      
+      // Simple token validation - extract username
+      // In production, use proper JWT validation
+      String? requestingUsername;
+      _users.forEach((username, userData) {
+        if (authHeader.contains(userData['id'] ?? '')) {
+          requestingUsername = username;
+        }
+      });
+      
+      if (requestingUsername == null) {
+        return Response.ok(jsonEncode({'error': 'Invalid authentication'}), headers: _corsHeaders);
+      }
+      
+      if (!_users.containsKey(targetUsername)) {
+        return Response.ok(jsonEncode({'error': 'User not found'}), headers: _corsHeaders);
+      }
+      
+      if (requestingUsername == targetUsername) {
+        return Response.ok(jsonEncode({'error': 'Cannot add yourself as friend'}), headers: _corsHeaders);
+      }
+      
+      // Initialize friends list if not exists
+      _users[requestingUsername]!['friends'] ??= [];
+      _users[targetUsername]!['friends'] ??= [];
+      
+      // Check if already friends or pending
+      final requesterFriends = _users[requestingUsername]!['friends'] as List;
+      final alreadyExists = requesterFriends.any((f) => f['userId'] == _users[targetUsername]!['id']);
+      
+      if (alreadyExists) {
+        return Response.ok(jsonEncode({'error': 'Friend request already exists'}), headers: _corsHeaders);
+      }
+      
+      // Add pending request to target user's friends list
+      (_users[targetUsername]!['friends'] as List).add({
+        'userId': _users[requestingUsername]!['id'],
+        'username': requestingUsername,
+        'status': 'pending',
+        'createdAt': DateTime.now().toIso8601String(),
+      });
+      
+      _saveUsers();
+      _log("Friend request sent from $requestingUsername to $targetUsername");
+      
+      return Response.ok(jsonEncode({'status': 'success'}), headers: _corsHeaders);
+    } catch (e) {
+      _log("Friend Request Error: $e", level: 'ERROR');
+      return Response.internalServerError(body: jsonEncode({'error': 'Server error'}), headers: _corsHeaders);
+    }
+  }
+
+  Future<Response> _handleFriendAccept(Request request) async {
+    try {
+      final payload = await request.readAsString();
+      final data = jsonDecode(payload);
+      final friendUserId = data['userId'];
+      
+      // Get current user
+      final authHeader = request.headers['authorization'];
+      String? currentUsername;
+      _users.forEach((username, userData) {
+        if (authHeader?.contains(userData['id'] ?? '') == true) {
+          currentUsername = username;
+        }
+      });
+      
+      if (currentUsername == null) {
+        return Response.ok(jsonEncode({'error': 'Not authenticated'}), headers: _corsHeaders);
+      }
+      
+      // Find friend username
+      String? friendUsername;
+      _users.forEach((username, userData) {
+        if (userData['id'] == friendUserId) {
+          friendUsername = username;
+        }
+      });
+      
+      if (friendUsername == null) {
+        return Response.ok(jsonEncode({'error': 'User not found'}), headers: _corsHeaders);
+      }
+      
+      // Update pending request to accepted
+      final currentUserFriends = (_users[currentUsername]!['friends'] ?? []) as List;
+      final requestIndex = currentUserFriends.indexWhere((f) => f['userId'] == friendUserId);
+      
+      if (requestIndex != -1) {
+        currentUserFriends[requestIndex]['status'] = 'accepted';
+      }
+      
+      // Add to friend's friend list as accepted
+      _users[friendUsername]!['friends'] ??= [];
+      final friendFriends = _users[friendUsername]!['friends'] as List;
+      final existingIndex = friendFriends.indexWhere((f) => f['userId'] == _users[currentUsername]!['id']);
+      
+      if (existingIndex == -1) {
+        friendFriends.add({
+          'userId': _users[currentUsername]!['id'],
+          'username': currentUsername,
+          'status': 'accepted',
+          'createdAt': DateTime.now().toIso8601String(),
+        });
+      } else {
+        friendFriends[existingIndex]['status'] = 'accepted';
+      }
+      
+      _saveUsers();
+      _log("Friend request accepted: $currentUsername <-> $friendUsername");
+      
+      return Response.ok(jsonEncode({'status': 'success'}), headers: _corsHeaders);
+    } catch (e) {
+      _log("Friend Accept Error: $e", level: 'ERROR');
+      return Response.internalServerError(body: jsonEncode({'error': 'Server error'}), headers: _corsHeaders);
+    }
+  }
+
+  Future<Response> _handleFriendRemove(Request request) async {
+    try {
+      final payload = await request.readAsString();
+      final data = jsonDecode(payload);
+      final friendUserId = data[' userId'];
+      
+      // Get current user
+      final authHeader = request.headers['authorization'];
+      String? currentUsername;
+      _users.forEach((username, userData) {
+        if (authHeader?.contains(userData['id'] ?? '') == true) {
+          currentUsername = username;
+        }
+      });
+      
+      if (currentUsername == null) {
+        return Response.ok(jsonEncode({'error': 'Not authenticated'}), headers: _corsHeaders);
+      }
+      
+      // Remove from both users' friend lists
+      if (_users[currentUsername]!['friends'] != null) {
+        (_users[currentUsername]!['friends'] as List).removeWhere((f) => f['userId'] == friendUserId);
+      }
+      
+      // Find and remove from friend's list too
+      _users.forEach((username, userData) {
+        if (userData['id'] == friendUserId && userData['friends'] != null) {
+          (userData['friends'] as List).removeWhere((f) => f['userId'] == _users[currentUsername]!['id']);
+        }
+      });
+      
+      _saveUsers();
+      _log("Friend removed for user $currentUsername");
+      
+      return Response.ok(jsonEncode({'status': 'success'}), headers: _corsHeaders);
+    } catch (e) {
+      _log("Friend Remove Error: $e", level: 'ERROR');
+      return Response.internalServerError(body: jsonEncode({'error': 'Server error'}), headers: _corsHeaders);
+    }
+  }
+
+  Future<Response> _handleFriendsList(Request request) async {
+    try {
+      // Get current user
+      final authHeader = request.headers['authorization'];
+      String? currentUsername;
+      String? currentUserId;
+      _users.forEach((username, userData) {
+        if (authHeader?.contains(userData['id'] ?? '') == true) {
+          currentUsername = username;
+          currentUserId = userData['id'];
+        }
+      });
+      
+      if (currentUsername == null) {
+        return Response.ok(jsonEncode({'error': 'Not authenticated'}), headers: _corsHeaders);
+      }
+      
+      final friends = (_users[currentUsername]!['friends'] ?? []) as List;
+      
+      // Enrich friend data with current wins and online status
+      final enrichedFriends = friends.map((friend) {
+        // Find full user data
+        final friendData = _users.values.firstWhere(
+          (u) => u['id'] == friend['userId'],
+          orElse: () => {},
+        );
+        
+        return {
+          'userId': friend['userId'],
+          'username': friend['username'],
+          'status': friend['status'],
+          'wins': friendData['wins'] ?? 0,
+          'isOnline': false, // TODO: Track online status via WebSocket
+          'createdAt': friend['createdAt'],
+        };
+      }).toList();
+      
+      return Response.ok(jsonEncode({'friends': enrichedFriends}), headers: _corsHeaders);
+    } catch (e) {
+      _log("Friends List Error: $e", level: 'ERROR');
+      return Response.internalServerError(body: jsonEncode({'error': 'Server error'}), headers: _corsHeaders);
+    }
+  }
+
+  Future<Response> _handleFriendSearch(Request request) async {
+    try {
+      final username = request.url.queryParameters['username'] ?? '';
+      
+      if (username.isEmpty) {
+        return Response.ok(jsonEncode({'users': []}), headers: _corsHeaders);
+      }
+      
+      // Search for users matching username (case-insensitive partial match)
+      final results = <Map<String, dynamic>>[];
+      _users.forEach((key, userData) {
+        if (key.toLowerCase().contains(username.toLowerCase())) {
+          results.add({
+            'userId': userData['id'],
+            'username': key,
+            'wins': userData['wins'] ?? 0,
+          });
+        }
+      });
+      
+      // Limit to 20 results
+      return Response.ok(jsonEncode({'users': results.take(20).toList()}), headers: _corsHeaders);
+    } catch (e) {
+      _log("Friend Search Error: $e", level: 'ERROR');
+      return Response.internalServerError(body: jsonEncode({'error': 'Server error'}), headers: _corsHeaders);
+    }
+  }
+
+  // ==========================================
+  //              WEBSOCKET HANDLER
+  // ==========================================
 
   Future<void> _start() async {
     _loadUsers(); // Load DB on start
@@ -271,11 +773,34 @@ class MultiGameServer {
     var wsHandler = webSocketHandler(
       (WebSocketChannel socket) {
         String? playerId;
+        StreamSubscription? subscription;
         String? currentRoomCode;
 
-        socket.stream.listen((message) {
+        subscription = socket.stream.listen((message) {
           try {
-             final data = jsonDecode(message);
+             final decoded = jsonDecode(message);
+             String action = decoded['action'] ?? '';
+             
+             // Track user presence on connection
+             if (action == 'JOIN') {
+               String userId = decoded['userId'] ?? '';
+               String username = decoded['username'] ?? '';
+               
+               if (userId.isNotEmpty && username.isNotEmpty) {
+                 // Track online user
+                 _onlineUsers[userId] = username;
+                 _userSockets[userId] = socket.sink;
+                 
+                 // Notify friends that user came online
+                 _notifyFriendsUserOnline(userId, username);
+                 
+                 _log("User $username ($userId) came online");
+               }
+               return; // Do not process as game logic if it's a JOIN action
+             }
+
+             // Existing game logic
+             final data = decoded; // Use the already decoded message
              // Basic Sanity Check
              if (data == null || data['type'] == null) return;
 
@@ -377,9 +902,32 @@ class MultiGameServer {
          if (request.url.path == 'leaderboard') {
             return _handleLeaderboard(request);
          }
-         if (request.url.path == 'update_stats') {
-            return _handleUpdateStats(request);
-         }
+          if (request.url.path == 'update_stats') {
+             return _handleUpdateStats(request);
+          }
+          if (request.url.path == 'active_rooms') {
+             return _handleActiveRooms(request);
+          }
+          if (request.url.path == 'update_profile') {
+             return _handleUpdateProfile(request);
+          }
+          if (request.url.path == 'update_profile') {
+             return _handleUpdateProfile(request);
+          }
+          if (request.url.path == 'forgot_password') {
+             return _handleForgotPassword(request);
+          }
+          if (request.url.path == 'reset_password') {
+             return _handleResetPassword(request);
+          }
+          if (request.url.path == 'google_login') {
+             return _handleGoogleAuth(request);
+          }
+          if (request.url.path == 'friends/request') {return _handleFriendRequest(request);}
+          if (request.url.path == 'friends/accept') {return _handleFriendAccept(request);}
+          if (request.url.path == 'friends/remove') {return _handleFriendRemove(request);}
+          if (request.url.path == 'friends/list') {return _handleFriendsList(request);}
+          if (request.url.path == 'friends/search') {return _handleFriendSearch(request);}
          return wsHandler(request);
       });
 
@@ -420,7 +968,9 @@ class MultiGameServer {
           
           if (room.gameType == 'kadi') {
              if (type == 'PLAY_CARD') _handleKadiPlay(room, pIndex, data);
+             if (type == 'PLAY_CARD') _handleKadiPlay(room, pIndex, data);
              else if (type == 'PICK_CARD') _handleKadiPick(room, pIndex);
+             else if (type == 'PASS_TURN') _handleKadiPass(room, pIndex);
           } 
           else if (room.gameType == 'gofish') {
              if (type == 'ASK_CARD') _handleGoFishAsk(room, pIndex, data);
@@ -574,6 +1124,8 @@ class MultiGameServer {
 
      if (data['saidNikoKadi'] == true) player.hasSaidNikoKadi = true;
 
+     player.cardsPlayedThisTurn++;
+
      // Play Card
      player.hand.removeAt(cardIndex);
      if (room.topCard != null) room.discardPile.add(room.topCard!);
@@ -691,7 +1243,17 @@ class MultiGameServer {
      player.hasSaidNikoKadi = false;
      
      _sendHand(player);
+     _sendHand(player);
      _advanceTurn(room);
+  }
+
+  void _handleKadiPass(GameRoom room, int pIndex) {
+     Player player = room.players[pIndex];
+     if (player.cardsPlayedThisTurn > 0) {
+        _advanceTurn(room);
+     } else {
+        player.socket.sink.add(jsonEncode({"type": "ERROR", "data": "Cannot pass without playing!"}));
+     }
   }
 
   bool _isValidKadiMove(GameRoom room, CardModel card) {
@@ -735,6 +1297,10 @@ class MultiGameServer {
 
   void _advanceTurn(GameRoom room, {int skip = 0}) {
      int step = (room.gameType == 'kadi' ? room.direction : 1) * (1 + skip);
+     
+     // Reset current player stats before moving
+     room.players[room.currentPlayerIndex].cardsPlayedThisTurn = 0;
+     
      room.currentPlayerIndex = (room.currentPlayerIndex + step) % room.players.length;
      if (room.currentPlayerIndex < 0) room.currentPlayerIndex += room.players.length;
      
@@ -778,9 +1344,52 @@ class MultiGameServer {
   }
 
   String _generateRoomCode() {
-    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    Random rnd = Random();
-    return String.fromCharCodes(Iterable.generate(6, (_) => chars.codeUnitAt(rnd.nextInt(chars.length))));
+    const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    var random = Random();
+    return String.fromCharCodes(Iterable.generate(6, (_) => letters.codeUnitAt(random.nextInt(letters.length))));
+  }
+
+  // Helper method to notify friends when user comes online
+  void _notifyFriendsUserOnline(String userId, String username) {
+    try {
+      // Find the user's friends list
+      String? userUsername;
+      _users.forEach((uname, userData) {
+        if (userData['id'] == userId) {
+          userUsername = uname;
+        }
+      });
+      
+      if (userUsername == null) return;
+      
+      final friends = (_users[userUsername]!['friends'] ?? []) as List;
+      
+      // Notify each accepted friend who is online
+      for (var friend in friends) {
+        if (friend['status'] == 'accepted') {
+          final friendUserId = friend['userId'];
+          
+          // Check if friend is online
+          if (_onlineUsers.containsKey(friendUserId) && _userSockets.containsKey(friendUserId)) {
+            // Send notification through WebSocket
+            try {
+              _userSockets[friendUserId]!.add(jsonEncode({
+                'type': 'FRIEND_ONLINE',
+                'data': {
+                  'friendId': userId,
+                  'friendName': username,
+                }
+              }));
+              _log("Notified friend about $username coming online");
+            } catch (e) {
+              _log("Error sending friend online notification: $e", level: 'ERROR');
+            }
+          }
+        }
+      }
+    } catch (e) {
+      _log("Error in _notifyFriendsUserOnline: $e", level: 'ERROR');
+    }
   }
 }
 

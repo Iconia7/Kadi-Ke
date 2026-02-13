@@ -1,75 +1,53 @@
-# Kadi Ke - Deployment Guide
+# Kadi Ke - Production Deployment Guide
 
-This guide explains how to deploy the **Kadi Ke Game Server** to a production environment (VPS) and how to configure the Flutter Client to connect to it.
+This guide explains how to deploy the **Kadi Ke Game Server** and configure the Flutter Client for production.
 
-## 1. Server Deployment (Docker)
+## 1. Server Deployment (VPS)
 
-The easiest way to run the server is using Docker Compose. This ensures the server restarts automatically if it crashes or the VPS reboots.
+We use a automated shell script to deploy the server to a Linux VPS (Ubuntu/Debian). This handles Dart installation, dependency management, and systemd service setup.
 
 ### Prerequisites
-- A VPS (Virtual Private Server) running Ubuntu/Debian (e.g., DigitalOcean, AWS, Render).
-- Docker and Docker Compose installed.
+- A VPS with SSH access.
+- Your project directory available locally.
 
 ### Steps
-1. **Copy Files**: Upload the `server` directory and `docker-compose.yml` to your VPS.
-   ```bash
-   scp -r server/ user@your-vps-ip:~/kadi-server
-   scp docker-compose.yml user@your-vps-ip:~/kadi-server
+1. **Navigate to scripts**:
+   ```powershell
+   cd scripts
    ```
 
-2. **Run Server**:
-   Navigate to the directory and start the container.
-   ```bash
-   cd ~/kadi-server
-   docker-compose up -d --build
+2. **Run Deployment**:
+   ```powershell
+   ./deploy_server_fixed.sh [VPS_IP] [SSH_USER]
    ```
+   *Example: `./deploy_server_fixed.sh 5.189.178.132 root`*
 
-3. **Verify**:
-   Check if the server is running:
-   ```bash
-   docker ps
-   # You should see 'kadi-server' running on port 8080.
-   ```
-   
-   View logs:
-   ```bash
-   docker logs -f kadi-server
-   ```
-
-4. **Health Check**:
-   The server exposes a health endpoint at `/health`. You can allow Uptime monitoring services to ping this URL.
-   ```
-   GET http://your-vps-ip:8080/health
-   ```
+3. **Management**:
+   - **Status**: `sudo systemctl status kadi-server`
+   - **Logs**: `tail -f ~/kadi-server/server.log`
+   - **Restart**: `sudo systemctl restart kadi-server`
 
 ## 2. Client Configuration
 
-The Flutter client defaults to the production URL, but this can be changed dynamically.
+The app uses a centralized configuration system for easy environment switching.
 
-### Standard Setup
-By default, the app connects to: `wss://kadi-ke.onrender.com`.
-To change this for a custom build, modify `lib/services/online_game_service.dart`:
+### Configuration File
+Modify [app_config.dart](file:///c:/Users/newto/Desktop/card_game_ke/lib/services/app_config.dart) to update the production URL:
 ```dart
-final String _serverUrl = "wss://your-vps-domain.com"; 
+static const String _prodBaseUrl = 'http://你的ip:8080';
+static const String _prodWsUrl = 'ws://你的ip:8080';
 ```
 
-### Dynamic Configuration (In-App)
-Users can change the server URL without rebuilding the app:
-1. Open the App.
-2. Go to **Settings**.
-3. Scroll to **NETWORK (Advanced)**.
-4. Enter your WebSocket URL (e.g., `ws://192.168.1.50:8080` or `wss://my-game.com`).
-5. Press Enter/Done.
-6. **Restart the App** for the change to take full effect.
+### Build Instructions
+To build the production APK/AppBundle:
+```bash
+flutter build apk --release
+# OR
+flutter build appbundle --release
+```
 
-## 3. Maintenance
-
-- **Update Server**:
-  ```bash
-  git pull
-  docker-compose up -d --build
-  ```
-- **Restart Server**:
-  ```bash
-  docker-compose restart
-  ```
+## 3. Production Features
+- **Security**: All passwords are SHA-256 hashed.
+- **Matchmaking**: The server automatically manages room discovery.
+- **Resilience**: The `kadi-server` service restarts automatically on failure.
+- **Live Sync**: Win stats are updated immediately on the global leaderboard.

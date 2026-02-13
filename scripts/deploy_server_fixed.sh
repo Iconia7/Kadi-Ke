@@ -1,5 +1,5 @@
 #!/bin/bash
-# Fixed Kadi Server Deployment Script for VPS
+# Kadi Server v13.0 Deployment Script for VPS
 # Usage: ./deploy_server_fixed.sh [your-vps-ip] [ssh-user]
 
 VPS_IP=$1
@@ -48,6 +48,47 @@ ssh $SSH_USER@$VPS_IP << ENDSSH
     echo "📦 Installing Dart dependencies..."
     dart pub get
     
+    # Migrate database for v13.0
+    echo "🔄 Running v13.0 database migration..."
+    cat > migrate_v13.dart <<'MIGRATE'
+import 'dart:io';
+import 'dart:convert';
+
+void main() {
+  final file = File('users.json');
+  if (!file.existsSync()) {
+    print('⚠️  users.json not found - skipping migration');
+    return;
+  }
+  
+  final data = jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+  
+  bool changed = false;
+  data.forEach((username, userData) {
+    // Add friends field if missing
+    if (userData['friends'] == null) {
+      userData['friends'] = [];
+      changed = true;
+      print('✅ Added friends field to $username');
+    }
+  });
+  
+  if (changed) {
+    // Backup before writing
+    final backup = File('users.json.backup');
+    backup.writeAsStringSync(file.readAsStringSync());
+    
+    file.writeAsStringSync(jsonEncode(data));
+    print('✅ Migration complete! Backup saved to users.json.backup');
+  } else {
+    print('✅ No migration needed - schema already up to date');
+  }
+}
+MIGRATE
+    
+    dart run migrate_v13.dart
+    rm migrate_v13.dart
+    
     # Create systemd service
     echo "🔧 Creating systemd service..."
     sudo tee /etc/systemd/system/kadi-server.service > /dev/null <<EOF
@@ -88,15 +129,46 @@ EOF
     echo ""
     echo "📋 Recent logs:"
     tail -20 $HOME_DIR/kadi-server/server.log 2>/dev/null || echo "No logs yet"
+    
+    echo ""
+    echo "🧪 Testing v13.0 Features..."
+    sleep 2
+    
+    # Test health endpoint
+    if curl -s http://localhost:8080/health | grep -q "ok"; then
+        echo "✅ Server health: OK"
+    else
+        echo "❌ Server health check failed"
+    fi
+    
+    # Test friend endpoints
+    if curl -s "http://localhost:8080/friends/search?username=test" | grep -q "users"; then
+        echo "✅ Friend system: Endpoints responding"
+    else
+        echo "⚠️  Friend system: Check failed"
+    fi
+    
+    echo ""
+    echo "📊 Online tracking ready for WebSocket connections"
 ENDSSH
 
 echo ""
-echo "✅ Deployment complete!"
+echo "✅ v13.0 Deployment Complete!"
 echo ""
-echo "🔍 Check server status:"
+echo "🎉 New Features:"
+echo "   • Tutorial System"
+echo "   • Friend System with online status"
+echo "   • Enhanced Push Notifications"
+echo "   • WebSocket presence tracking"
+echo ""
+echo "🔍 Monitor server:"
 echo "   ssh $SSH_USER@$VPS_IP 'sudo systemctl status kadi-server'"
 echo ""
 echo "📋 View logs:"
 echo "   ssh $SSH_USER@$VPS_IP 'tail -f $HOME_DIR/kadi-server/server.log'"
+echo ""
+echo "🧪 Test server:"
+echo "   curl http://$VPS_IP:8080/health"
+echo "   curl http://$VPS_IP:8080/friends/search?username=test"
 echo ""
 echo "🎮 Update app to use: ws://$VPS_IP:8080"

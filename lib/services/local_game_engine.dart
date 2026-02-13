@@ -175,10 +175,11 @@ class LocalGameEngine {
   int _bombStack = 0;
   bool _waitingForAnswer = false;
   String? _forcedSuit;
-  String? _forcedRank;
+  String? _forcedRank; // For 'Ace' requests
+  String? _jokerColorConstraint; // 'red' or 'black'
+  int _cardsPlayedThisTurn = 0; // NEW: Multi-drop state
   List<bool> _hasSaidMap = []; 
   List<CardModel> _discardPile = [];
-  String? _jokerColorConstraint; // 'red' or 'black'
   
   Timer? _botTimer; 
 
@@ -223,9 +224,18 @@ void start(int aiCount, String difficulty, {int decks = 1}) async {
     _processMove(0, _playerHand, cardIndex, reqSuit: requestedSuit, reqRank: requestedRank);
   }
 
+
+
   void pickCard() {
     if (_currentPlayerIndex != 0) return;
     _processPick(0, _playerHand);
+  }
+
+  void passTurn() {
+     if (_currentPlayerIndex != 0) return;
+     if (_cardsPlayedThisTurn > 0) {
+        _advanceTurn();
+     }
   }
 
   bool _isWinningCard(CardModel card) {
@@ -256,6 +266,9 @@ void start(int aiCount, String difficulty, {int decks = 1}) async {
     } else {
       int totalPlayers = _bots.length + 1;
       int steps = 1 + skip;
+      
+      _cardsPlayedThisTurn = 0; // Reset for next/current player
+      
       _currentPlayerIndex = (_currentPlayerIndex + (_direction * steps)) % totalPlayers;
       if (_currentPlayerIndex < 0) _currentPlayerIndex += totalPlayers;
     }
@@ -371,6 +384,8 @@ bool _isValidMove(CardModel card) {
     if (_topCard != null) _discardPile.add(_topCard!);
     _topCard = card;
     if (_jokerColorConstraint != null) _jokerColorConstraint = null;
+
+    _cardsPlayedThisTurn++;
 
     // --- BOMB CALCULATION ---
     bool isBomb = ['2', '3', 'joker'].contains(card.rank);
@@ -536,6 +551,7 @@ bool _isValidMove(CardModel card) {
       "bombStack": _bombStack,
       "waitingForAnswer": _waitingForAnswer,
       "jokerColorConstraint": _jokerColorConstraint,
+      "cardsPlayedThisTurn": _cardsPlayedThisTurn,
     });
   }
 

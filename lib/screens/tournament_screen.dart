@@ -20,37 +20,55 @@ class _TournamentScreenState extends State<TournamentScreen> {
   String? _championMessage;
 
   void _startNextMatch() async {
-    if (_currentRound >= _rounds.length) return;
+    while (_currentRound < _rounds.length) {
+      if (!mounted) return;
+      setState(() => _isRoundActive = true);
 
-    setState(() => _isRoundActive = true);
-
-    // Push GameScreen and wait for result
-    // We expect GameScreen to return 'won' or 'lost' or the winner name.
-    final result = await Navigator.push(
-      context, 
-      MaterialPageRoute(
-        builder: (context) => GameScreen(
-           isHost: false, // Local Engine handles it
-           hostAddress: 'offline',
-           aiCount: _opponents[_currentRound], // 3 bots -> 4 players total
-           gameType: widget.gameType,
+      // Push GameScreen and wait for result
+      final result = await Navigator.push(
+        context, 
+        MaterialPageRoute(
+          builder: (context) => GameScreen(
+             isHost: false, 
+             hostAddress: 'offline',
+             aiCount: _opponents[_currentRound], 
+             difficulty: _difficulties[_currentRound],
+             gameType: widget.gameType,
+          )
         )
+      );
+
+      if (!mounted) return;
+      setState(() => _isRoundActive = false);
+
+      if (result == 'WON') {
+         if (_currentRound == 2) {
+            setState(() {
+              _championMessage = "🏆 YOU ARE THE CHAMPION! 🏆";
+              _currentRound++;
+            });
+            break;
+         } else {
+            setState(() => _currentRound++);
+            _showVictoryOverlay();
+            await Future.delayed(Duration(seconds: 2));
+            // Loop continues to next match
+         }
+      } else {
+         _showLossDialog();
+         break;
+      }
+    }
+  }
+
+  void _showVictoryOverlay() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text("Round Cleared! Advancing to ${_rounds[_currentRound]}..."),
+        duration: Duration(seconds: 2),
+        backgroundColor: Colors.green,
       )
     );
-
-    setState(() => _isRoundActive = false);
-
-    if (result == 'WON') {
-       if (_currentRound == 2) {
-          _championMessage = "🏆 YOU ARE THE CHAMPION! 🏆";
-          _currentRound++;
-       } else {
-          _currentRound++;
-          _showVictoryDialog();
-       }
-    } else {
-       _showLossDialog();
-    }
   }
 
   void _showVictoryDialog() {
