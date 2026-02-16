@@ -1,6 +1,7 @@
 import 'dart:async'; // Required for StreamSubscription
 import 'package:flutter/material.dart';
 import 'package:network_info_plus/network_info_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:ui';
 import 'game_screen.dart'; 
 import 'settings_screen.dart';
@@ -12,6 +13,7 @@ import 'tutorial_screen.dart';
 import 'friends_screen.dart';
 import '../services/custom_auth_service.dart'; // Replaced Firebase Auth
 import '../services/vps_game_service.dart';   // Replaced Firebase Game Service
+import '../services/notification_service.dart';
 import '../services/friend_service.dart';
 
 import '../services/progression_service.dart';
@@ -34,6 +36,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   String? _myIpAddress;
   late AnimationController _floatingController;
   late Animation<double> _floatingAnimation;
+  StreamSubscription? _gameSubscription;
   
   String _selectedGameMode = 'kadi'; // 'kadi' or 'gofish'
   
@@ -64,10 +67,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       await AchievementService().initialize(userId: uid);
       await ChallengeService().initialize();
       
-      if (mounted) {
-         setState(() => _isFirebaseReady = true);
-         _checkDailyReward();
-      }
+         if (mounted) {
+            setState(() => _isFirebaseReady = true);
+            _checkDailyReward();
+            _checkDailyChallenges(); // NEW: Check for daily challenges auto-popup
+            _setupGlobalListeners();
+            NotificationService().scheduleDailyChallengeReminder(); // NEW: Schedule daily notif
+         }
     } catch (e) {
       print("Auth Service Error: $e");
       // Allow UI to show even if Auth fails (for Offline mode)
@@ -100,10 +106,77 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    _gameSubscription?.cancel();
     _floatingController.dispose();
     _ipController.dispose();
     _codeController.dispose();
     super.dispose();
+  }
+
+  void _setupGlobalListeners() async {
+     // Connect to VPS for global notifications (invites, friend status)
+     await VPSGameService().connect();
+     _gameSubscription?.cancel();
+     _gameSubscription = VPSGameService().gameStream.listen(_handleGlobalMessage);
+     
+     // Check for Streak Reminder
+     _checkStreakReminder();
+  }
+
+  void _handleGlobalMessage(Map<String, dynamic> message) {
+     final type = message['type'];
+     final data = message['data'];
+     
+     switch (type) {
+        case 'GAME_INVITE':
+           NotificationService().showGameInviteNotification(
+              data['friendName'], 
+              data['roomCode'],
+              ipAddress: data['ipAddress'],
+              gameType: data['gameType'] ?? 'kadi',
+           );
+           break;
+        case 'FRIEND_ONLINE':
+           NotificationService().showFriendOnlineNotification(
+              data['friendName'], 
+              data['friendId'],
+           );
+           break;
+        case 'FRIEND_REQUEST':
+           NotificationService().showFriendRequestNotification(
+              data['friendName'], 
+              data['friendId'],
+           );
+           break;
+        case 'FRIEND_ACCEPT':
+           NotificationService().showFriendAcceptNotification(
+              data['friendName'],
+           );
+           break;
+        case 'FRIEND_OFFLINE':
+           // Optional: Handle offline status if needed
+           break;
+     }
+  }
+
+  Future<void> _checkStreakReminder() async {
+     try {
+        final prefs = await SharedPreferences.getInstance();
+        final streak = prefs.getInt('current_streak') ?? 0;
+        final lastLogin = prefs.getString('last_login_time');
+        
+        if (streak > 0 && lastLogin != null) {
+           final lastDate = DateTime.parse(lastLogin);
+           final now = DateTime.now();
+           
+           // If it's been more than 12 hours since last login, show a reminder
+           if (now.difference(lastDate).inHours > 12 && now.day != lastDate.day) {
+              NotificationService().showStreakReminderNotification(streak);
+           }
+        }
+     } catch (e) {
+        print("Streak Reminder Error: $e");
+     }
   }
 
   Future<String> _getIpAddress() async {
@@ -1026,46 +1099,54 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   // Challenges Button
                   GestureDetector(
                     onTap: () => showDialog(context: context, builder: (c) => const ChallengeDialog()),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: Colors.amber.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: Colors.amber.withOpacity(0.3)),
-                        boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 8)],
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.amber.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: Colors.amber.withOpacity(0.3)),
+                          boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 8)],
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.military_tech, color: Colors.amber, size: 16),
+                            SizedBox(width: 4),
+                            Text("CHALLENGES", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10, letterSpacing: 0.5)),
+                            if (ProgressionService().hasUnclaimedChallenges()) ...[
+                               SizedBox(width: 6),
+                               Container(
+                                  width: 8, height: 8,
+                                  decoration: BoxDecoration(color: Colors.redAccent, shape: BoxShape.circle),
+                               )
+                            ]
+                          ],
+                        ),
                       ),
-                      child: Row(
-                        children: [
-                          Icon(Icons.military_tech, color: Colors.amber, size: 20),
-                          SizedBox(width: 8),
-                          Text("CHALLENGES", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12, letterSpacing: 1)),
-                        ],
-                      ),
-                    ),
                   ),
 
                   Row(
                     children: [
                       // Coins Display
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                         decoration: BoxDecoration(
                           color: Colors.black38,
                           borderRadius: BorderRadius.circular(20),
                           border: Border.all(color: Colors.white10),
                         ),
                         child: Row(
+                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Text("🪙", style: TextStyle(fontSize: 16)),
-                            const SizedBox(width: 8),
+                            const Text("🪙", style: TextStyle(fontSize: 14)),
+                            const SizedBox(width: 6),
                             Text(
                               "${ProgressionService().getCoins()}",
-                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
                             ),
                           ],
                         ),
                       ),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 8),
                       // Friends Button
                       FutureBuilder<List<Friend>>(
                         future: FriendService().getOnlineFriends(),
@@ -1081,33 +1162,33 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                             child: Stack(
                               clipBehavior: Clip.none,
                               children: [
-                                Container(
-                                  padding: const EdgeInsets.all(8),
+                                  Container(
+                                  padding: const EdgeInsets.all(6),
                                   decoration: BoxDecoration(
                                     color: Colors.white.withOpacity(0.1),
                                     shape: BoxShape.circle,
                                     border: Border.all(color: Colors.white24),
                                   ),
-                                  child: const Icon(Icons.people_outline, color: Colors.white, size: 24),
+                                  child: const Icon(Icons.people_outline, color: Colors.white, size: 20),
                                 ),
                                 if (onlineCount > 0)
                                   Positioned(
-                                    right: -4,
-                                    top: -4,
+                                    right: -2,
+                                    top: -2,
                                     child: Container(
-                                      padding: EdgeInsets.all(4),
+                                      padding: EdgeInsets.all(3),
                                       decoration: BoxDecoration(
                                         color: Colors.green,
                                         shape: BoxShape.circle,
-                                        border: Border.all(color: Color(0xFF1E293B), width: 2),
+                                        border: Border.all(color: Color(0xFF1E293B), width: 1.5),
                                       ),
-                                      constraints: BoxConstraints(minWidth: 20, minHeight: 20),
+                                      constraints: BoxConstraints(minWidth: 16, minHeight: 16),
                                       child: Center(
                                         child: Text(
                                           '$onlineCount',
                                           style: TextStyle(
                                             color: Colors.white,
-                                            fontSize: 10,
+                                            fontSize: 8,
                                             fontWeight: FontWeight.bold,
                                           ),
                                         ),
@@ -1119,7 +1200,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           );
                         },
                       ),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 8),
                       // Tutorial Button
                       GestureDetector(
                         onTap: () {
@@ -1129,16 +1210,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           );
                         },
                         child: Container(
-                          padding: const EdgeInsets.all(8),
+                          padding: const EdgeInsets.all(6),
                           decoration: BoxDecoration(
                             color: Colors.white.withOpacity(0.1),
                             shape: BoxShape.circle,
                             border: Border.all(color: Colors.white24),
                           ),
-                          child: const Icon(Icons.help_outline, color: Colors.white, size: 24),
+                          child: const Icon(Icons.help_outline, color: Colors.white, size: 20),
                         ),
                       ),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 8),
                       // Settings Button
                       GestureDetector(
                         onTap: () {
@@ -1148,13 +1229,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           );
                         },
                         child: Container(
-                          padding: const EdgeInsets.all(8),
+                          padding: const EdgeInsets.all(6),
                           decoration: BoxDecoration(
                             color: Colors.white.withOpacity(0.1),
                             shape: BoxShape.circle,
                             border: Border.all(color: Colors.white24),
                           ),
-                          child: const Icon(Icons.settings, color: Colors.white, size: 24),
+                          child: const Icon(Icons.settings, color: Colors.white, size: 20),
                         ),
                       ),
                     ],
@@ -1305,34 +1386,40 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildModernMenuCard(String label, IconData icon, Color color, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(24),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-          child: Container(
-            width: 152,
-            height: 120,
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.05),
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(24),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        child: Container(
+          width: 152,
+          height: 120,
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: Colors.white.withOpacity(0.1)),
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: onTap,
               borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: Colors.white.withOpacity(0.1)),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  padding: EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: color.withOpacity(0.2),
-                    shape: BoxShape.circle,
+              splashColor: color.withOpacity(0.3),
+              highlightColor: color.withOpacity(0.1),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(
+                    padding: EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: color.withOpacity(0.2),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(icon, color: color, size: 28),
                   ),
-                  child: Icon(icon, color: color, size: 28),
-                ),
-                SizedBox(height: 12),
-                Text(label, style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
-              ],
+                  SizedBox(height: 12),
+                  Text(label, style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
+                ],
+              ),
             ),
           ),
         ),
@@ -1340,19 +1427,50 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
+  Future<void> _checkDailyChallenges() async {
+      try {
+         // Auto-show logic: If unviewed challenges exist, show dialog
+         if (ProgressionService().hasUnclaimedChallenges()) {
+             await Future.delayed(const Duration(seconds: 1)); // Small delay for UX
+             if (mounted) {
+                showDialog(
+                   context: context, 
+                   builder: (c) => const ChallengeDialog()
+                ).then((_) {
+                   // Mark as viewed when closed
+                   ProgressionService().markDailyChallengesAsViewed().then((_) {
+                      if(mounted) setState((){}); // Refresh to hide badge
+                   });
+                });
+             }
+         }
+      } catch (e) {
+         print("Error checking daily challenges: $e");
+      }
+  }
+
   Widget _buildIconButton(String label, IconData icon, Color color, VoidCallback onTap) {
     return Column(
       children: [
-        GestureDetector(
-          onTap: onTap,
-          child: Container(
-            padding: EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.08),
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white12),
+        Container(
+          width: 66,
+          height: 66,
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.08),
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white12),
+          ),
+          child: Material(
+            color: Colors.transparent,
+            shape: CircleBorder(),
+            child: InkWell(
+              onTap: onTap,
+              customBorder: CircleBorder(),
+              splashColor: color.withOpacity(0.3),
+              child: Center(
+                child: Icon(icon, color: color, size: 30),
+              ),
             ),
-            child: Icon(icon, color: color, size: 30),
           ),
         ),
         SizedBox(height: 8),

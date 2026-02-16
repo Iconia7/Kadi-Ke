@@ -7,6 +7,8 @@ import 'screens/home_screen.dart';
 import 'services/custom_auth_service.dart';
 import 'services/notification_service.dart';
 import 'services/progression_service.dart';
+import 'services/vps_game_service.dart';
+import 'screens/game_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -28,6 +30,7 @@ void main() async {
   try {
     await NotificationService().initialize();
     await NotificationService().scheduleDailyRewardReminder(const TimeOfDay(hour: 10, minute: 0));
+    await NotificationService().scheduleDailyChallengeReminder(); // Schedule at 8 PM
     print("✅ Notifications Initialized");
   } catch (e) {
     print("❌ Notification Error: $e");
@@ -94,7 +97,8 @@ class _MyAppState extends State<MyApp> {
         // Navigate to home and show join dialog
         final roomCode = payload['roomCode'];
         final friendName = payload['friendName'];
-        print("📬 Game invite from $friendName: $roomCode");
+        final gameType = payload['gameType'] ?? 'kadi';
+        print("📬 Game invite from $friendName: $roomCode ($gameType)");
         
         // Navigate to home screen
         Navigator.of(context).pushAndRemoveUntil(
@@ -104,7 +108,7 @@ class _MyAppState extends State<MyApp> {
         
         // Show join game dialog
         await Future.delayed(const Duration(milliseconds: 500));
-        _showJoinGameDialog(context, roomCode, friendName);
+        _showJoinGameDialog(context, roomCode, friendName, gameType);
         break;
         
       case 'friend_online':
@@ -149,7 +153,7 @@ class _MyAppState extends State<MyApp> {
     }
   }
 
-  static void _showJoinGameDialog(BuildContext context, String? roomCode, String? friendName) {
+  static void _showJoinGameDialog(BuildContext context, String? roomCode, String? friendName, [String gameType = 'kadi']) {
     if (roomCode == null) return;
     
     showDialog(
@@ -161,7 +165,7 @@ class _MyAppState extends State<MyApp> {
           style: const TextStyle(color: Colors.white),
         ),
         content: Text(
-          'Room Code: $roomCode\n\nJoin this game?',
+          'Room Code: $roomCode\nGame Mode: ${gameType.toUpperCase()}\n\nJoin this game?',
           style: const TextStyle(color: Colors.white70),
         ),
         actions: [
@@ -172,9 +176,19 @@ class _MyAppState extends State<MyApp> {
           ElevatedButton(
             onPressed: () {
               Navigator.pop(context);
-              // The room code is available for joining
-              // User can manually enter it or we can auto-fill
-              print("Auto-join functionality: Enter room code $roomCode");
+              // Auto-join: Navigating to $gameType lobby $roomCode
+              print("Auto-join: Navigating to $gameType lobby $roomCode");
+              
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => GameScreen(
+                    isHost: false,
+                    hostAddress: 'online',
+                    onlineGameCode: roomCode,
+                    gameType: gameType,
+                  ),
+                ),
+              );
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF00E5FF),

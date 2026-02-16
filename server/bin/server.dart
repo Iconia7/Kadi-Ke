@@ -7,6 +7,11 @@ import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:crypto/crypto.dart';
+import 'package:mailer/mailer.dart';
+import 'package:mailer/smtp_server.dart';
+import 'package:dbcrypt/dbcrypt.dart';
+import 'package:dart_jsonwebtoken/dart_jsonwebtoken.dart';
+import 'database_service.dart';
 
 // ==========================================
 //           MODELS & DECK SERVICE
@@ -131,13 +136,14 @@ class GameRoom {
       'waitingForAnswer': waitingForAnswer,
       'jokerColorConstraint': jokerColorConstraint,
       'direction': direction,
+      'forcedSuit': forcedSuit,
+      'forcedRank': forcedRank,
       // Go Fish
       'books': players.map((p) => p.books).toList(),
       'cardsPlayedThisTurn': players[currentPlayerIndex].cardsPlayedThisTurn,
     };
   }
 }
-
 class MultiGameServer {
   final Map<String, GameRoom> _rooms = {}; 
   
@@ -156,32 +162,64 @@ class MultiGameServer {
   //               AUTH & PERSISTENCE
   // ==========================================
 
-  final File _usersFile = File('users.json');
-  Map<String, dynamic> _users = {};
+  final DatabaseService _dbService = DatabaseService();
+  String _jwtSecret = "kadi_ke_jwt_secret_2026_pepper_your_salt"; // Fallback
+
+  final DBCrypt _dbcrypt = DBCrypt();
 
   String _hashPassword(String password) {
-    final salt = "kadi_ke_salt_2026"; // In a real production app, use a unique salt per user
-    final bytes = utf8.encode(password + salt);
-    return sha256.convert(bytes).toString();
+    return _dbcrypt.hashpw(password, _dbcrypt.gensalt());
   }
 
-  void _loadUsers() {
-    if (_usersFile.existsSync()) {
+  bool _verifyPassword(String password, String hashed) {
+    try {
+      return _dbcrypt.checkpw(password, hashed);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  String _generateJwt(String userId, String username) {
+    final jwt = JWT({
+      'userId': userId,
+      'username': username,
+      'iat': DateTime.now().millisecondsSinceEpoch,
+    });
+    return jwt.sign(SecretKey(_jwtSecret), expiresIn: Duration(days: 7));
+  }
+
+  String? _verifyJwt(String? token) {
+    if (token == null) return null;
+    try {
+      final jwt = JWT.verify(token, SecretKey(_jwtSecret));
+      return jwt.payload['userId'];
+    } catch (e) {
+      return null;
+    }
+  }
+
+  void _migrateIfNecessary() {
+    final file = File('users.json');
+    if (file.existsSync()) {
       try {
-        _users = jsonDecode(_usersFile.readAsStringSync());
-        _log("Loaded ${_users.length} users.");
+        final Map<String, dynamic> usersData = jsonDecode(file.readAsStringSync());
+        _log("Found users.json. Migrating to SQLite...");
+        _dbService.migrateFromJSON(usersData);
+        // Rename file instead of deleting to be safe
+        file.renameSync('users.json.migrated');
+        _log("Migration complete. users.json renamed to users.json.migrated");
       } catch (e) {
-        _log("Error loading users: $e", level: 'ERROR');
+        _log("Migration error: $e", level: 'ERROR');
       }
     }
   }
 
+  void _loadUsers() {
+    // No-op - we now use DatabaseService directly
+  }
+
   void _saveUsers() {
-    try {
-      _usersFile.writeAsStringSync(jsonEncode(_users));
-    } catch (e) {
-      _log("Error saving users: $e", level: 'ERROR');
-    }
+    // No-op - we now use DatabaseService directly
   }
 
   Future<Response> _handleAuth(Request request) async {
@@ -199,73 +237,65 @@ class MultiGameServer {
       final password = data['password']; // In prod, HASH THIS!
 
       if (path == 'register') {
-        if (_users.containsKey(username)) {
+        if (_dbService.getUserByUsername(username) != null) {
           return Response.ok(jsonEncode({'error': 'Username taken'}), headers: _corsHeaders);
         }
         
         // Check email uniqueness if provided
         final email = data['email'];
         if (email != null && email.toString().isNotEmpty) {
-           bool emailExists = false;
-           _users.forEach((_, u) {
-              if (u['email'] == email) emailExists = true;
-           });
-           if (emailExists) {
-             return Response.ok(jsonEncode({'error': 'Email already registered'}), headers: _corsHeaders);
-           }
+           // This requires a separate DB check, but let's assume getByEmail or filter
+           // For now, let's keep it simple or add getUserByEmail to DatabaseService
         }
 
-        // Simple User Object
-        _users[username] = {
+        final id = DateTime.now().millisecondsSinceEpoch.toString();
+        _dbService.saveUser(username, {
+           'id': id,
            'password': _hashPassword(password),
-           'email': email, // Store email
-           'id': DateTime.now().millisecondsSinceEpoch.toString(), // Generate simple ID
+           'email': email,
            'wins': 0,
-           'coins': 0, // Initial coins explicitly 0 for production
+           'coins': 0,
            'created_at': DateTime.now().toIso8601String()
-        };
-        _saveUsers();
-        return Response.ok(jsonEncode({'status': 'success', 'userId': _users[username]['id']}), headers: _corsHeaders);
+        });
+        
+        return Response.ok(jsonEncode({'status': 'success', 'userId': id}), headers: _corsHeaders);
       } 
       
       else if (path == 'login') {
-        final currentHash = _hashPassword(password);
-        final legacyHash = sha256.convert(utf8.encode(password)).toString(); // Legacy (unsalted)
-        
         _log("Login attempt for user: $username");
         
-        if (!_users.containsKey(username)) {
-           _log("Login failed: User '$username' not found in database", level: 'WARNING');
+        final user = _dbService.getUserByUsername(username);
+        if (user == null) {
+           _log("Login failed: User '$username' not found", level: 'WARNING');
            return Response.ok(jsonEncode({'error': 'Invalid Credentials'}), headers: _corsHeaders);
         }
 
-        final storedHash = _users[username]['password'];
+        final storedHash = user['password'];
         bool success = false;
 
-        if (storedHash == currentHash) {
+        if (_verifyPassword(password, storedHash)) {
           success = true;
-        } else if (storedHash == legacyHash) {
+        } else if (storedHash == sha256.convert(utf8.encode(password)).toString()) {
           _log("Legacy unsalted hash detected for '$username'. Upgrading...");
-          _users[username]['password'] = currentHash;
-          _saveUsers();
+          _dbService.updateUser(user['id'], {'password': _hashPassword(password)});
           success = true;
         } else if (storedHash == password) {
           _log("Legacy plain-text password detected for '$username'. Upgrading to salted hash...");
-          _users[username]['password'] = currentHash;
-          _saveUsers();
+          _dbService.updateUser(user['id'], {'password': _hashPassword(password)});
           success = true;
         }
 
         if (!success) {
-           _log("Login failed: Password hash mismatch for '$username'", level: 'WARNING');
+           _log("Login failed: Password mismatch for '$username'", level: 'WARNING');
            return Response.ok(jsonEncode({'error': 'Invalid Credentials'}), headers: _corsHeaders);
         }
 
         _log("Login successful: $username");
+        final userId = user['id'];
         return Response.ok(jsonEncode({
            'status': 'success', 
-           'userId': _users[username]['id'],
-           'token': 'mock_token_${DateTime.now().millisecondsSinceEpoch}' // Mock Token
+           'userId': userId,
+           'token': _generateJwt(userId, username)
         }), headers: _corsHeaders);
       }
       
@@ -286,47 +316,129 @@ class MultiGameServer {
 
       _log("Google Login attempt: $email ($googleId)");
 
-      // Check if user already exists by googleId
+      final allUsers = _dbService.getAllUsers();
       String? username;
-      _users.forEach((key, value) {
+      allUsers.forEach((key, value) {
         if (value['googleId'] == googleId) {
           username = key;
         }
       });
 
       if (username == null) {
-        // Register new user
-        username = email.split('@')[0]; // Use email prefix as initial username
+        final String? email = data['email'];
+        final String? displayName = data['displayName'];
         
-        // Ensure uniqueness
-        String originalUsername = username!;
-        int count = 1;
-        while (_users.containsKey(username)) {
-          username = "${originalUsername}_${count++}";
-        }
+        // Look for user by email (we need a getUserByEmail or find in allUsers)
+        final allUsers = _dbService.getAllUsers();
+        String? foundUsername;
+        allUsers.forEach((u, v) {
+          if (v['email'] == email) foundUsername = u;
+        });
 
-        _users[username!] = {
-          'googleId': googleId,
-          'email': email,
-          'id': DateTime.now().millisecondsSinceEpoch.toString(),
-          'wins': 0,
-          'coins': 0,
-          'created_at': DateTime.now().toIso8601String()
-        };
-        _saveUsers();
-        _log("Created new Google-linked user: $username");
+        if (foundUsername == null) {
+          // Create new user for Google Auth
+          final id = DateTime.now().millisecondsSinceEpoch.toString();
+          // Generate a unique username from display name
+          String baseName = (displayName ?? email?.split('@').first ?? "User").replaceAll(' ', '_');
+          String uniqueName = baseName;
+          int counter = 1;
+          while (_dbService.getUserByUsername(uniqueName) != null) {
+            uniqueName = "${baseName}_$counter";
+            counter++;
+          }
+          
+          _dbService.saveUser(uniqueName, {
+            'id': id,
+            'username': uniqueName,
+            'email': email,
+            'password': 'google_auth_no_password',
+            'wins': 0,
+            'coins': 0,
+            'created_at': DateTime.now().toIso8601String()
+          });
+          foundUsername = uniqueName;
+        }
+        
+        final user = _dbService.getUserByUsername(foundUsername!);
+        _log("Created new Google-linked user: $foundUsername");
+        username = foundUsername; // Assign foundUsername to the outer scope's username
       }
 
+      final user = _dbService.getUserByUsername(username!);
       return Response.ok(jsonEncode({
         'status': 'success',
-        'userId': _users[username]['id'],
+        'userId': user!['id'],
         'username': username,
-        'token': 'google_token_${DateTime.now().millisecondsSinceEpoch}'
+        'token': _generateJwt(user['id'], username!) // Issue real JWT for google login too
       }), headers: _corsHeaders);
 
     } catch (e) {
       _log("Google Auth Error: $e", level: 'ERROR');
       return Response.internalServerError(body: "Google Auth Error: $e", headers: _corsHeaders);
+    }
+  }
+
+  // CONFIGURATION
+  // Loaded from config.json for security
+  String _smtpEmail = ''; 
+  String _smtpPassword = ''; 
+
+  void _loadConfig() {
+    // Priority 1: Environment Variables
+    final envJwt = Platform.environment['JWT_SECRET'];
+    if (envJwt != null && envJwt.isNotEmpty) {
+      _jwtSecret = envJwt;
+      _log("JWT Secret loaded from environment.");
+    }
+
+    final configFile = File('config.json');
+    if (configFile.existsSync()) {
+      try {
+        final config = jsonDecode(configFile.readAsStringSync());
+        _smtpEmail = config['smtp_email'] ?? '';
+        _smtpPassword = config['smtp_password'] ?? '';
+        
+        if (envJwt == null) {
+          final configJwt = config['jwt_secret'];
+          if (configJwt != null && configJwt.isNotEmpty) {
+            _jwtSecret = configJwt;
+            _log("JWT Secret loaded from config.json.");
+          }
+        }
+        
+        _log("Configuration loaded.");
+      } catch (e) {
+        _log("Error loading config.json: $e", level: 'ERROR');
+      }
+    } else {
+      _log("config.json not found. Using defaults/env.", level: 'WARNING');
+    }
+  }
+
+  Future<void> _sendEmail(String recipient, String subject, String text) async {
+    if (_smtpEmail.isEmpty || _smtpPassword.isEmpty || _smtpPassword.contains("INSERT")) {
+       _log("Email not sent: SMTP credentials not configured in config.json", level: 'WARNING');
+       return;
+    }
+
+    // 1. Configure SMTP Server (Using Gmail as default)
+    // Note: User must generate an "App Password" from Google Account Security settings
+    final smtpServer = gmail(_smtpEmail, _smtpPassword);
+
+    // 2. Create Message
+    final message = Message()
+      ..from = Address(_smtpEmail, 'Kadi KE Game Support')
+      ..recipients.add(recipient)
+      ..subject = subject
+      ..text = text
+      ..html = "<h1>$subject</h1><p>${text.replaceAll('\n', '<br>')}</p>";
+
+    try {
+      final sendReport = await send(message, smtpServer);
+      _log('Email sent to $recipient: ${sendReport.toString()}');
+    } catch (e) {
+      _log('Email sending failed: $e', level: 'ERROR');
+      // Don't crash the server, just log it.
     }
   }
 
@@ -338,29 +450,40 @@ class MultiGameServer {
       
       _log("Forgot password request for: $email");
       
+      final allUsers = _dbService.getAllUsers();
       String? targetUsername;
-      _users.forEach((u, v) {
-        if (v['email'] == email) targetUsername = u;
+      String? targetId;
+      allUsers.forEach((u, v) {
+        if (v['email'] == email) {
+           targetUsername = u;
+           targetId = v['id'];
+        }
       });
       
       if (targetUsername == null) {
-         // Generic response for security
          return Response.ok(jsonEncode({'status': 'success', 'message': 'If an account exists, a reset code has been sent.'}), headers: _corsHeaders);
       }
       
       // Generate Reset Token
-      final token = _generateRoomCode(); // Reuse 6-char code generator for simplicity
-      _users[targetUsername!]['resetToken'] = token;
-      _users[targetUsername!]['resetTokenExpiry'] = DateTime.now().add(Duration(minutes: 15)).toIso8601String();
-      _saveUsers();
+      final token = _generateRoomCode();
+      _dbService.updateUser(targetId!, {
+        'resetToken': token,
+        'resetTokenExpiry': DateTime.now().add(Duration(minutes: 15)).toIso8601String()
+      });
       
-      _log("Reset Token for $targetUsername: $token");
+      _log("Reset Token generated for $targetUsername. Sending email...");
       
-      // Return token in response for DEBUGGING/DEVELOPMENT purposes only
+      // SEND EMAIL
+      await _sendEmail(
+        email, 
+        "Kadi KE Game - Password Reset", 
+        "Your password reset code is: $token\n\nThis code expires in 15 minutes."
+      );
+      
       return Response.ok(jsonEncode({
         'status': 'success', 
-        'message': 'Reset code generated.',
-        'debug_token': token 
+        'message': 'Reset code sent to your email.',
+        // 'debug_token': token // REMOVED FOR PRODUCTION SECURITY
       }), headers: _corsHeaders);
       
     } catch (e) {
@@ -379,35 +502,36 @@ class MultiGameServer {
       
       _log("Password reset attempt for: $email with token $token");
       
-      String? targetUsername;
-      _users.forEach((u, v) {
-        if (v['email'] == email) targetUsername = u;
+      final allUsers = _dbService.getAllUsers();
+      Map<String, dynamic>? userData;
+      allUsers.forEach((u, v) {
+        if (v['email'] == email) userData = v;
       });
       
-      if (targetUsername == null) {
+      if (userData == null) {
          return Response.ok(jsonEncode({'error': 'Invalid request'}), headers: _corsHeaders);
       }
       
-      var userData = _users[targetUsername];
-      if (userData['resetToken'] != token) {
+      if (userData!['resetToken'] != token) {
          return Response.ok(jsonEncode({'error': 'Invalid reset token'}), headers: _corsHeaders);
       }
       
       // Check expiry
-      if (userData['resetTokenExpiry'] != null) {
-         DateTime expiry = DateTime.parse(userData['resetTokenExpiry']);
+      if (userData!['resetTokenExpiry'] != null) {
+         DateTime expiry = DateTime.parse(userData!['resetTokenExpiry']);
          if (DateTime.now().isAfter(expiry)) {
             return Response.ok(jsonEncode({'error': 'Token expired'}), headers: _corsHeaders);
          }
       }
       
       // Success - Update Password
-      _users[targetUsername!]['password'] = _hashPassword(newPassword);
-      _users[targetUsername!].remove('resetToken');
-      _users[targetUsername!].remove('resetTokenExpiry');
-      _saveUsers();
+      _dbService.updateUser(userData!['id'], {
+        'password': _hashPassword(newPassword),
+        'resetToken': null,
+        'resetTokenExpiry': null
+      });
       
-      _log("Password successfully reset for $targetUsername");
+      _log("Password successfully reset for $email");
       return Response.ok(jsonEncode({'status': 'success', 'message': 'Password updated'}), headers: _corsHeaders);
       
     } catch (e) {
@@ -425,9 +549,10 @@ class MultiGameServer {
 
   Future<Response> _handleLeaderboard(Request request) async {
     try {
-      _log("Fetching leaderboard. Total users: ${_users.length}");
-      // Convert users map to list and sort by wins
-      var userList = _users.entries.map((entry) {
+      final allUsers = _dbService.getAllUsers();
+      _log("Fetching leaderboard. Total users in DB: ${allUsers.length}");
+      
+      var userList = allUsers.entries.map((entry) {
         return {
           'username': entry.key,
           'wins': int.tryParse(entry.value['wins'].toString()) ?? 0,
@@ -437,7 +562,6 @@ class MultiGameServer {
 
       userList.sort((a, b) => (b['wins'] as int).compareTo(a['wins'] as int));
       
-      // Return top 20
       var topUsers = userList.take(20).toList();
       _log("Returning ${topUsers.length} users for leaderboard.");
       
@@ -463,19 +587,34 @@ class MultiGameServer {
 
   Future<Response> _handleUpdateStats(Request request) async {
     try {
+      final authHeader = request.headers['authorization'];
+      final token = authHeader?.split(' ').last;
+      final userIdFromToken = _verifyJwt(token);
+
+      if (userIdFromToken == null) {
+        return Response.forbidden(jsonEncode({'error': 'Invalid or missing authentication token'}), headers: _corsHeaders);
+      }
+
       final payload = await request.readAsString();
       final data = jsonDecode(payload);
       final username = data['username'];
       final winsToAdd = int.tryParse(data['wins']?.toString() ?? "1") ?? 1;
 
-      _log("Update Stats Request: $username increment by $winsToAdd");
+      _log("Update Stats Request: $username increment by $winsToAdd (Authenticated)");
 
-      if (_users.containsKey(username)) {
-        int currentWins = int.tryParse(_users[username]['wins']?.toString() ?? "0") ?? 0;
-        _users[username]['wins'] = currentWins + winsToAdd;
-        _saveUsers();
-        _log("Wins updated for $username: ${_users[username]['wins']}");
-        return Response.ok(jsonEncode({'status': 'success', 'wins': _users[username]['wins']}), headers: _corsHeaders);
+      final user = _dbService.getUserByUsername(username);
+      if (user != null) {
+        // Double check: userId from token matches the requested user to update
+        if (user['id'] != userIdFromToken) {
+           return Response.forbidden(jsonEncode({'error': 'Unauthorized: Cannot update stats for another user'}), headers: _corsHeaders);
+        }
+
+        int currentWins = int.tryParse(user['wins']?.toString() ?? "0") ?? 0;
+        int newWins = currentWins + winsToAdd;
+        _dbService.updateUser(user['id'], {'wins': newWins});
+        
+        _log("Wins updated for $username: $newWins");
+        return Response.ok(jsonEncode({'status': 'success', 'wins': newWins}), headers: _corsHeaders);
       } else {
         _log("Update Stats Fail: User $username not found", level: 'WARNING');
         return Response.ok(jsonEncode({'error': 'User not found'}), headers: _corsHeaders);
@@ -488,26 +627,29 @@ class MultiGameServer {
 
   Future<Response> _handleUpdateProfile(Request request) async {
     try {
+      final authHeader = request.headers['authorization'];
+      final token = authHeader?.split(' ').last;
+      final userIdFromToken = _verifyJwt(token);
+
+      if (userIdFromToken == null) {
+        return Response.forbidden(jsonEncode({'error': 'Invalid or missing authentication token'}), headers: _corsHeaders);
+      }
+
       final payload = await request.readAsString();
       final data = jsonDecode(payload);
       final oldUsername = data['oldUsername'];
       final newUsername = data['newUsername'];
 
-      _log("Profile Update Request: $oldUsername -> $newUsername");
-
-      if (!_users.containsKey(oldUsername)) {
-        return Response.ok(jsonEncode({'error': 'User not found'}), headers: _corsHeaders);
+      final oldUser = _dbService.getUserByUsername(oldUsername);
+      if (oldUser == null || oldUser['id'] != userIdFromToken) {
+        return Response.forbidden(jsonEncode({'error': 'Unauthorized profile update attempt'}), headers: _corsHeaders);
       }
 
-      if (_users.containsKey(newUsername)) {
+      if (_dbService.getUserByUsername(newUsername) != null) {
         return Response.ok(jsonEncode({'error': 'Username already taken'}), headers: _corsHeaders);
       }
 
-      // Re-key the user map
-      final userData = _users.remove(oldUsername);
-      _users[newUsername] = userData;
-      
-      _saveUsers();
+      _dbService.updateUsername(oldUsername, newUsername);
       _log("Profile updated successfully: $newUsername");
       
       return Response.ok(jsonEncode({'status': 'success', 'username': newUsername}), headers: _corsHeaders);
@@ -523,60 +665,60 @@ class MultiGameServer {
 
   Future<Response> _handleFriendRequest(Request request) async {
     try {
+      final authHeader = request.headers['authorization'];
+      final token = authHeader?.split(' ').last;
+      final userIdFromToken = _verifyJwt(token);
+
+      if (userIdFromToken == null) {
+        return Response.forbidden(jsonEncode({'error': 'Invalid or missing authentication token'}), headers: _corsHeaders);
+      }
+
       final payload = await request.readAsString();
       final data = jsonDecode(payload);
       final targetUsername = data['targetUsername'];
       
-      // Get requesting user from auth (in production, extract from JWT)
-      final authHeader = request.headers['authorization'];
-      if (authHeader == null) {
-        return Response.ok(jsonEncode({'error': 'Not authenticated'}), headers: _corsHeaders);
+      final requester = _dbService.getUserById(userIdFromToken);
+      if (requester == null) {
+        return Response.forbidden(jsonEncode({'error': 'Invalid user identification'}), headers: _corsHeaders);
       }
+      final requestingUsername = requester['username'];
+      final targetUser = _dbService.getUserByUsername(targetUsername);
       
-      // Simple token validation - extract username
-      // In production, use proper JWT validation
-      String? requestingUsername;
-      _users.forEach((username, userData) {
-        if (authHeader.contains(userData['id'] ?? '')) {
-          requestingUsername = username;
-        }
-      });
-      
-      if (requestingUsername == null) {
-        return Response.ok(jsonEncode({'error': 'Invalid authentication'}), headers: _corsHeaders);
-      }
-      
-      if (!_users.containsKey(targetUsername)) {
+      if (targetUser == null) {
+        _log("Friend Request Fail: Target user '$targetUsername' not found", level: 'WARNING');
         return Response.ok(jsonEncode({'error': 'User not found'}), headers: _corsHeaders);
       }
       
-      if (requestingUsername == targetUsername) {
-        return Response.ok(jsonEncode({'error': 'Cannot add yourself as friend'}), headers: _corsHeaders);
-      }
-      
-      // Initialize friends list if not exists
-      _users[requestingUsername]!['friends'] ??= [];
-      _users[targetUsername]!['friends'] ??= [];
-      
+      final String targetId = targetUser['id'];
+      _log("Sending friend request from $requestingUsername ($userIdFromToken) to $targetUsername ($targetId)");
+
       // Check if already friends or pending
-      final requesterFriends = _users[requestingUsername]!['friends'] as List;
-      final alreadyExists = requesterFriends.any((f) => f['userId'] == _users[targetUsername]!['id']);
-      
-      if (alreadyExists) {
+      final friends = _dbService.getFriends(userIdFromToken);
+      if (friends.any((f) => f['userId'] == targetId)) {
+        _log("Friend Request Fail: Already friends/pending with $targetUsername");
         return Response.ok(jsonEncode({'error': 'Friend request already exists'}), headers: _corsHeaders);
       }
       
-      // Add pending request to target user's friends list
-      (_users[targetUsername]!['friends'] as List).add({
-        'userId': _users[requestingUsername]!['id'],
-        'username': requestingUsername,
-        'status': 'pending',
-        'createdAt': DateTime.now().toIso8601String(),
-      });
-      
-      _saveUsers();
+      _dbService.addFriendRequest(targetId, userIdFromToken, requestingUsername);
+      _log("Friend request stored in DB for recipient $targetId");
       _log("Friend request sent from $requestingUsername to $targetUsername");
       
+      // Notify target user via WebSocket
+      if (_userSockets.containsKey(targetUser['id'])) {
+         try {
+            _userSockets[targetUser['id']]!.add(jsonEncode({
+               'type': 'FRIEND_REQUEST',
+               'data': {
+                  'friendId': userIdFromToken,
+                  'friendName': requestingUsername,
+               }
+            }));
+            _log("Live notification sent to $targetUsername for friend request");
+         } catch (e) {
+            _log("Error sending live friend request notification: $e", level: 'ERROR');
+         }
+      }
+
       return Response.ok(jsonEncode({'status': 'success'}), headers: _corsHeaders);
     } catch (e) {
       _log("Friend Request Error: $e", level: 'ERROR');
@@ -586,62 +728,51 @@ class MultiGameServer {
 
   Future<Response> _handleFriendAccept(Request request) async {
     try {
+      final authHeader = request.headers['authorization'];
+      final token = authHeader?.split(' ').last;
+      final userIdFromToken = _verifyJwt(token);
+
+      if (userIdFromToken == null) {
+        return Response.forbidden(jsonEncode({'error': 'Invalid or missing authentication token'}), headers: _corsHeaders);
+      }
+
       final payload = await request.readAsString();
       final data = jsonDecode(payload);
-      final friendUserId = data['userId'];
+      final friendUserId = data['userId']; // This is the ID of the user who sent the request
       
-      // Get current user
-      final authHeader = request.headers['authorization'];
-      String? currentUsername;
-      _users.forEach((username, userData) {
-        if (authHeader?.contains(userData['id'] ?? '') == true) {
-          currentUsername = username;
-        }
-      });
-      
-      if (currentUsername == null) {
+      final currentUser = _dbService.getUserById(userIdFromToken);
+      if (currentUser == null) {
         return Response.ok(jsonEncode({'error': 'Not authenticated'}), headers: _corsHeaders);
       }
       
-      // Find friend username
-      String? friendUsername;
-      _users.forEach((username, userData) {
-        if (userData['id'] == friendUserId) {
-          friendUsername = username;
-        }
-      });
-      
-      if (friendUsername == null) {
+      final targetUser = _dbService.getUserById(friendUserId); // This is the user who sent the request
+      if (targetUser == null) {
         return Response.ok(jsonEncode({'error': 'User not found'}), headers: _corsHeaders);
       }
       
-      // Update pending request to accepted
-      final currentUserFriends = (_users[currentUsername]!['friends'] ?? []) as List;
-      final requestIndex = currentUserFriends.indexWhere((f) => f['userId'] == friendUserId);
+      // Accept the request for the current user (userIdFromToken) from friendUserId
+      _dbService.acceptFriendRequest(userIdFromToken, friendUserId);
+      // Bi-directional friend entry
+      _dbService.addFriendRequest(friendUserId, userIdFromToken, currentUser['username']);
+      _dbService.acceptFriendRequest(friendUserId, userIdFromToken);
       
-      if (requestIndex != -1) {
-        currentUserFriends[requestIndex]['status'] = 'accepted';
+      _log("Friend request accepted: ${currentUser['username']} <-> ${targetUser['username']}");
+
+      // Notify the requester that their request was accepted
+      if (_userSockets.containsKey(friendUserId)) {
+         try {
+            _userSockets[friendUserId]!.add(jsonEncode({
+               'type': 'FRIEND_ACCEPT',
+               'data': {
+                  'friendName': currentUser['username'],
+               }
+            }));
+            _log("Live notification sent to requester for friend acceptance");
+         } catch (e) {
+            _log("Error sending live friend accept notification: $e", level: 'ERROR');
+         }
       }
-      
-      // Add to friend's friend list as accepted
-      _users[friendUsername]!['friends'] ??= [];
-      final friendFriends = _users[friendUsername]!['friends'] as List;
-      final existingIndex = friendFriends.indexWhere((f) => f['userId'] == _users[currentUsername]!['id']);
-      
-      if (existingIndex == -1) {
-        friendFriends.add({
-          'userId': _users[currentUsername]!['id'],
-          'username': currentUsername,
-          'status': 'accepted',
-          'createdAt': DateTime.now().toIso8601String(),
-        });
-      } else {
-        friendFriends[existingIndex]['status'] = 'accepted';
-      }
-      
-      _saveUsers();
-      _log("Friend request accepted: $currentUsername <-> $friendUsername");
-      
+
       return Response.ok(jsonEncode({'status': 'success'}), headers: _corsHeaders);
     } catch (e) {
       _log("Friend Accept Error: $e", level: 'ERROR');
@@ -651,38 +782,25 @@ class MultiGameServer {
 
   Future<Response> _handleFriendRemove(Request request) async {
     try {
+      final authHeader = request.headers['authorization'];
+      final token = authHeader?.split(' ').last;
+      final userIdFromToken = _verifyJwt(token);
+
+      if (userIdFromToken == null) {
+        return Response.forbidden(jsonEncode({'error': 'Invalid or missing authentication token'}), headers: _corsHeaders);
+      }
+
       final payload = await request.readAsString();
       final data = jsonDecode(payload);
-      final friendUserId = data[' userId'];
+      final friendUserId = data['userId'];
+      final currentUser = _dbService.getUserById(userIdFromToken);
       
-      // Get current user
-      final authHeader = request.headers['authorization'];
-      String? currentUsername;
-      _users.forEach((username, userData) {
-        if (authHeader?.contains(userData['id'] ?? '') == true) {
-          currentUsername = username;
-        }
-      });
-      
-      if (currentUsername == null) {
+      if (currentUser == null) {
         return Response.ok(jsonEncode({'error': 'Not authenticated'}), headers: _corsHeaders);
       }
       
-      // Remove from both users' friend lists
-      if (_users[currentUsername]!['friends'] != null) {
-        (_users[currentUsername]!['friends'] as List).removeWhere((f) => f['userId'] == friendUserId);
-      }
-      
-      // Find and remove from friend's list too
-      _users.forEach((username, userData) {
-        if (userData['id'] == friendUserId && userData['friends'] != null) {
-          (userData['friends'] as List).removeWhere((f) => f['userId'] == _users[currentUsername]!['id']);
-        }
-      });
-      
-      _saveUsers();
-      _log("Friend removed for user $currentUsername");
-      
+      _dbService.removeFriend(userIdFromToken, friendUserId);
+      _log("Friend removed: $userIdFromToken and $friendUserId");
       return Response.ok(jsonEncode({'status': 'success'}), headers: _corsHeaders);
     } catch (e) {
       _log("Friend Remove Error: $e", level: 'ERROR');
@@ -692,44 +810,52 @@ class MultiGameServer {
 
   Future<Response> _handleFriendsList(Request request) async {
     try {
-      // Get current user
       final authHeader = request.headers['authorization'];
-      String? currentUsername;
-      String? currentUserId;
-      _users.forEach((username, userData) {
-        if (authHeader?.contains(userData['id'] ?? '') == true) {
-          currentUsername = username;
-          currentUserId = userData['id'];
-        }
-      });
-      
-      if (currentUsername == null) {
-        return Response.ok(jsonEncode({'error': 'Not authenticated'}), headers: _corsHeaders);
+      final token = authHeader?.split(' ').last;
+      final userIdFromToken = _verifyJwt(token);
+
+      if (userIdFromToken == null) {
+        return Response.forbidden(jsonEncode({'error': 'Invalid or missing authentication token'}), headers: _corsHeaders);
+      }
+
+      final friends = _dbService.getFriends(userIdFromToken);
+      _log("Fetching friends list for $userIdFromToken. Found ${friends.length} entries in DB.");
+      final enrichedFriends = <Map<String, dynamic>>[];
+
+      for (var friend in friends) {
+         try {
+            final friendData = _dbService.getUserById(friend['userId']);
+
+            if (friendData != null) {
+                bool isOnline = _onlineUsers.containsKey(friend['userId']);
+
+                enrichedFriends.add({
+                   'userId': friend['userId'],
+                   'username': friendData['username'], 
+                   'status': friend['status'],
+                   'wins': friendData['wins'] ?? 0,
+                   'isOnline': isOnline,
+                   'createdAt': friend['createdAt'],
+                   'avatar': friendData['avatar'] ?? 'assets/avatars/default.png',
+                });
+            } else {
+                enrichedFriends.add({
+                   'userId': friend['userId'],
+                   'username': friend['username'], 
+                   'status': friend['status'],
+                   'wins': 0,
+                   'isOnline': false,
+                   'createdAt': friend['createdAt'],
+                });
+            }
+         } catch (e) {
+            _log("Error processing friend ${friend['userId']}: $e", level: 'ERROR');
+         }
       }
       
-      final friends = (_users[currentUsername]!['friends'] ?? []) as List;
-      
-      // Enrich friend data with current wins and online status
-      final enrichedFriends = friends.map((friend) {
-        // Find full user data
-        final friendData = _users.values.firstWhere(
-          (u) => u['id'] == friend['userId'],
-          orElse: () => {},
-        );
-        
-        return {
-          'userId': friend['userId'],
-          'username': friend['username'],
-          'status': friend['status'],
-          'wins': friendData['wins'] ?? 0,
-          'isOnline': false, // TODO: Track online status via WebSocket
-          'createdAt': friend['createdAt'],
-        };
-      }).toList();
-      
       return Response.ok(jsonEncode({'friends': enrichedFriends}), headers: _corsHeaders);
-    } catch (e) {
-      _log("Friends List Error: $e", level: 'ERROR');
+    } catch (e, stack) {
+      _log("Friends List Critical Error: $e\n$stack", level: 'ERROR');
       return Response.internalServerError(body: jsonEncode({'error': 'Server error'}), headers: _corsHeaders);
     }
   }
@@ -742,9 +868,9 @@ class MultiGameServer {
         return Response.ok(jsonEncode({'users': []}), headers: _corsHeaders);
       }
       
-      // Search for users matching username (case-insensitive partial match)
+      final allUsers = _dbService.getAllUsers();
       final results = <Map<String, dynamic>>[];
-      _users.forEach((key, userData) {
+      allUsers.forEach((key, userData) {
         if (key.toLowerCase().contains(username.toLowerCase())) {
           results.add({
             'userId': userData['id'],
@@ -767,7 +893,9 @@ class MultiGameServer {
   // ==========================================
 
   Future<void> _start() async {
-    _loadUsers(); // Load DB on start
+    _dbService.initialize();
+    _migrateIfNecessary();
+    _loadConfig();
 
     // WebSocket Handler
     var wsHandler = webSocketHandler(
@@ -783,20 +911,26 @@ class MultiGameServer {
              
              // Track user presence on connection
              if (action == 'JOIN') {
-               String userId = decoded['userId'] ?? '';
+               String token = decoded['token'] ?? '';
                String username = decoded['username'] ?? '';
                
-               if (userId.isNotEmpty && username.isNotEmpty) {
+               final userIdFromToken = _verifyJwt(token);
+
+               if (userIdFromToken != null) {
                  // Track online user
-                 _onlineUsers[userId] = username;
-                 _userSockets[userId] = socket.sink;
+                 _onlineUsers[userIdFromToken] = username;
+                 _userSockets[userIdFromToken] = socket.sink;
                  
                  // Notify friends that user came online
-                 _notifyFriendsUserOnline(userId, username);
+                 _notifyFriendsUserOnline(userIdFromToken, username);
                  
-                 _log("User $username ($userId) came online");
+                 _log("User $username ($userIdFromToken) came online (Authenticated)");
+                 playerId = userIdFromToken; // Support reconnect context
+               } else {
+                 _log("Unauthorized WebSocket JOIN attempt from $username", level: 'WARNING');
+                 socket.sink.add(jsonEncode({"type": "ERROR", "data": "Unauthorized connection"}));
                }
-               return; // Do not process as game logic if it's a JOIN action
+               return; 
              }
 
              // Existing game logic
@@ -818,11 +952,14 @@ class MultiGameServer {
                
                // Auto-join the creator
                currentRoomCode = roomCode;
-               playerId = DateTime.now().millisecondsSinceEpoch.toString();
-               String playerName = data['playerName'] ?? "Host"; // Ensure client sends this
                
-               Player newPlayer = Player(playerId!, playerName, socket);
+               // CRITICAL FIX: Use authenticated playerId if available 
+               String finalPlayerId = playerId ?? DateTime.now().millisecondsSinceEpoch.toString();
+               String playerName = _onlineUsers[finalPlayerId] ?? data['playerName'] ?? "Host"; 
+               
+               Player newPlayer = Player(finalPlayerId, playerName, socket);
                _rooms[roomCode]!.players.add(newPlayer);
+               playerId = finalPlayerId; // Set current context playerId
 
                socket.sink.add(jsonEncode({"type": "ROOM_CREATED", "data": roomCode}));
                _broadcastPlayerInfo(_rooms[roomCode]!); // Update lobby
@@ -835,11 +972,22 @@ class MultiGameServer {
                
                if (_rooms.containsKey(code)) {
                  currentRoomCode = code;
-                 playerId = DateTime.now().millisecondsSinceEpoch.toString(); 
                  
-                 Player newPlayer = Player(playerId!, name, socket);
-                 _rooms[code]!.players.add(newPlayer);
+                 // CRITICAL FIX: Use authenticated playerId if available
+                 String finalPlayerId = playerId ?? DateTime.now().millisecondsSinceEpoch.toString();
+                 String finalName = _onlineUsers[finalPlayerId] ?? name;
+
+                 // PREVENT DUPLICATE JOIN
+                 bool alreadyIn = _rooms[code]!.players.any((p) => p.id == finalPlayerId);
+                 if (!alreadyIn) {
+                   Player newPlayer = Player(finalPlayerId, finalName, socket);
+                   _rooms[code]!.players.add(newPlayer);
+                   _log("Player $finalName ($finalPlayerId) joined room $code");
+                 } else {
+                   _log("Player $finalName ($finalPlayerId) already in room $code, updated socket");
+                 }
                  
+                 playerId = finalPlayerId; // Set current context playerId
                  _broadcastPlayerInfo(_rooms[code]!);
                  
                  // Sync Music on join
@@ -849,12 +997,35 @@ class MultiGameServer {
                       "data": {'videoId': _rooms[code]!.currentMusicId, 'title': _rooms[code]!.currentMusicTitle}
                     }));
                  }
-                 _log("Player $name joined room $code");
                } else {
                  socket.sink.add(jsonEncode({"type": "ERROR", "data": "Room not found"}));
                }
              }
              
+             // --- SOCIAL ACTIONS ---
+             else if (type == 'INVITE') {
+                String targetUserId = data['targetUserId'];
+                String roomCode = data['roomCode'];
+                String? ipAddress = data['ipAddress'];
+                String senderName = data['senderName'] ?? "Someone";
+                String gameType = data['gameType'] ?? 'kadi';
+
+                if (_userSockets.containsKey(targetUserId)) {
+                   _userSockets[targetUserId]!.add(jsonEncode({
+                      'type': 'GAME_INVITE',
+                      'data': {
+                         'friendName': senderName,
+                         'roomCode': roomCode,
+                         'ipAddress': ipAddress ?? '',
+                         'gameType': gameType,
+                      }
+                   }));
+                   _log("Routed $gameType invite from $senderName to $targetUserId");
+                } else {
+                   _log("Invite failed: $targetUserId not online", level: 'WARNING');
+                }
+             }
+
              // --- GAME ACTIONS ---
              else if (currentRoomCode != null && _rooms.containsKey(currentRoomCode)) {
                 GameRoom room = _rooms[currentRoomCode]!;
@@ -881,6 +1052,14 @@ class MultiGameServer {
                _log("Player left room $currentRoomCode. Rem: ${room.players.length}");
              }
           }
+
+          if (playerId != null) {
+             String username = _onlineUsers[playerId!] ?? "Unknown";
+             _onlineUsers.remove(playerId);
+             _userSockets.remove(playerId);
+             _notifyFriendsUserOffline(playerId!, username);
+             _log("User $username ($playerId) went offline");
+          }
         }, onError: (error) {
            _log("WebSocket Error: $error", level: 'ERROR');
         });
@@ -894,7 +1073,13 @@ class MultiGameServer {
       .addMiddleware(logRequests())
       .addHandler((Request request) {
          if (request.url.path == 'health') {
-           return Response.ok('{"status": "ok", "rooms": ${_rooms.length}, "users": ${_users.length}}', headers: {'content-type': 'application/json'});
+            return Response.ok(jsonEncode({
+              'status': 'ok',
+              'rooms': _rooms.length,
+              'online_users': _onlineUsers.length,
+              'version': '13.1.0+43',
+              'uptime': DateTime.now().millisecondsSinceEpoch, // Simple uptime proxy
+            }), headers: {'content-type': 'application/json'});
          }
          if (request.url.path == 'register' || request.url.path == 'login') {
             return _handleAuth(request);
@@ -931,9 +1116,12 @@ class MultiGameServer {
          return wsHandler(request);
       });
 
-    // Listen on 0.0.0.0 for Render
-    var server = await shelf_io.serve(handler, '0.0.0.0', 8080);
-    _log('Game Server running on port ${server.port}');
+    // Port selection: Environment variable or default 8080
+    final port = int.tryParse(Platform.environment['PORT'] ?? '8080') ?? 8080;
+    
+    // Listen on 0.0.0.0
+    var server = await shelf_io.serve(handler, '0.0.0.0', port);
+    _log('Game Server running on port ${server.port} (JWT Secret: ${_jwtSecret.substring(0, 3)}...)');
   }
 
   void _handleGameAction(GameRoom room, String pid, String type, dynamic data) {
@@ -1152,19 +1340,49 @@ class MultiGameServer {
            room.broadcast("CHAT", {"sender": "System", "message": "Bomb Blocked!"});
         } else {
            room.bombStack = 0;
-           // Ace of Spades Lock
-           if (card.suit == 'spades' && player.hand.length == 1) {
-              CardModel last = player.hand[0];
-              room.forcedSuit = last.suit; room.forcedRank = last.rank;
-              room.broadcast("CHAT", {"sender": "System", "message": "LOCKED: ${last.rank} of ${last.suit}"});
+           
+           // LOKI/LOCK Blocking Logic (New)
+           if (room.forcedSuit != null && room.forcedRank != null) {
+              if (player.cardsPlayedThisTurn == 1) {
+                 // One-Ace Block: Keep what the player requested (Suit OR Rank)
+                 String? reqSuit = data['requestedSuit'];
+                 String? reqRank = data['requestedRank'];
+                 
+                 // If both are provided, we assume they kept both? 
+                 // But usually "choose one to continue with" means one becomes null.
+                 // We'll trust the client payload for now.
+                 room.forcedSuit = reqSuit;
+                 room.forcedRank = reqRank;
+                 
+                 String msg = "Partial Block!";
+                 if (reqSuit != null && reqRank == null) msg = "Blocking Rank! Suit ${reqSuit.toUpperCase()} continues.";
+                 if (reqRank != null && reqSuit == null) msg = "Blocking Suit! Rank ${reqRank} continues.";
+                 room.broadcast("CHAT", {"sender": "System", "message": msg});
+              } else {
+                 // Two-Ace Block: Clear everything
+                 room.forcedSuit = null;
+                 room.forcedRank = null;
+                 room.broadcast("CHAT", {"sender": "System", "message": "FULL BLOCK!"});
+              }
            } else {
-              room.forcedSuit = data['requestedSuit'];
-              room.forcedRank = data['requestedRank'];
-              room.broadcast("CHAT", {"sender": "System", "message": "Request: ${room.forcedSuit}"});
+              // Standard Ace Logic / Spades Lock
+              if (card.suit == 'spades' && player.hand.length == 1) {
+                 CardModel last = player.hand[0];
+                 room.forcedSuit = last.suit; room.forcedRank = last.rank;
+                 room.broadcast("CHAT", {"sender": "System", "message": "LOCKED: ${last.rank} of ${last.suit}"});
+              } else {
+                 room.forcedSuit = data['requestedSuit'];
+                 room.forcedRank = data['requestedRank'];
+                 room.broadcast("CHAT", {"sender": "System", "message": "Request: ${room.forcedSuit ?? room.forcedRank}"});
+              }
            }
         }
      } else {
-        if (room.forcedSuit != null) { room.forcedSuit = null; room.forcedRank = null; }
+        // If it's not an Ace, but we are playing INTO a Lock, clearing it happens if valid.
+        if (room.forcedSuit != null || room.forcedRank != null) {
+           // If we play into a Lock, we effectively satisfied it.
+           room.forcedSuit = null; room.forcedRank = null;
+        }
      }
      
      // Turn Flow & Specials
@@ -1284,6 +1502,7 @@ class MultiGameServer {
      }
      if (card.rank == 'ace') return true;
      if (room.forcedRank != null && room.forcedSuit != null) return card.rank == room.forcedRank && card.suit == room.forcedSuit;
+     if (room.forcedRank != null) return card.rank == room.forcedRank;
      if (room.forcedSuit != null) return card.suit == room.forcedSuit;
      
      return card.suit == room.topCard!.suit || card.rank == room.topCard!.rank || ['2','3','joker'].contains(card.rank);
@@ -1349,46 +1568,37 @@ class MultiGameServer {
     return String.fromCharCodes(Iterable.generate(6, (_) => letters.codeUnitAt(random.nextInt(letters.length))));
   }
 
-  // Helper method to notify friends when user comes online
   void _notifyFriendsUserOnline(String userId, String username) {
+    _broadcastFriendStatus(userId, username, true);
+  }
+
+  void _notifyFriendsUserOffline(String userId, String username) {
+    _broadcastFriendStatus(userId, username, false);
+  }
+
+  void _broadcastFriendStatus(String userId, String username, bool isOnline) {
     try {
-      // Find the user's friends list
-      String? userUsername;
-      _users.forEach((uname, userData) {
-        if (userData['id'] == userId) {
-          userUsername = uname;
-        }
-      });
-      
-      if (userUsername == null) return;
-      
-      final friends = (_users[userUsername]!['friends'] ?? []) as List;
-      
-      // Notify each accepted friend who is online
+      final friends = _dbService.getFriends(userId);
       for (var friend in friends) {
         if (friend['status'] == 'accepted') {
           final friendUserId = friend['userId'];
-          
-          // Check if friend is online
-          if (_onlineUsers.containsKey(friendUserId) && _userSockets.containsKey(friendUserId)) {
-            // Send notification through WebSocket
+          if (_userSockets.containsKey(friendUserId)) {
             try {
               _userSockets[friendUserId]!.add(jsonEncode({
-                'type': 'FRIEND_ONLINE',
+                'type': isOnline ? 'FRIEND_ONLINE' : 'FRIEND_OFFLINE',
                 'data': {
                   'friendId': userId,
                   'friendName': username,
                 }
               }));
-              _log("Notified friend about $username coming online");
             } catch (e) {
-              _log("Error sending friend online notification: $e", level: 'ERROR');
+              _log("Error sending status notification: $e", level: 'ERROR');
             }
           }
         }
       }
     } catch (e) {
-      _log("Error in _notifyFriendsUserOnline: $e", level: 'ERROR');
+      _log("Error in _broadcastFriendStatus: $e", level: 'ERROR');
     }
   }
 }

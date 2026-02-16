@@ -57,6 +57,19 @@ class NotificationService {
           ledColor: Colors.amber,
           importance: NotificationImportance.Default,
         ),
+        
+        // NEW: Daily Challenges
+        NotificationChannel(
+          channelGroupKey: 'events_group',
+          channelKey: 'daily_challenges',
+          channelName: 'Daily Challenges',
+          channelDescription: 'Notifications for new daily challenges',
+          defaultColor: const Color(0xFF00E5FF),
+          ledColor: const Color(0xFF00E5FF),
+          playSound: true,
+          enableVibration: true,
+          importance: NotificationImportance.Default,
+        ),
       ],
       debug: true,
     );
@@ -136,11 +149,58 @@ class NotificationService {
     );
   }
 
+  /// Friend Request Notification
+  Future<void> showFriendRequestNotification(String requesterName, String requesterId) async {
+    if (!await _isNotificationEnabled('notif_pref_friend_activity')) return;
+
+    await AwesomeNotifications().createNotification(
+      content: NotificationContent(
+        id: 16,
+        channelKey: 'social_channel',
+        title: '👤 New Friend Request!',
+        body: '$requesterName wants to be your friend',
+        notificationLayout: NotificationLayout.Default,
+        payload: {
+          'type': 'friend_request',
+          'friendId': requesterId,
+          'friendName': requesterName,
+        },
+      ),
+      actionButtons: [
+        NotificationActionButton(
+          key: 'VIEW_FRIENDS',
+          label: 'View Requests',
+          actionType: ActionType.Default,
+        ),
+      ],
+    );
+  }
+
+  /// Friend Accept Notification
+  Future<void> showFriendAcceptNotification(String friendName) async {
+    if (!await _isNotificationEnabled('notif_pref_friend_activity')) return;
+
+    await AwesomeNotifications().createNotification(
+      content: NotificationContent(
+        id: 17,
+        channelKey: 'social_channel',
+        title: '🤝 Friend Request Accepted!',
+        body: 'You and $friendName are now friends',
+        notificationLayout: NotificationLayout.Default,
+        payload: {
+          'type': 'friend_accept',
+          'friendName': friendName,
+        },
+      ),
+    );
+  }
+
   /// Game Invite Notification with action buttons
   Future<void> showGameInviteNotification(
     String friendName, 
     String roomCode, {
     String? ipAddress,  // Optional for LAN mode
+    String gameType = 'kadi',
   }) async {
     if (!await _isNotificationEnabled('notif_pref_game_invites')) return;
 
@@ -161,6 +221,7 @@ class NotificationService {
           'roomCode': roomCode,
           'ipAddress': ipAddress ?? '',
           'friendName': friendName,
+          'gameType': gameType,
         },
       ),
       actionButtons: [
@@ -238,10 +299,30 @@ class NotificationService {
     );
   }
 
-  /// Schedule Daily Challenge Reminder (8 PM)
+  /// Schedule Daily Challenge Reminders (9 AM New Challenges, 8 PM Expiry Warning)
   Future<void> scheduleDailyChallengeReminder() async {
     if (!await _isNotificationEnabled('notif_pref_challenges')) return;
 
+    // 1. New Challenges at 9:00 AM
+    await AwesomeNotifications().createNotification(
+      content: NotificationContent(
+        id: 888, // Fixed ID for daily challenge start
+        channelKey: 'daily_challenges',
+        title: 'New Challenges Available! 🎯',
+        body: 'Complete your daily challenges to earn coins & XP!',
+        notificationLayout: NotificationLayout.Default,
+        category: NotificationCategory.Reminder,
+      ),
+      schedule: NotificationCalendar(
+        hour: 9, 
+        minute: 0, 
+        second: 0,
+        repeats: true,
+        allowWhileIdle: true,
+      ),
+    );
+
+    // 2. Expiry Warning at 8:00 PM (Existing Logic)
     await AwesomeNotifications().createNotification(
       content: NotificationContent(
         id: 15,

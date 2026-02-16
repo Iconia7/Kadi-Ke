@@ -30,6 +30,7 @@ class GameServer {
   Map<int, bool> _hasSaidNikoKadi = {}; 
   List<CardModel> _discardPile = [];
   String? _jokerColorConstraint; 
+  int _cardsPlayedThisTurn = 0;
 
   Future<void> start() async {
     if (_server != null) {
@@ -188,13 +189,15 @@ void _playNextLanSong() {
     if (_topCard != null) _discardPile.add(_topCard!);
     _topCard = card;
     if (_jokerColorConstraint != null) _jokerColorConstraint = null;
+
+    _cardsPlayedThisTurn++;
     
     bool isBomb = ['2', '3', 'joker'].contains(card.rank);
     if (card.rank == '2') _bombStack += 2;
     else if (card.rank == '3') _bombStack += 3;
     else if (card.rank == 'joker') _bombStack += 5;
 
-    // --- ACE LOGIC (Includes Spades Lock) ---
+    // --- ACE LOGIC ---
     if (card.rank == 'ace') {
        if (_bombStack > 0 && !isBomb) {
           _bombStack = 0; 
@@ -204,27 +207,38 @@ void _playNextLanSong() {
        } else {
           _bombStack = 0; 
           
-          // SPECIAL: Ace of Spades Strategy (Lock & Key)
-          // If you play Ace of Spades and have exactly 1 card left, you lock the game to that specific card.
-          if (card.suit == 'spades' && hand.length == 1) {
-             CardModel winningCard = hand[0]; 
-             _forcedSuit = winningCard.suit;
-             _forcedRank = winningCard.rank;
-             _broadcast("CHAT", {"sender": "System", "message": "🔒 LOCKED: ${_forcedRank} of ${_forcedSuit}"});
-          } 
-          // Normal Ace Request
-          else {
-             _forcedSuit = requestedSuit ?? card.suit;
-             _forcedRank = requestedRank;
-             
-             String msg = "New Suit: $_forcedSuit";
-             if (_forcedRank != null) msg += " | Target: $_forcedRank";
-             _broadcast("CHAT", {"sender": "System", "message": msg});
+          // LOKI/LOCK Blocking Logic (New)
+          if (_forcedSuit != null && _forcedRank != null) {
+             if (_cardsPlayedThisTurn == 1) {
+                _forcedSuit = requestedSuit;
+                _forcedRank = requestedRank;
+                
+                String msg = "Partial Block!";
+                if (requestedSuit != null && requestedRank == null) msg = "Blocking Rank! Suit ${requestedSuit.toUpperCase()} continues.";
+                if (requestedRank != null && requestedSuit == null) msg = "Blocking Suit! Rank ${requestedRank} continues.";
+                _broadcast("CHAT", {"sender": "System", "message": msg});
+             } else {
+                _forcedSuit = null;
+                _forcedRank = null;
+                _broadcast("CHAT", {"sender": "System", "message": "FULL BLOCK!"});
+             }
+          } else {
+             // Standard Ace Logic / Spades Lock
+             if (card.suit == 'spades' && hand.length == 1) {
+                CardModel winningCard = hand[0]; 
+                _forcedSuit = winningCard.suit;
+                _forcedRank = winningCard.rank;
+                _broadcast("CHAT", {"sender": "System", "message": "🔒 LOCKED: ${_forcedRank} of ${_forcedSuit}"});
+             } else {
+                _forcedSuit = requestedSuit ?? card.suit;
+                _forcedRank = requestedRank;
+                _broadcast("CHAT", {"sender": "System", "message": "Request: ${_forcedSuit ?? _forcedRank}"});
+             }
           }
        }
     } else {
-       // Clear constraints if non-Ace played
-       if (_forcedSuit != null) {
+       // Clear constraints if non-Ace played into a Lock
+       if (_forcedSuit != null || _forcedRank != null) {
           _forcedSuit = null;
           _forcedRank = null;
        }
@@ -289,15 +303,10 @@ void _playNextLanSong() {
 
     // --- WIN CHECK ---
     if (hand.isEmpty) {
-      bool powerCardFinish = ['2','3','joker','king','jack','queen','8'].contains(card.rank);
-      // Explicitly fail if Ace is last card (unless it was Spades Lock scenario which leaves 1 card, so this handles immediate win attempts)
-      if (card.rank == 'ace') powerCardFinish = true; 
+      bool powerCardFinish = ['2','3','8','jack','queen','king','ace','joker'].contains(card.rank);
 
-      bool anyoneElseCardless = _playerHands.any((h) => h.isEmpty);
-      
-      if (powerCardFinish || anyoneElseCardless) {
-         if (powerCardFinish) _broadcast("CHAT", {"sender": "System", "message": "Cannot win with Power Card!"});
-         else _broadcast("CHAT", {"sender": "System", "message": "Win Blocked by Cardless Player!"});
+      if (powerCardFinish) {
+         _broadcast("CHAT", {"sender": "System", "message": "Cannot win with Power Card!"});
          _updateGameState();
          if (turnEnds) _advanceTurn(skip: skipCount);
          return;
@@ -371,6 +380,7 @@ void _playNextLanSong() {
   }
 
   void _advanceTurn({int skip = 0}) {
+    _cardsPlayedThisTurn = 0;
     int step = _direction * (1 + skip);
     _currentPlayerIndex = (_currentPlayerIndex + step) % _clients.length;
 
@@ -447,6 +457,9 @@ void _playNextLanSong() {
       "waitingForAnswer": _waitingForAnswer,
       "direction": _direction,
       "jokerColorConstraint": _jokerColorConstraint,
+      "forcedSuit": _forcedSuit,
+      "forcedRank": _forcedRank,
+      "cardsPlayedThisTurn": _cardsPlayedThisTurn,
     });
   }
 

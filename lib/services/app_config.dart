@@ -12,5 +12,5 @@ class AppConfig {
 
   // Game Settings
   static const String appTitle = 'Kadi Ke';
-  static const String version = '1.1.0-modernized';
+  static const String version = '13.1.0+43';
 }

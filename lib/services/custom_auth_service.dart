@@ -192,7 +192,10 @@ class CustomAuthService {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/update_profile'),
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $_token',
+        },
         body: jsonEncode({
           'oldUsername': _username,
           'newUsername': newUsername,

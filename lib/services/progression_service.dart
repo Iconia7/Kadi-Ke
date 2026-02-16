@@ -240,6 +240,29 @@ class ProgressionService {
     return false;
   }
 
+  // --- CHALLENGE NOTIFICATION STATE ---
+  static const String _challengesViewedDateKey = 'challenges_viewed_date';
+
+  bool hasUnclaimedChallenges() {
+    List<ChallengeModel> challenges = getChallenges();
+    // 1. Check for completed but unclaimed rewards
+    bool hasRewards = challenges.any((c) => c.isCompleted && !c.isClaimed);
+    if (hasRewards) return true;
+
+    // 2. Check if new challenges have been viewed today
+    final now = DateTime.now();
+    final lastViewedStr = _prefs.getString(_getKey(_challengesViewedDateKey));
+    if (lastViewedStr == null) return true;
+
+    final lastViewed = DateTime.parse(lastViewedStr);
+    return !_isSameDay(now, lastViewed);
+  }
+
+  Future<void> markDailyChallengesAsViewed() async {
+    final now = DateTime.now();
+    await _prefs.setString(_getKey(_challengesViewedDateKey), now.toIso8601String());
+  }
+
   bool _isSameDay(DateTime a, DateTime b) {
     return a.year == b.year && a.month == b.month && a.day == b.day;
   }

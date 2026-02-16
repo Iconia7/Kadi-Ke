@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/friend_model.dart';
 import '../services/friend_service.dart';
 import '../services/notification_service.dart';
+import '../services/vps_game_service.dart';
 
 /// Bottom sheet for inviting friends to a game
 /// Supports both Online (room code) and LAN (IP address) modes
@@ -62,17 +63,20 @@ class _FriendInviteBottomSheetState extends State<FriendInviteBottomSheet> {
       
       for (final friend in selectedFriends) {
         if (widget.roomCode != null) {
-          // Online mode - send room code
-          await NotificationService().showGameInviteNotification(
-            friend.username,
+          // Online mode - send room code via server
+          VPSGameService().sendInvite(
+            friend.userId,
             widget.roomCode!,
+            gameType: widget.gameMode,
           );
         } else if (widget.ipAddress != null) {
           // LAN mode - send IP address
-          await NotificationService().showGameInviteNotification(
-            friend.username,
+          // Note: LAN mode still uses the same INVITE system if both users are connected to the VPS
+          VPSGameService().sendInvite(
+            friend.userId,
             widget.ipAddress!,
             ipAddress: widget.ipAddress,
+            gameType: widget.gameMode,
           );
         }
       }

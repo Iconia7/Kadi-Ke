@@ -1,5 +1,5 @@
 #!/bin/bash
-# Kadi Server v13.0 Deployment Script for VPS
+# Kadi Server v13.1 Deployment Script for VPS
 # Usage: ./deploy_server_fixed.sh [your-vps-ip] [ssh-user]
 
 VPS_IP=$1
@@ -26,18 +26,42 @@ ssh $SSH_USER@$VPS_IP "mkdir -p $HOME_DIR/kadi-server"
 
 # 2. Upload server code
 echo "📦 Uploading server files..."
-scp -r ../server/* $SSH_USER@$VPS_IP:$HOME_DIR/kadi-server/
+# 2. Upload server code
+echo "📦 Uploading server files (preserving database)..."
+
+# Upload bin directory
+scp -r ../server/bin $SSH_USER@$VPS_IP:$HOME_DIR/kadi-server/
+
+# Upload pubspec files
+scp ../server/pubspec.* $SSH_USER@$VPS_IP:$HOME_DIR/kadi-server/
+
+# Upload analysis_options.yaml if exists
+if [ -f "../server/analysis_options.yaml" ]; then
+    scp ../server/analysis_options.yaml $SSH_USER@$VPS_IP:$HOME_DIR/kadi-server/
+fi
+
+# Upload config.json explicitly
+echo "🔒 Uploading security config..."
+scp ../server/config.json $SSH_USER@$VPS_IP:$HOME_DIR/kadi-server/
 
 # 3. Install dependencies and setup
 echo "⚙️  Setting up server..."
 ssh $SSH_USER@$VPS_IP << ENDSSH
     cd $HOME_DIR/kadi-server
     
-    # Install Dart if not installed
+    # Install Dart and SQLite if not installed
+    echo "⚙️  Verifying dependencies..."
+    sudo apt-get update
+    sudo apt-get install -y apt-transport-https wget libsqlite3-dev
+    
+    # Ensure libsqlite3.so symlink exists (required for Dart sqlite3 package)
+    if [ ! -f "/usr/lib/x86_64-linux-gnu/libsqlite3.so" ]; then
+        echo "🔗 Creating libsqlite3.so symlink..."
+        sudo ln -s /usr/lib/x86_64-linux-gnu/libsqlite3.so.0 /usr/lib/x86_64-linux-gnu/libsqlite3.so
+    fi
+
     if ! command -v dart &> /dev/null; then
-        echo "Installing Dart..."
-        sudo apt-get update
-        sudo apt-get install -y apt-transport-https wget
+        echo "🎯 Installing Dart SDK..."
         wget -qO- https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/dart.gpg
         echo 'deb [signed-by=/usr/share/keyrings/dart.gpg arch=amd64] https://storage.googleapis.com/download.dartlang.org/linux/debian stable main' | sudo tee /etc/apt/sources.list.d/dart_stable.list
         sudo apt-get update
@@ -46,48 +70,7 @@ ssh $SSH_USER@$VPS_IP << ENDSSH
     
     # Get dependencies
     echo "📦 Installing Dart dependencies..."
-    dart pub get
-    
-    # Migrate database for v13.0
-    echo "🔄 Running v13.0 database migration..."
-    cat > migrate_v13.dart <<'MIGRATE'
-import 'dart:io';
-import 'dart:convert';
-
-void main() {
-  final file = File('users.json');
-  if (!file.existsSync()) {
-    print('⚠️  users.json not found - skipping migration');
-    return;
-  }
-  
-  final data = jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
-  
-  bool changed = false;
-  data.forEach((username, userData) {
-    // Add friends field if missing
-    if (userData['friends'] == null) {
-      userData['friends'] = [];
-      changed = true;
-      print('✅ Added friends field to $username');
-    }
-  });
-  
-  if (changed) {
-    // Backup before writing
-    final backup = File('users.json.backup');
-    backup.writeAsStringSync(file.readAsStringSync());
-    
-    file.writeAsStringSync(jsonEncode(data));
-    print('✅ Migration complete! Backup saved to users.json.backup');
-  } else {
-    print('✅ No migration needed - schema already up to date');
-  }
-}
-MIGRATE
-    
-    dart run migrate_v13.dart
-    rm migrate_v13.dart
+    dart pub get || { echo "❌ dart pub get failed"; exit 1; }
     
     # Create systemd service
     echo "🔧 Creating systemd service..."
@@ -153,11 +136,12 @@ EOF
 ENDSSH
 
 echo ""
-echo "✅ v13.0 Deployment Complete!"
+echo "✅ v13.1 Deployment Complete!"
 echo ""
 echo "🎉 New Features:"
 echo "   • Tutorial System"
-echo "   • Friend System with online status"
+echo "   • SQLite Database (kadi_game.db)"
+echo "   • Secure Friend System with online status"
 echo "   • Enhanced Push Notifications"
 echo "   • WebSocket presence tracking"
 echo ""

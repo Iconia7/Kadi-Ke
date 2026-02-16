@@ -94,6 +94,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   bool _gameHasStarted = false;
   String _currentThemeId = 'midnight_elite';
   String? _jokerColorConstraint; 
+  String? _forcedSuit;
+  String? _forcedRank;
 
   // Go Fish State
   String? _selectedRankToAsk;
@@ -233,6 +235,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     // 1. Initialize Auth
     await CustomAuthService().initialize();
     String uId = CustomAuthService().userId ?? "offline";
+    _myName = CustomAuthService().username ?? "Player";
 
     // 2. Initialize Progression with this User ID (to load their specific profile/skins/stats)
     await ProgressionService().initialize(userId: uId);
@@ -256,7 +259,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           (data) {
              _handleGameMessage(data);
           },
-          // Ã¢Å“â€¦ ADD THIS: Handle Disconnection
+          // ✅ ADD THIS: Handle Disconnection
           onDone: () {
              if (mounted) {
                _showDisconnectDialog("Connection Lost", "You were disconnected from the server.");
@@ -544,6 +547,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         _currentBombStack = data['data']['bombStack'] ?? 0;
         _waitingForAnswer = data['data']['waitingForAnswer'] ?? false;
         _jokerColorConstraint = data['data']['jokerColorConstraint']; // Sync constraint
+        _forcedSuit = data['data']['forcedSuit'];
+        _forcedRank = data['data']['forcedRank'];
         _cardsPlayedThisTurn = data['data']['cardsPlayedThisTurn'] ?? 0;
         
         bool wasMyTurn = _isMyTurn;
@@ -668,7 +673,7 @@ bool _validateLocalMove(CardModel card) {
 
     if (card.rank == 'ace') {
        if (_currentBombStack == 0) {
-         var result = await _showAceDialog(card.suit);
+         var result = await _showAceDialog(card.suit, lockedSuit: _forcedSuit, lockedRank: _forcedRank);
          if (result == null) return;
          reqSuit = result['suit'];
          reqRank = result['rank'];
@@ -818,7 +823,7 @@ bool _validateLocalMove(CardModel card) {
     }
 
     if (_isOffline) {
-      // Ã¢Å“â€¦ SAFETY CHECK: Prevent crash if engine isn't ready
+      // ✅ SAFETY CHECK: Prevent crash if engine isn't ready
       if (_localEngine != null) {
          _localEngine.start(widget.aiCount, widget.difficulty, decks: decks); 
       } else {
@@ -891,7 +896,8 @@ bool _validateLocalMove(CardModel card) {
             if (_isAnimatingCard && _animatingCard != null)
                _buildFlyingCard(),
 
-            _buildEmoteLayer(), // ADDED: Emote Layer
+             _buildChatBubblesLayer(), // ADDED: Chat Bubbles
+             _buildEmoteLayer(), // ADDED: Emote Layer
 
             _buildChatButton(theme),
             Align(alignment: Alignment.topCenter, child: ConfettiWidget(confettiController: _confettiController, shouldLoop: false)),
@@ -1265,9 +1271,9 @@ bool _validateLocalMove(CardModel card) {
           ),
         ],
       ),
-        ],
-      ),
-    );
+    ],
+  ),
+);
   }
 
   Widget _buildLobby(ThemeModel theme) {
@@ -1878,10 +1884,16 @@ Future<void> _handleGameOver(dynamic data) async {
     
     // Find player index
     int pIndex = -1;
-    if (senderName == _myName) {
+    String searchName = senderName.trim().toLowerCase();
+    
+    if (searchName == _myName.trim().toLowerCase()) {
        pIndex = _myPlayerId;
     } else {
-       var p = _players.firstWhere((pl) => pl.name == senderName, orElse: () => PlayerInfo(id: '', name: '', index: -1));
+       // Search in all players list
+       var p = _players.firstWhere(
+         (pl) => pl.name.trim().toLowerCase() == searchName, 
+         orElse: () => PlayerInfo(id: '', name: '', index: -1)
+       );
        pIndex = p.index;
     }
 
@@ -1909,10 +1921,13 @@ Future<void> _handleGameOver(dynamic data) async {
     }
   }
   
-  Future<Map<String, String?>?> _showAceDialog(String currentSuit) async {
+  Future<Map<String, String?>?> _showAceDialog(String currentSuit, {String? lockedSuit, String? lockedRank}) async {
     String selectedSuit = currentSuit;
     String? selectedRank;
     bool isSpades = currentSuit == 'spades';
+    
+    // Check for Partial Block (One-Ace Block)
+    bool isPartialBlock = lockedSuit != null && lockedRank != null;
 
     return await showDialog<Map<String, String?>>(
       context: context,
@@ -1936,10 +1951,30 @@ Future<void> _handleGameOver(dynamic data) async {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text("CHOOSE SUIT",
+                      Text(isPartialBlock ? "PARTIAL BLOCK" : "CHOOSE SUIT",
                           style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                      SizedBox(height: 10),
+                      if (isPartialBlock)
+                        Text("Choose what to continue with:", style: TextStyle(color: Colors.white70, fontSize: 13)),
                       SizedBox(height: 20),
-                      Wrap(
+                      if (isPartialBlock) ...[
+                        // Partial Block Options
+                        _buildBlockOption(
+                          label: "RANK: $lockedRank", 
+                          icon: Icons.filter_1, 
+                          isSelected: selectedRank == lockedRank && selectedSuit == currentSuit, 
+                          onTap: () => setState(() { selectedRank = lockedRank; selectedSuit = currentSuit;})
+                        ),
+                        SizedBox(height: 12),
+                        _buildBlockOption(
+                          label: "SUIT: ${lockedSuit.toUpperCase()}", 
+                          icon: Icons.color_lens, 
+                          isSelected: selectedSuit == lockedSuit && selectedRank == null, 
+                          onTap: () => setState(() { selectedSuit = lockedSuit; selectedRank = null;})
+                        ),
+                      ] else ...[
+                        // Standard Suit Selection
+                        Wrap(
                         spacing: 15,
                         runSpacing: 15,
                         alignment: WrapAlignment.center,
@@ -1966,7 +2001,8 @@ Future<void> _handleGameOver(dynamic data) async {
                           );
                         }).toList(),
                       ),
-                      if (isSpades) ...[
+                    ],
+                    if (isSpades) ...[
                          SizedBox(height: 20),
                          // Simple Rank Dropdown for Spades
                          Container(
@@ -2010,6 +2046,31 @@ Future<void> _handleGameOver(dynamic data) async {
     );
   }
 
+  Widget _buildBlockOption({required String label, required IconData icon, required bool isSelected, required VoidCallback onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: Duration(milliseconds: 200),
+        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.amber : Colors.white.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: isSelected ? Colors.amber : Colors.white24, width: 2),
+          boxShadow: isSelected ? [BoxShadow(color: Colors.amber.withOpacity(0.3), blurRadius: 8)] : [],
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: isSelected ? Colors.black : Colors.white70, size: 20),
+            SizedBox(width: 12),
+            Text(label, style: TextStyle(color: isSelected ? Colors.black : Colors.white, fontWeight: FontWeight.bold)),
+            Spacer(),
+            if (isSelected) Icon(Icons.check_circle, color: Colors.black, size: 20),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _statusSubscription?.cancel();
@@ -2023,5 +2084,83 @@ Future<void> _handleGameOver(dynamic data) async {
     _pulseController.dispose();
     _cardThrowController.dispose();
     super.dispose();
+  }
+}
+
+class ChatBubble extends StatelessWidget {
+  final String message;
+  final bool isMe;
+
+  const ChatBubble({Key? key, required this.message, required this.isMe}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 140,
+      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: isMe ? Colors.blueAccent.withOpacity(0.9) : Colors.black87,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white24),
+        boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 10, offset: Offset(0, 5))],
+      ),
+      child: Text(
+        message,
+        style: TextStyle(color: Colors.white, fontSize: 12),
+        textAlign: TextAlign.center,
+        maxLines: 3,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+}
+
+class FlyingEmoji extends StatefulWidget {
+  final String emoji;
+  final VoidCallback onComplete;
+
+  const FlyingEmoji({Key? key, required this.emoji, required this.onComplete}) : super(key: key);
+
+  @override
+  _FlyingEmojiState createState() => _FlyingEmojiState();
+}
+
+class _FlyingEmojiState extends State<FlyingEmoji> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _opacity;
+  late Animation<double> _translate;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(vsync: this, duration: Duration(milliseconds: 1500));
+    _opacity = TweenSequence([
+      TweenSequenceItem(tween: Tween(begin: 0.0, end: 1.0), weight: 20),
+      TweenSequenceItem(tween: ConstantTween(1.0), weight: 60),
+      TweenSequenceItem(tween: Tween(begin: 1.0, end: 0.0), weight: 20),
+    ]).animate(_controller);
+    _translate = Tween(begin: 0.0, end: -100.0).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
+    
+    _controller.forward().then((_) => widget.onComplete());
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (c, w) => Opacity(
+        opacity: _opacity.value,
+        child: Transform.translate(
+          offset: Offset(0, _translate.value),
+          child: Text(widget.emoji, style: TextStyle(fontSize: 40)),
+        ),
+      ),
+    );
   }
 }

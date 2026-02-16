@@ -403,26 +403,43 @@ bool _isValidMove(CardModel card) {
        } else {
           _bombStack = 0; 
           
-          // SPECIAL: Ace of Spades Strategy
-          if (card.suit == 'spades' && hand.length == 1) {
-             CardModel winningCard = hand[0]; // The last card you hold
-             _forcedSuit = winningCard.suit;
-             _forcedRank = winningCard.rank;
-             _broadcast("CHAT", {"sender": "System", "message": "🔒 LOCKED: ${_forcedRank} of ${_forcedSuit}"});
-          } 
-          // Normal Ace Request
-          else {
-             _forcedSuit = reqSuit ?? card.suit;
-             _forcedRank = reqRank;
-             
-             String msg = "New Suit: $_forcedSuit";
-             if (_forcedRank != null) msg += " | Target: $_forcedRank";
-             _broadcast("CHAT", {"sender": "System", "message": msg});
+          // LOKI/LOCK Blocking Logic (New)
+          if (_forcedSuit != null && _forcedRank != null) {
+             if (_cardsPlayedThisTurn == 1) {
+                // One-Ace Block: Keep what the player requested
+                _forcedSuit = reqSuit;
+                _forcedRank = reqRank;
+                
+                String msg = "Partial Block!";
+                if (reqSuit != null && reqRank == null) msg = "Blocking Rank! Suit ${reqSuit.toUpperCase()} continues.";
+                if (reqRank != null && reqSuit == null) msg = "Blocking Suit! Rank ${reqRank} continues.";
+                _broadcast("CHAT", {"sender": "System", "message": msg});
+             } else {
+                // Two-Ace Block: Clear everything
+                _forcedSuit = null;
+                _forcedRank = null;
+                _broadcast("CHAT", {"sender": "System", "message": "FULL BLOCK!"});
+             }
+          } else {
+             // Standard Ace Logic / Spades Lock
+             if (card.suit == 'spades' && hand.length == 1) {
+                CardModel winningCard = hand[0]; 
+                _forcedSuit = winningCard.suit;
+                _forcedRank = winningCard.rank;
+                _broadcast("CHAT", {"sender": "System", "message": "🔒 LOCKED: ${_forcedRank} of ${_forcedSuit}"});
+             } else {
+                _forcedSuit = reqSuit ?? card.suit;
+                _forcedRank = reqRank;
+                _broadcast("CHAT", {"sender": "System", "message": "Request: ${_forcedSuit ?? _forcedRank}"});
+             }
           }
        }
     } else {
-       // Clear constraints if non-Ace played (unless inside a Question Chain, logic handles suit match automatically)
-       if (_forcedSuit != null) { _forcedSuit = null; _forcedRank = null; }
+       // Clear constraints if non-Ace played into a Lock
+       if (_forcedSuit != null || _forcedRank != null) {
+          _forcedSuit = null;
+          _forcedRank = null;
+       }
     }
 
     // --- NIKO KADI CHECK ---
@@ -478,24 +495,19 @@ bool _isValidMove(CardModel card) {
 
     _broadcastUpdate(playerIndex, hand);
 
-    // --- WIN CONDITION ---
+    // --- WIN CHECK ---
     if (hand.isEmpty) {
-      bool powerCardFinish = ['2','3','joker','king','jack','queen','8'].contains(card.rank);
-      // Explicitly check Ace cannot win (unless it was part of a combo that ended on an Answer, which is handled by valid move)
-      if (card.rank == 'ace') powerCardFinish = true;
-
-      bool anyoneElseCardless = _bots.any((b) => b.hand.isEmpty) || (playerIndex != 0 && _playerHand.isEmpty);
-      
-      if (powerCardFinish || anyoneElseCardless) {
-         if (powerCardFinish) _broadcast("CHAT", {"sender": "System", "message": "Cannot win with Power Card!"});
-         else _broadcast("CHAT", {"sender": "System", "message": "Win Blocked by Cardless Player!"});
-         _broadcastUpdate(playerIndex, hand);
-         if (turnEnds) _advanceTurn(skip: skip);
-         return;
-      } else {
-        _broadcast("GAME_OVER", "Player ${playerIndex == 0 ? 'You' : 'Bot $playerIndex'} Wins!");
-        return;
-      }
+       bool powerCardFinish = ['2','3','8','jack','queen','king','ace','joker'].contains(card.rank);
+       
+       if (powerCardFinish) {
+          _broadcast("CHAT", {"sender": "System", "message": "Cannot win with Power Card!"});
+          _broadcastUpdate(playerIndex, hand);
+          if (turnEnds) _advanceTurn(skip: skip);
+          return;
+       } else {
+          _broadcast("GAME_OVER", playerIndex == 0 ? "You Win!" : "Bot ${playerIndex} Wins!");
+          return;
+       }
     }
 
     if (turnEnds) {
@@ -550,7 +562,9 @@ bool _isValidMove(CardModel card) {
       "playerIndex": _currentPlayerIndex,
       "bombStack": _bombStack,
       "waitingForAnswer": _waitingForAnswer,
-      "jokerColorConstraint": _jokerColorConstraint,
+      "direction": _direction,
+      "forcedSuit": _forcedSuit,
+      "forcedRank": _forcedRank,
       "cardsPlayedThisTurn": _cardsPlayedThisTurn,
     });
   }

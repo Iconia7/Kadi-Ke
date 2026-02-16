@@ -21,6 +21,10 @@ class VPSGameService {
   Stream<Map<String, dynamic>> get gameStream => _gameStreamController.stream;
   
   String? _currentGameCode;
+  int _reconnectDelay = 1000; // Start with 1s
+  static const int _maxReconnectDelay = 30000; // Max 30s
+  Timer? _reconnectTimer;
+  bool _isManuallyClosed = false;
   bool _isConnected = false;
 
   bool get isConnected => _isConnected;
@@ -29,15 +33,32 @@ class VPSGameService {
   /// Connect to the VPS WebSocket server
   Future<void> connect() async {
     if (_isConnected) return;
+    _isManuallyClosed = false;
 
+    print('Connecting to VPS: $wsUrl...');
     try {
       _channel = WebSocketChannel.connect(Uri.parse(wsUrl));
-      _isConnected = true;
-
+      
+      // Wait for a small moment to verify connection
+      // WebSocketChannel.connect is lazy, it doesn't wait for the handshake.
+      
       _channel!.stream.listen(
         (message) {
+          if (!_isConnected) {
+            _isConnected = true;
+            _reconnectDelay = 1000; // Reset delay on successful message
+            print('Connected to VPS successfully.');
+          }
+          
           try {
             final data = jsonDecode(message);
+            
+            if (data['type'] == 'ERROR' && data['data'] == 'Unauthorized connection') {
+               print('Server rejected WebSocket connection: Unauthorized');
+               leaveGame();
+               return;
+            }
+
             _gameStreamController.add(data);
           } catch (e) {
             print('Error parsing message: $e');
@@ -45,18 +66,55 @@ class VPSGameService {
         },
         onDone: () {
           _isConnected = false;
-          print('WebSocket connection closed');
+          print('WebSocket connection closed.');
+          if (!_isManuallyClosed) {
+            _scheduleReconnect();
+          }
         },
         onError: (error) {
           _isConnected = false;
           print('WebSocket error: $error');
+          if (!_isManuallyClosed) {
+            _scheduleReconnect();
+          }
         },
       );
+
+      // Authenticate WebSocket connection
+      _authenticate();
+
     } catch (e) {
       _isConnected = false;
       print('Failed to connect to VPS: $e');
-      rethrow;
+      _scheduleReconnect();
     }
+  }
+
+  void _authenticate() {
+    final token = CustomAuthService().token;
+    final username = CustomAuthService().username;
+    final userId = CustomAuthService().userId;
+
+    if (token != null && username != null) {
+      _channel?.sink.add(jsonEncode({
+        'action': 'JOIN',
+        'token': token,
+        'username': username,
+        'userId': userId,
+      }));
+    }
+  }
+
+  void _scheduleReconnect() {
+    if (_isManuallyClosed) return;
+    
+    _reconnectTimer?.cancel();
+    print('Scheduling reconnect in ${_reconnectDelay}ms...');
+    
+    _reconnectTimer = Timer(Duration(milliseconds: _reconnectDelay), () {
+      _reconnectDelay = (_reconnectDelay * 2).clamp(1000, _maxReconnectDelay);
+      connect();
+    });
   }
 
   /// Create a new online game room
@@ -118,8 +176,22 @@ class VPSGameService {
     }));
   }
 
+  /// Send a game invite to a friend
+  void sendInvite(String targetUserId, String roomCode, {String? ipAddress, String gameType = 'kadi'}) {
+    final senderName = CustomAuthService().username ?? "Someone";
+    sendAction('INVITE', {
+      'targetUserId': targetUserId,
+      'roomCode': roomCode,
+      'ipAddress': ipAddress ?? '',
+      'senderName': senderName,
+      'gameType': gameType,
+    });
+  }
+
   /// Leave the current game
   void leaveGame() {
+    _isManuallyClosed = true;
+    _reconnectTimer?.cancel();
     if (_channel != null) {
       _channel!.sink.close();
       _channel = null;
@@ -192,9 +264,13 @@ class VPSGameService {
         return;
       }
 
+      final token = CustomAuthService().token;
       final response = await http.post(
         Uri.parse('$httpUrl/update_stats'),
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
         body: jsonEncode({
           'username': username,
           'wins': wins,

@@ -76,10 +76,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           children: [
             // Background Pattern
             Positioned.fill(
-              child: Opacity(
-                opacity: 0.03,
-                child: Image.asset("assets/images/pattern.png", repeat: ImageRepeat.repeat, errorBuilder: (c,e,s)=>SizedBox()),
-              ),
+              child: Container(color: Colors.transparent),
             ),
             SafeArea(
               child: Column(
