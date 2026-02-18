@@ -53,7 +53,7 @@ class CustomAuthService {
 
         _userId = data['userId'];
         _username = username;
-        _token = 'registered_$_userId'; 
+        _token = data['token']; 
 
         await _saveCredentials();
       } else {

@@ -101,16 +101,19 @@ class AiBot {
       return cardColor == jokerConstraint;
     }
 
-    // 2. Bomb Stack Logic
+    // 2. Bomb Overrides (Bomb can be played on ANY suit/rank/constraint/lock)
+    if (['2', '3', 'joker'].contains(card.rank)) return true;
+
+    // 3. Bomb Stack Logic
     if (bombStack > 0) {
-      if (['2', '3', 'joker'].contains(card.rank)) return true; // Stack
+      // Stack already handled by #2
       if (card.rank == 'ace') return true; // Block
       if (card.rank == 'king') return true; // Return
       if (card.rank == 'jack') return true; // Pass
       return false;
     }
 
-    // 3. Question/Answer Logic (CRITICAL FIX: Add chaining support)
+    // 4. Question/Answer Logic (CRITICAL FIX: Add chaining support)
     if (waitingForAnswer) {
        // Case A: Chaining Questions (e.g., Q -> Q or Q -> 8)
        // Can play another Question if it matches Suit OR Rank
@@ -124,14 +127,14 @@ class AiBot {
            return card.suit == topCard.suit;
        }
 
-       // Cannot play Power cards (2, 3, A, K, J) to answer a Question
+       // Cannot play Power cards (A, K, J) to answer a Question (Bombs handled in #2)
        return false;
     }
 
-    // 4. Ace Counter-Play (CRITICAL: Ace breaks any lock)
+    // 5. Ace Counter-Play (CRITICAL: Ace breaks any lock)
     if (card.rank == 'ace') return true;
 
-    // 5. Forced Suit/Rank (Ace of Spades lock support)
+    // 6. Forced Suit/Rank (Ace of Spades lock support)
     if (forcedRank != null && forcedSuit != null) {
        // Double lock: must match EXACT card
        return card.rank == forcedRank && card.suit == forcedSuit;
@@ -141,8 +144,8 @@ class AiBot {
       return card.suit == forcedSuit;
     }
     
-    // 6. Standard Play
-    return card.suit == topCard.suit || card.rank == topCard.rank || ['2','3','joker'].contains(card.rank);
+    // 7. Standard Play
+    return card.suit == topCard.suit || card.rank == topCard.rank;
   }
 
   String _getMostFrequentSuit() {
@@ -239,7 +242,8 @@ void start(int aiCount, String difficulty, {int decks = 1}) async {
   }
 
   bool _isWinningCard(CardModel card) {
-    const nonWinningRanks = ['2', '3', '8', 'jack', 'queen', 'king', 'joker'];
+    // Power Cards cannot win: 2, 3, 8, J, Q, K, A, Joker
+    const nonWinningRanks = ['2', '3', '8', 'jack', 'queen', 'king', 'ace', 'joker'];
     return !nonWinningRanks.contains(card.rank);
   }
 
@@ -319,46 +323,41 @@ void start(int aiCount, String difficulty, {int decks = 1}) async {
     }
   }
 
-bool _isValidMove(CardModel card) {
-    // 1. Joker Constraint (Highest Priority)
+  bool _isValidMove(CardModel card) {
+    // 1. Bomb Override: 2, 3, Joker always valid on ANY suit
+    if (['2','3','joker'].contains(card.rank)) return true;
+
+    // 2. Joker Constraint (Highest Priority if not bomb)
     if (_jokerColorConstraint != null) {
-      bool isBomb = ['2', '3', 'joker'].contains(card.rank);
-      if (isBomb) return true;
       String cardColor = (card.suit == 'hearts' || card.suit == 'diamonds' || card.suit == 'red') ? 'red' : 'black';
       return cardColor == _jokerColorConstraint;
     }
 
-    // 2. Bomb Stack Logic
+    // 3. Bomb Stack Defense
     if (_bombStack > 0) {
-      if (['2', '3', 'joker'].contains(card.rank)) return true; // Stack
-      if (card.rank == 'ace') return true; // Block
-      if (card.rank == 'king') return true; // Return
-      if (card.rank == 'jack') return true; // Pass
+      // Stack (2, 3, Joker) already handled by #1
+      // Defense: Ace, King, Jack are valid
+      if (['ace','king','jack'].contains(card.rank)) return true;
       return false;
     }
 
-    // 3. Question/Answer Logic (SELF-ANSWERING & CHAINING)
+    // 4. Question/Answer Logic (SELF-ANSWERING & CHAINING)
     if (_waitingForAnswer) {
        // Case A: Chaining Questions (e.g., Q -> Q or Q -> 8)
-       // You can play another Question if it matches Suit OR Rank
        if (card.rank == 'queen' || card.rank == '8') {
            return card.suit == _topCard!.suit || card.rank == _topCard!.rank;
        }
-
        // Case B: Answering (e.g., Q -> 5)
-       // You must play a standard card (4-10) matching the SUIT
        if (['4','5','6','7','9','10'].contains(card.rank)) {
            return card.suit == _topCard!.suit;
        }
-
-       // You cannot play Power cards (2, 3, A, K, J) to answer a Question
        return false; 
     }
 
-    // 4. Ace Counter-Play (CRITICAL: Ace breaks any lock)
+    // 5. Ace Counter-Play
     if (card.rank == 'ace') return true;
 
-    // 5. Forced Suit/Rank (The Lock)
+    // 6. Forced Suit/Rank (The Lock)
     if (_forcedRank != null && _forcedSuit != null) {
        return card.rank == _forcedRank && card.suit == _forcedSuit;
     }
@@ -366,8 +365,8 @@ bool _isValidMove(CardModel card) {
       return card.suit == _forcedSuit;
     }
 
-    // 6. Standard Play
-    return card.suit == _topCard!.suit || card.rank == _topCard!.rank || ['2','3','joker'].contains(card.rank);
+    // 7. Standard Play
+    return card.suit == _topCard!.suit || card.rank == _topCard!.rank;
   }
 
   void _processMove(int playerIndex, List<CardModel> hand, int cardIndex, {String? reqSuit, String? reqRank}) {
@@ -435,8 +434,16 @@ bool _isValidMove(CardModel card) {
           }
        }
     } else {
-       // Clear constraints if non-Ace played into a Lock
-       if (_forcedSuit != null || _forcedRank != null) {
+       // If playing a Bomb, we override/clear Requests
+       if (isBomb) {
+           _forcedSuit = null;
+           _forcedRank = null;
+       }
+       // If playing valid card into Request, usually we clear it? 
+       // User says persistence. But if I play the requested suit, the "Top Card" now IS that suit.
+       // So Standard Play rules will naturally enforce it for the next player anyway.
+       // Explicitly clearing it prevents "Ghost constraints".
+       else if (_forcedSuit != null || _forcedRank != null) {
           _forcedSuit = null;
           _forcedRank = null;
        }
@@ -485,11 +492,15 @@ bool _isValidMove(CardModel card) {
        }
     }
     
-    // 5. Multi-drop (Standard) - Only if not holding turn for Question
+    // 5. Multi-drop (Standard & Bombs)
     if (turnEnds && skip == 0 && hand.isNotEmpty) {
-       if (hand.any((c) => c.rank == card.rank)) {
+       bool canMultiDrop = hand.any((c) => c.rank == card.rank);
+       bool isBombChain = isBomb && hand.any((c) => ['2', '3', 'joker'].contains(c.rank));
+       
+       if (canMultiDrop || isBombChain) {
           turnEnds = false;
-          if (playerIndex == 0) _broadcast("CHAT", {"sender": "System", "message": "Multi-drop: Play another ${card.rank} or Pick"});
+          String msg = canMultiDrop ? "Multi-drop: Play another ${card.rank} or Pick" : "Bomb Chain! Play another Bomb or Pick";
+          if (playerIndex == 0) _broadcast("CHAT", {"sender": "System", "message": msg});
        }
     }
 
@@ -533,9 +544,13 @@ bool _isValidMove(CardModel card) {
     _drawCardsForHand(hand, count);
     
     // RESET STATES
+    // Only clear constraints if this was a Bomb/Penalty pick
+    if (_bombStack > 0) {
+        _forcedSuit = null;
+        _forcedRank = null;
+    }
+    
     _bombStack = 0;
-    _forcedSuit = null;
-    _forcedRank = null;
     
     // If you picked while trying to answer/chain, the question is voided for the next person
     if (_waitingForAnswer) {

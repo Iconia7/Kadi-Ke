@@ -113,6 +113,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   Map<int, List<String>> _activeEmotes = {}; // Maps Player Index to list of active emoji strings 
   Map<int, String> _activeChatBubbles = {}; // NEW: Chat Bubbles
   Timer? _chatBubbleTimer;
+  String? _lastSystemMessage;
+  Timer? _systemMessageTimer;
 
   // --- ANIMATION CONTROLLERS ---
   late ConfettiController _confettiController;
@@ -180,7 +182,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   int _startingPlayerCount = 0; // Locked in at game start
   bool _hasPaidEntry = false; // Ensure we pay only once
 
-
+  DateTime? _gameStartTime;
+  bool _initialized = false;
 
   void _updateIntenseMode() {
      bool intense = false;
@@ -714,6 +717,7 @@ bool _validateLocalMove(CardModel card) {
 
     // Achievement: Bomb Squad
     if (['2','3','joker'].contains(card.rank) && _currentBombStack > 0) {
+       ProgressionService().updateChallengeProgress(ChallengeType.bombStack, 1);
        AchievementService().unlock('bomb_squad').then((unlocked) {
           if (unlocked) _showAchievementSnackbar("Bomb Squad Unlocked! 💣");
        });
@@ -800,6 +804,7 @@ bool _validateLocalMove(CardModel card) {
         VPSGameService().sendAction("PICK_CARD", {});
     } else if (_isOffline) {_localEngine!.pickCard();}
     else {_channel?.sink.add(jsonEncode({"type": "PICK_CARD"}));}
+    ProgressionService().updateChallengeProgress(ChallengeType.drawCards, 1);
   }
 
   Future<void> _payEntryFee() async {
@@ -823,6 +828,7 @@ bool _validateLocalMove(CardModel card) {
     }
 
     if (_isOffline) {
+      _gameStartTime = DateTime.now();
       // ✅ SAFETY CHECK: Prevent crash if engine isn't ready
       if (_localEngine != null) {
          _localEngine.start(widget.aiCount, widget.difficulty, decks: decks); 
@@ -993,63 +999,46 @@ bool _validateLocalMove(CardModel card) {
                          if (_isOnline && widget.onlineGameCode != null)
                             Text("ROOM: ${widget.onlineGameCode}", style: TextStyle(color: theme.accentColor, fontWeight: FontWeight.bold, fontSize: 10)),
                           Expanded(
-                            child: ListView.builder(
-                              scrollDirection: Axis.horizontal,
-                              itemCount: opponents.length,
-                              itemBuilder: (context, index) {
-                                final player = opponents[index];
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                              children: opponents.map((player) {
                                 final pIndex = player.index;
-                                
                                 bool isTurn = pIndex == _activePlayerIndex;
                                 bool isSelected = _isGoFish && _selectedOpponentIndex == pIndex;
                                 int bookCount = (_isGoFish && _playerBooks.length > pIndex) ? _playerBooks[pIndex] : 0;
                                 
                                 return GestureDetector(
                                   onTap: () => setState(() => _selectedOpponentIndex = pIndex),
-                                  child: Container(
-                                    margin: EdgeInsets.only(left: 12),
-                                    child: Stack(
-                                      clipBehavior: Clip.none,
-                                      alignment: Alignment.center,
-                                      children: [
-                                        Column(
-                                          mainAxisAlignment: MainAxisAlignment.center,
-                                          children: [
-                                            Container(
-                                              padding: EdgeInsets.all(2),
-                                              decoration: BoxDecoration(
-                                                 shape: BoxShape.circle, 
-                                                 border: Border.all(
-                                                   color: isSelected ? theme.accentColor : (isTurn ? Colors.green : Colors.white24), 
-                                                   width: 2
-                                                 )
-                                              ),
-                                              child: CircleAvatar(
-                                                radius: 14, 
-                                                backgroundColor: Colors.black38,
-                                                child: Icon(Icons.person, size: 16, color: Colors.white70),
-                                              ),
-                                            ),
-                                            Row(
-                                               children: [
-                                                 Text(player.name, style: TextStyle(color: Colors.white54, fontSize: 10)),
-                                                 if(_isGoFish)
-                                                    Text(" ($bookCount)", style: TextStyle(color: theme.accentColor, fontSize: 10, fontWeight: FontWeight.bold)),
-                                               ],
-                                            )
-                                          ],
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.all(2),
+                                        decoration: BoxDecoration(
+                                           shape: BoxShape.circle, 
+                                           border: Border.all(
+                                             color: isSelected ? theme.accentColor : (isTurn ? Colors.green : Colors.white24), 
+                                             width: 2
+                                           )
                                         ),
-                                        // CHAT BUBBLE
-                                        if (_activeChatBubbles.containsKey(pIndex))
-                                           Positioned(
-                                             bottom: -30,
-                                             child: ChatBubble(message: _activeChatBubbles[pIndex]!, isMe: false),
-                                           ),
-                                      ],
-                                    ),
+                                        child: const CircleAvatar(
+                                          radius: 14, 
+                                          backgroundColor: Colors.black38,
+                                          child: Icon(Icons.person, size: 16, color: Colors.white70),
+                                        ),
+                                      ),
+                                      Row(
+                                         mainAxisSize: MainAxisSize.min,
+                                         children: [
+                                           Text(player.name, style: const TextStyle(color: Colors.white54, fontSize: 10)),
+                                           if(_isGoFish)
+                                              Text(" ($bookCount)", style: TextStyle(color: theme.accentColor, fontSize: 10, fontWeight: FontWeight.bold)),
+                                         ],
+                                      )
+                                    ],
                                   ),
                                 );
-                              },
+                              }).toList(),
                             ),
                           ),
                       ],
@@ -1075,36 +1064,67 @@ bool _validateLocalMove(CardModel card) {
           BoxShadow(color: Colors.black45, blurRadius: 20, spreadRadius: -5)
         ]
       ),
-      child: Center(
-        child: _isGoFish 
-          ? _buildGoFishTable() 
-          : Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                _buildCardSlot("DECK", null, isDeck: true),
-                SizedBox(width: 40),
-                Stack(
-                  alignment: Alignment.center,
+      child: Stack(
+        children: [
+          Center(
+            child: _isGoFish 
+              ? _buildGoFishTable() 
+              : Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    _buildCardSlot("PILE", _topDiscardCard),
-                    if (_currentBombStack > 0)
-                      Positioned(
-                        top: -10,
-                        right: -10,
-                        child: Container(
-                          padding: EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: Colors.redAccent,
-                            shape: BoxShape.circle,
-                            boxShadow: [BoxShadow(color: Colors.redAccent.withOpacity(0.6), blurRadius: 10)],
+                    _buildCardSlot("DECK", null, isDeck: true),
+                    SizedBox(width: 40),
+                    Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        _buildCardSlot("PILE", _topDiscardCard),
+                        if (_currentBombStack > 0)
+                          Positioned(
+                            top: -10,
+                            right: -10,
+                            child: Container(
+                              padding: EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: Colors.redAccent,
+                                shape: BoxShape.circle,
+                                boxShadow: [BoxShadow(color: Colors.redAccent.withOpacity(0.6), blurRadius: 10)],
+                              ),
+                              child: Text("+${_currentBombStack}", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                            ),
                           ),
-                          child: Text("+${_currentBombStack}", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                        ),
-                      ),
+                      ],
+                    ),
                   ],
                 ),
-              ],
+          ),
+          
+          // System Announcement Overlay
+          if (_lastSystemMessage != null)
+            Positioned(
+              top: 20,
+              left: 20,
+              right: 20,
+              child: IgnorePointer(
+                child: AnimatedOpacity(
+                  duration: Duration(milliseconds: 300),
+                  opacity: _lastSystemMessage != null ? 1.0 : 0.0,
+                  child: Container(
+                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.6),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: Colors.white12),
+                    ),
+                    child: Text(
+                      _lastSystemMessage!,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white70, fontSize: 13, fontStyle: FontStyle.italic, fontWeight: FontWeight.w500),
+                    ),
+                  ),
+                ),
+              ),
             ),
+        ],
       ),
     );
   }
@@ -1193,7 +1213,12 @@ bool _validateLocalMove(CardModel card) {
                           ),
                         SizedBox(width: 16),
                         GestureDetector(
-                          onTap: () => setState(() => _declaredNikoKadi = !_declaredNikoKadi),
+                          onTap: () {
+                             setState(() => _declaredNikoKadi = !_declaredNikoKadi);
+                             if (_declaredNikoKadi) {
+                               ProgressionService().updateChallengeProgress(ChallengeType.sayNikoKadi, 1);
+                             }
+                          },
                           child: AnimatedContainer(
                             duration: Duration(milliseconds: 200),
                             padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
@@ -1393,6 +1418,14 @@ Future<void> _handleGameOver(dynamic data) async {
     await ProgressionService().updateChallengeProgress(ChallengeType.playGames, 1);
     
     if (didIWin) {
+      await ProgressionService().updateChallengeProgress(ChallengeType.winGames, 1);
+      if (_gameStartTime != null) {
+        final duration = DateTime.now().difference(_gameStartTime!);
+        if (duration.inMinutes < 2) {
+          await ProgressionService().updateChallengeProgress(ChallengeType.fastWin, 1);
+        }
+      }
+      
       await NotificationService().showGameVictoryNotification(coinsEarned);
       _confettiController.play();
       SoundService.play('win');
@@ -1706,7 +1739,9 @@ Future<void> _handleGameOver(dynamic data) async {
     } else if (_isOffline) {
        // Local play: just add to list, bots don't chat back usually in this setup yet
        setState(() {
-         _chatMessages.add({"sender": _myName, "message": text});
+         final msg = {"sender": _myName, "message": text};
+         _chatMessages.add(msg);
+         _showChatSnackbar(msg);
        });
     } else {
       // LAN
@@ -1737,80 +1772,95 @@ Future<void> _handleGameOver(dynamic data) async {
   }
 
   Widget _buildEmoteLayer() {
-     // Overlay that maps players to positions
-     List<Widget> emojis = [];
-
-     _activeEmotes.forEach((pIndex, emoteList) {
-        // Determine position
-        bool isMe = pIndex == _myPlayerId;
-        // Simple mapping: Me = Bottom Center. Others = Top Center (for now)
-        // Ideally we map to the exact avatar position, but simpler is fine.
-        double top = isMe ? MediaQuery.of(context).size.height - 200 : 100;
-        double left = MediaQuery.of(context).size.width / 2;
-
-        if (!isMe && opponents.isNotEmpty) {
-           // Try to find specific opponent index visual
-           int screenIdx = opponents.indexWhere((p) => p.index == pIndex);
-           if (screenIdx != -1) {
-              // Distribute along top based on list index
-              double step = MediaQuery.of(context).size.width / (opponents.length + 1);
-              left = step * (screenIdx + 1);
-              top = 80; // Near top bar
-           }
-        }
-
-        for (var emote in emoteList) {
-           emojis.add(
-             Positioned(
-               top: top, left: left - 20, // Center it
-               child: FlyingEmoji(
-                 emoji: emote,
-                 onComplete: () {
-                    if (mounted) {
-                      setState(() {
-                         _activeEmotes[pIndex]?.remove(emote);
-                      });
+     return IgnorePointer(
+       child: Stack(
+         children: [
+            // Opponents Emotes
+            Positioned(
+              top: 80,
+              left: 112, 
+              right: 16,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: opponents.map((player) {
+                   final emoteList = _activeEmotes[player.index] ?? [];
+                   return SizedBox(
+                     width: 80,
+                     child: Stack(
+                       alignment: Alignment.center,
+                       children: emoteList.map((e) => FlyingEmoji(
+                          emoji: e,
+                          onComplete: () {
+                             if (mounted) setState(() => _activeEmotes[player.index]?.remove(e));
+                          }
+                       )).toList(),
+                     ),
+                   );
+                }).toList(),
+              ),
+            ),
+            // My Emotes
+            Positioned(
+              bottom: 200,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: (_activeEmotes[_myPlayerId] ?? []).map((e) => FlyingEmoji(
+                    emoji: e,
+                    onComplete: () {
+                       if (mounted) setState(() => _activeEmotes[_myPlayerId]?.remove(e));
                     }
-                 }
-               )
-             )
-           );
-        }
-     });
-
-     return IgnorePointer(child: Stack(children: emojis));
+                  )).toList(),
+                ),
+              ),
+            ),
+         ],
+       )
+     );
   }
 
   Widget _buildChatBubblesLayer() {
-     List<Widget> bubbles = [];
-     _activeChatBubbles.forEach((pIndex, message) {
-        bool isMe = pIndex == _myPlayerId;
-        // Position bubbles higher than emotes
-        double top = isMe ? MediaQuery.of(context).size.height - 280 : 140; 
-        double left = MediaQuery.of(context).size.width / 2;
-
-        if (!isMe && opponents.isNotEmpty) {
-           int screenIdx = opponents.indexWhere((p) => p.index == pIndex);
-           if (screenIdx != -1) {
-              double step = MediaQuery.of(context).size.width / (opponents.length + 1);
-              left = step * (screenIdx + 1);
-              top = 120; 
-           }
-        }
-
-        bubbles.add(
-           Positioned(
-             top: top, 
-             left: left - 70, // Center 140 width bubble
-             child: ChatBubble(
-               message: message,
-               isMe: isMe,
-             )
-           )
-        );
-     });
-
-     return IgnorePointer(child: Stack(children: bubbles));
+    return IgnorePointer(
+      child: Stack(
+        children: [
+          // Opponents Bubbles (Top Row)
+          Positioned(
+            top: 100,
+            left: 112, // Precisely matching the TopBar Expanded offset
+            right: 20,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: opponents.map((player) {
+                final message = _activeChatBubbles[player.index];
+                return SizedBox(
+                  width: 80, // Approximate width of avatar area
+                  child: message != null 
+                    ? ChatBubble(message: message, isMe: false, pointsUp: true)
+                    : const SizedBox(),
+                );
+              }).toList(),
+            ),
+          ),
+          
+          // My Bubble (Bottom)
+          if (_activeChatBubbles.containsKey(_myPlayerId))
+            Positioned(
+              bottom: 220,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: ChatBubble(
+                  message: _activeChatBubbles[_myPlayerId]!,
+                  isMe: true,
+                  pointsUp: false,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 
   void _showEmoteMenu() {
@@ -1873,24 +1923,38 @@ Future<void> _handleGameOver(dynamic data) async {
      } else if (_isOnline) {
         VPSGameService().sendAction("EMOTE", {"emote": emote});
      }
+     ProgressionService().updateChallengeProgress(ChallengeType.useEmote, 1);
      AchievementService().unlock('social_butterfly').then((u) { if(u) _showAchievementSnackbar("Social Butterfly 🦋"); });
   }
 
   void _showChatSnackbar(dynamic data) {
+    String senderName = data['sender'] ?? data['senderName'] ?? "Unknown";
+    String message = data['message'] ?? "";
+    
+    // 1. Handle System Messages (Reduce Snackbar Overload)
+    if (senderName.toLowerCase() == "system") {
+       setState(() {
+          _lastSystemMessage = message;
+       });
+       _systemMessageTimer?.cancel();
+       _systemMessageTimer = Timer(Duration(seconds: 4), () {
+          if (mounted) setState(() => _lastSystemMessage = null);
+       });
+       return;
+    }
+
     if (_chatDialogOpen) return;
     
-    String senderName = data['sender'];
-    String message = data['message'];
-    
-    // Find player index
+    // 2. Find player index (Improved for Offline/LAN)
     int pIndex = -1;
     String searchName = senderName.trim().toLowerCase();
     
     if (searchName == _myName.trim().toLowerCase()) {
        pIndex = _myPlayerId;
     } else {
-       // Search in all players list
-       var p = _players.firstWhere(
+       // Search in all players list OR opponents (for offline)
+       List<PlayerInfo> allPossible = _players.isNotEmpty ? _players : opponents;
+       var p = allPossible.firstWhere(
          (pl) => pl.name.trim().toLowerCase() == searchName, 
          orElse: () => PlayerInfo(id: '', name: '', index: -1)
        );
@@ -1911,7 +1975,7 @@ Future<void> _handleGameOver(dynamic data) async {
           }
        });
     } else {
-       // Fallback for system messages or unidentified players
+       // Only show snackbar for real unknown players, not System
        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text("$senderName: $message", style: TextStyle(color: Colors.white)), 
           duration: Duration(seconds: 2),
@@ -2090,29 +2154,80 @@ Future<void> _handleGameOver(dynamic data) async {
 class ChatBubble extends StatelessWidget {
   final String message;
   final bool isMe;
+  final bool pointsUp;
 
-  const ChatBubble({Key? key, required this.message, required this.isMe}) : super(key: key);
+  const ChatBubble({
+    Key? key, 
+    required this.message, 
+    required this.isMe,
+    this.pointsUp = true,
+  }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 140,
-      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: isMe ? Colors.blueAccent.withOpacity(0.9) : Colors.black87,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white24),
-        boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 10, offset: Offset(0, 5))],
+    final Color bubbleColor = isMe ? Colors.teal.shade700 : Colors.grey.shade800;
+    
+    final List<Widget> children = [
+      // The Triangle Tail
+      CustomPaint(
+        size: const Size(12, 10),
+        painter: TrianglePainter(
+          color: bubbleColor,
+          isUp: pointsUp,
+        ),
       ),
-      child: Text(
-        message,
-        style: TextStyle(color: Colors.white, fontSize: 12),
-        textAlign: TextAlign.center,
-        maxLines: 3,
-        overflow: TextOverflow.ellipsis,
+      // The Bubble Body
+      Container(
+        constraints: const BoxConstraints(maxWidth: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          color: bubbleColor,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: const [
+            BoxShadow(color: Colors.black45, blurRadius: 10, offset: Offset(0, 4))
+          ],
+        ),
+        child: Text(
+          message,
+          style: const TextStyle(color: Colors.white, fontSize: 13, height: 1.3),
+          textAlign: TextAlign.center,
+        ),
       ),
+    ];
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: pointsUp ? children : children.reversed.toList(),
     );
   }
+}
+
+class TrianglePainter extends CustomPainter {
+  final Color color;
+  final bool isUp;
+
+  TrianglePainter({required this.color, required this.isUp});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    var paint = Paint()..color = color;
+    var path = Path();
+    if (isUp) {
+      path.moveTo(size.width / 2, 0);
+      path.lineTo(0, size.height);
+      path.lineTo(size.width, size.height);
+    } else {
+      path.moveTo(0, 0);
+      path.lineTo(size.width, 0);
+      path.lineTo(size.width / 2, size.height);
+    }
+    path.close();
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(CustomPainter oldDelegate) => false;
 }
 
 class FlyingEmoji extends StatefulWidget {

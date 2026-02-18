@@ -258,7 +258,11 @@ class MultiGameServer {
            'created_at': DateTime.now().toIso8601String()
         });
         
-        return Response.ok(jsonEncode({'status': 'success', 'userId': id}), headers: _corsHeaders);
+        return Response.ok(jsonEncode({
+           'status': 'success', 
+           'userId': id,
+           'token': _generateJwt(id, username)
+        }), headers: _corsHeaders);
       } 
       
       else if (path == 'login') {
@@ -1333,57 +1337,58 @@ class MultiGameServer {
      else if (card.rank == '3') room.bombStack += 3;
      else if (card.rank == 'joker') room.bombStack += (room.rules['jokerPenalty'] as int); // Rule Applied
 
-     // Ace Logic
-     if (card.rank == 'ace') {
-        if (room.bombStack > 0 && !isBomb) {
-           room.bombStack = 0; room.forcedSuit = null; room.forcedRank = null;
-           room.broadcast("CHAT", {"sender": "System", "message": "Bomb Blocked!"});
-        } else {
-           room.bombStack = 0;
-           
-           // LOKI/LOCK Blocking Logic (New)
-           if (room.forcedSuit != null && room.forcedRank != null) {
-              if (player.cardsPlayedThisTurn == 1) {
-                 // One-Ace Block: Keep what the player requested (Suit OR Rank)
-                 String? reqSuit = data['requestedSuit'];
-                 String? reqRank = data['requestedRank'];
-                 
-                 // If both are provided, we assume they kept both? 
-                 // But usually "choose one to continue with" means one becomes null.
-                 // We'll trust the client payload for now.
-                 room.forcedSuit = reqSuit;
-                 room.forcedRank = reqRank;
-                 
-                 String msg = "Partial Block!";
-                 if (reqSuit != null && reqRank == null) msg = "Blocking Rank! Suit ${reqSuit.toUpperCase()} continues.";
-                 if (reqRank != null && reqSuit == null) msg = "Blocking Suit! Rank ${reqRank} continues.";
-                 room.broadcast("CHAT", {"sender": "System", "message": msg});
-              } else {
-                 // Two-Ace Block: Clear everything
-                 room.forcedSuit = null;
-                 room.forcedRank = null;
-                 room.broadcast("CHAT", {"sender": "System", "message": "FULL BLOCK!"});
-              }
-           } else {
-              // Standard Ace Logic / Spades Lock
-              if (card.suit == 'spades' && player.hand.length == 1) {
-                 CardModel last = player.hand[0];
-                 room.forcedSuit = last.suit; room.forcedRank = last.rank;
-                 room.broadcast("CHAT", {"sender": "System", "message": "LOCKED: ${last.rank} of ${last.suit}"});
-              } else {
-                 room.forcedSuit = data['requestedSuit'];
-                 room.forcedRank = data['requestedRank'];
-                 room.broadcast("CHAT", {"sender": "System", "message": "Request: ${room.forcedSuit ?? room.forcedRank}"});
-              }
-           }
-        }
-     } else {
-        // If it's not an Ace, but we are playing INTO a Lock, clearing it happens if valid.
-        if (room.forcedSuit != null || room.forcedRank != null) {
-           // If we play into a Lock, we effectively satisfied it.
-           room.forcedSuit = null; room.forcedRank = null;
-        }
-     }
+      // Ace Logic
+      if (card.rank == 'ace') {
+         // Ace blocks Bomb
+         if (room.bombStack > 0 && !isBomb) {
+            room.bombStack = 0; room.forcedSuit = null; room.forcedRank = null;
+            room.broadcast("CHAT", {"sender": "System", "message": "Bomb Blocked!"});
+         } else {
+            room.bombStack = 0;
+            
+            // LOKI/LOCK Blocking Logic (Sync with local engine)
+            if (room.forcedSuit != null && room.forcedRank != null) {
+               if (player.cardsPlayedThisTurn == 1) {
+                  // One-Ace Block: Keep what the current player requested
+                  room.forcedSuit = data['requestedSuit'];
+                  room.forcedRank = data['requestedRank'];
+                  
+                  String msg = "Partial Block!";
+                  if (room.forcedSuit != null && room.forcedRank == null) msg = "Blocking Rank! Suit ${room.forcedSuit!.toUpperCase()} continues.";
+                  if (room.forcedRank != null && room.forcedSuit == null) msg = "Blocking Suit! Rank ${room.forcedRank} continues.";
+                  room.broadcast("CHAT", {"sender": "System", "message": msg});
+               } else {
+                  // Two-Ace Block: Clear everything
+                  room.forcedSuit = null;
+                  room.forcedRank = null;
+                  room.broadcast("CHAT", {"sender": "System", "message": "FULL BLOCK!"});
+               }
+            } else {
+               // Standard Ace Logic / Spades Lock
+               if (card.suit == 'spades' && player.hand.length == 1) {
+                   CardModel last = player.hand[0];
+                   room.forcedSuit = last.suit; 
+                   room.forcedRank = last.rank;
+                   room.broadcast("CHAT", {"sender": "System", "message": "🔒 LOCKED: ${last.rank} of ${last.suit}"});
+               } else {
+                   // Standard Request (Suit/Rank)
+                   room.forcedSuit = data['requestedSuit'] ?? card.suit;
+                   room.forcedRank = data['requestedRank'];
+                   room.broadcast("CHAT", {"sender": "System", "message": "Request: ${room.forcedSuit ?? room.forcedRank}"});
+               }
+            }
+         }
+      } else {
+         // If playing a Bomb, we clear Requests (Override)
+         if (isBomb) {
+             room.forcedSuit = null;
+             room.forcedRank = null;
+         }
+         // If playing a valid card into a Request, clear it
+         else if (room.forcedSuit != null || room.forcedRank != null) {
+            room.forcedSuit = null; room.forcedRank = null;
+         }
+      }
      
      // Turn Flow & Specials
      bool turnEnds = true;
@@ -1401,20 +1406,29 @@ class MultiGameServer {
      else if (card.rank == 'king') room.direction *= -1;
      else if (card.rank == 'jack') skip = (room.bombStack > 0) ? 0 : 1;
 
-     // Multi-drop Check (allow dropping duplicates)
+     // Multi-drop Check (allow dropping duplicates or bombs)
      if (turnEnds && skip == 0 && player.hand.isNotEmpty) {
-        if (player.hand.any((c) => c.rank == card.rank)) turnEnds = false;
+        bool canMultiDrop = player.hand.any((c) => c.rank == card.rank);
+        bool isBombChain = isBomb && player.hand.any((c) => ['2', '3', 'joker'].contains(c.rank));
+        
+        if (canMultiDrop || isBombChain) {
+           turnEnds = false;
+           String msg = canMultiDrop ? "Multi-drop: Play another ${card.rank} or Pick" : "Bomb Chain! Play another Bomb or Pick";
+           room.broadcast("CHAT", {"sender": "System", "message": msg});
+        }
      }
 
      // Win Check
      if (player.hand.isEmpty) {
-        // Power Card restriction
-        if (['2','3','8','jack','queen','king','ace','joker'].contains(card.rank)) {
-           room.broadcast("CHAT", {"sender": "System", "message": "Cannot win with Power Card!"});
-           _sendHand(player); // Re-sync
-           _advanceTurn(room, skip: skip); 
-           return;
-        }
+         // Power Card restriction
+         // Winning Cards: 4, 5, 6, 7, 9, 10
+         // Non-Winning (Power): 2, 3, 8, J, Q, K, A, Joker
+         if (['2','3','8','jack','queen','king','ace','joker'].contains(card.rank)) {
+            room.broadcast("CHAT", {"sender": "System", "message": "Cannot win with Power Card!"});
+            _sendHand(player); // Re-sync
+            _advanceTurn(room, skip: skip); 
+            return;
+         }
         // Niko Kadi Penalty
         if (!player.hasSaidNikoKadi) {
              room.broadcast("CHAT", {"sender": "Referee", "message": "Forgot Niko Kadi! +2 Cards"});
@@ -1437,11 +1451,20 @@ class MultiGameServer {
      Player player = room.players[pIndex];
      int count = penalty ?? (room.bombStack > 0 ? room.bombStack : 1);
      
-     // Joker Constraint Logic
-     if (penalty == null && room.bombStack > 0 && room.topCard?.rank == 'joker') {
-        room.jokerColorConstraint = (room.topCard!.suit == 'red') ? 'red' : 'black';
-        room.broadcast("CHAT", {"sender": "System", "message": "Constraint: ${room.jokerColorConstraint}"});
-     }
+      // Joker Constraint Logic
+      if (penalty == null && room.bombStack > 0 && room.topCard?.rank == 'joker') {
+         room.jokerColorConstraint = (room.topCard!.suit == 'red') ? 'red' : 'black';
+         room.broadcast("CHAT", {"sender": "System", "message": "Constraint: ${room.jokerColorConstraint}"});
+      }
+
+      // Ace Request Persistence: Picking does NOT clear the request unless it's a Bomb clear
+      // If picking due to penalty/bomb, we usually clear.
+      // But if picking because we don't have the suit, the req persists.
+      // So only clear if bombStack > 0 (bomb sequence overrides request)
+      if (room.bombStack > 0) {
+          room.forcedSuit = null; 
+          room.forcedRank = null;
+      }
 
      List<CardModel> drawn = [];
      if (room.deckService.remainingCards >= count) drawn = room.deckService.drawCards(count);
@@ -1454,10 +1477,14 @@ class MultiGameServer {
      }
      player.hand.addAll(drawn);
      
-     if (penalty == null) {
-       room.bombStack = 0;
-       if (room.waitingForAnswer) { room.waitingForAnswer = false; }
-     }
+      if (penalty == null) {
+        room.bombStack = 0;
+        if (room.waitingForAnswer) { room.waitingForAnswer = false; }
+      }
+      
+      // Do NOT clear forcedSuit/forcedRank here unconditionally.
+      // We already handled clearing it above ONLY if bombStack > 0.
+      
      player.hasSaidNikoKadi = false;
      
      _sendHand(player);
@@ -1475,37 +1502,40 @@ class MultiGameServer {
   }
 
   bool _isValidKadiMove(GameRoom room, CardModel card) {
+     // 1. Bomb Override (Bomb can be played on ANY suit/rank/constraint/lock)
+     if (['2','3','joker'].contains(card.rank)) return true;
+
+     // 2. Joker Constraint (Highest Priority if not bomb)
      if (room.jokerColorConstraint != null) {
-        bool isBomb = ['2', '3', 'joker'].contains(card.rank);
-        if (isBomb) return true;
         String color = (['hearts','diamonds','red'].contains(card.suit)) ? 'red' : 'black';
         return color == room.jokerColorConstraint;
      }
+
+     // 3. Bomb Defense
      if (room.bombStack > 0) {
-        if (room.rules['allowBombStacking'] == false) {
-           return false; // MUST PICK if stacking disabled
-           // Wait, usually player picks via PICK_CARD. So if they try to PLAY a card, it must be valid.
-           // If they have a bomb, can they play it? No.
-           // But wait, if stacking is false, then a Bomb is an attack that cannot be countered.
-           // So NO card is valid? Except maybe Ace/King to block/reverse if allowed?
-           // Kadi rules vary. Typically "No Stacking" means you eat the damage.
-           // So if stack > 0, you cannot play 2,3,Joker.
-        }
-        if (['2','3','joker'].contains(card.rank)) return true;
+        // Stack already handled by #1
+        // Defense: Ace, King, Jack are valid
         if (['ace','king','jack'].contains(card.rank)) return true;
         return false;
      }
+
+     // 4. Question Logic
      if (room.waitingForAnswer) {
         if (card.rank == 'queen' || card.rank == '8') return card.suit == room.topCard!.suit || card.rank == room.topCard!.rank;
         if (['4','5','6','7','9','10'].contains(card.rank)) return card.suit == room.topCard!.suit;
         return false;
      }
+
+     // 5. Ace Counter-Play
      if (card.rank == 'ace') return true;
+
+     // 6. Forced Suit/Rank (Lock)
      if (room.forcedRank != null && room.forcedSuit != null) return card.rank == room.forcedRank && card.suit == room.forcedSuit;
      if (room.forcedRank != null) return card.rank == room.forcedRank;
      if (room.forcedSuit != null) return card.suit == room.forcedSuit;
      
-     return card.suit == room.topCard!.suit || card.rank == room.topCard!.rank || ['2','3','joker'].contains(card.rank);
+     // 7. Standard Play
+     return card.suit == room.topCard!.suit || card.rank == room.topCard!.rank;
   }
   
 

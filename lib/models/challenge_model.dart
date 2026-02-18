@@ -3,6 +3,11 @@ enum ChallengeType {
   playGames,
   collectCards, // For Go Fish
   playSpecialCards, // For Kadi (Aces, Jokers, etc)
+  sayNikoKadi,
+  useEmote,
+  drawCards,
+  bombStack,
+  fastWin, // Win in under 2 minutes
 }
 
 class ChallengeModel {

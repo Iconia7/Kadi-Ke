@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../services/custom_auth_service.dart';
 import 'home_screen.dart';
+import '../services/progression_service.dart';
+import '../services/achievement_service.dart';
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
@@ -116,6 +118,12 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
 
       if (!mounted) return;
       if (CustomAuthService().isAuthenticated) {
+        // Initialize progression immediately
+        String uid = CustomAuthService().userId ?? "unknown";
+        await ProgressionService().initialize(userId: uid);
+        await AchievementService().initialize(userId: uid);
+        await ProgressionService().checkAndResetChallenges();
+
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => HomeScreen()),
         );

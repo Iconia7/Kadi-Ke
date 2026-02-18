@@ -18,7 +18,8 @@ import '../services/friend_service.dart';
 
 import '../services/progression_service.dart';
 import '../services/achievement_service.dart';
-import '../services/challenge_service.dart';
+// Removed redundant ChallengeService
+import '../models/challenge_model.dart';
 import '../models/friend_model.dart';
 import '../widgets/daily_reward_dialog.dart';
 import '../widgets/daily_challenge_card.dart';
@@ -65,7 +66,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       String uid = CustomAuthService().userId ?? "offline";
       await ProgressionService().initialize(userId: uid);
       await AchievementService().initialize(userId: uid);
-      await ChallengeService().initialize();
+      await ProgressionService().checkAndResetChallenges(); // Unified
       
          if (mounted) {
             setState(() => _isFirebaseReady = true);
@@ -1480,8 +1481,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildChallengesSection() {
-    final challenges = ChallengeService().getActiveChallenges();
-    final timeUntilRefresh = ChallengeService().getTimeUntilRefresh();
+    final challenges = ProgressionService().getChallenges();
+    final timeUntilRefresh = ProgressionService().getTimeUntilRefresh();
     
     return Container(
       margin: const EdgeInsets.all(16),
@@ -1532,10 +1533,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Future<void> _claimChallengeReward(String challengeId) async {
     try {
-      final rewards = await ChallengeService().claimReward(challengeId);
-      if (rewards != null) {
-        // Add coins and XP
-        ProgressionService().addCoins(rewards['coins']!);
+      final success = await ProgressionService().claimChallengeReward(challengeId);
+      if (success) {
+        // Find challenge for reward amount (or pass it in)
+        final challenge = ProgressionService().getChallenges().firstWhere((c) => c.id == challengeId);
         // TODO: Add XP system (future enhancement)
         
         setState(() {}); // Refresh UI

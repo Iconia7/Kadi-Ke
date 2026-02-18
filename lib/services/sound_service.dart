@@ -19,8 +19,14 @@ class SoundService {
 
     try {
       await _player.stop(); // Stop previous for snappy feel
-      // Make sure your assets path is correct (usually 'sounds/' or just name if defined in pubspec)
-      await _player.play(AssetSource('audio/$soundName.mp3'));
+      
+      // Remap missing sounds to existing ones
+      String actualFile = soundName;
+      if (soundName == 'throw') actualFile = 'place';
+      if (soundName == 'error') actualFile = 'deal';
+      if (soundName == 'pop') actualFile = 'deal';
+
+      await _player.play(AssetSource('audio/$actualFile.mp3'));
     } catch (e) {
       print("Audio Error: $e");
     }

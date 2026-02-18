@@ -184,32 +184,88 @@ class ProgressionService {
 
   Future<void> _generateNewChallenges() async {
     final random = Random();
-    final List<ChallengeModel> newChallenges = [
-      ChallengeModel(
-        id: 'win_${random.nextInt(1000)}',
-        title: 'Victor',
-        description: 'Win 3 Games',
-        type: ChallengeType.winGames,
-        goal: 3,
-        reward: 150,
-      ),
-      ChallengeModel(
-        id: 'play_${random.nextInt(1000)}',
-        title: 'Competitor',
-        description: 'Play 5 Games',
-        type: ChallengeType.playGames,
-        goal: 5,
-        reward: 100,
-      ),
-      ChallengeModel(
-        id: 'special_${random.nextInt(1000)}',
-        title: 'Expert',
-        description: 'Play 10 Special Cards',
-        type: ChallengeType.playSpecialCards,
-        goal: 10,
-        reward: 200,
-      ),
+    
+    final List<Map<String, dynamic>> templatePool = [
+      {
+        'title': 'Victor',
+        'description': (int goal) => 'Win $goal Games',
+        'type': ChallengeType.winGames,
+        'goalRange': [2, 5],
+        'baseReward': 100,
+      },
+      {
+        'title': 'Competitor',
+        'description': (int goal) => 'Play $goal Games',
+        'type': ChallengeType.playGames,
+        'goalRange': [5, 10],
+        'baseReward': 80,
+      },
+      {
+        'title': 'Strategist',
+        'description': (int goal) => 'Play $goal Special Cards',
+        'type': ChallengeType.playSpecialCards,
+        'goalRange': [5, 15],
+        'baseReward': 120,
+      },
+      {
+        'title': 'Flashy',
+        'description': (int goal) => 'Use emotes $goal times',
+        'type': ChallengeType.useEmote,
+        'goalRange': [5, 12],
+        'baseReward': 60,
+      },
+      {
+        'title': 'The Professional',
+        'description': (int goal) => 'Say "Niko Kadi" $goal times',
+        'type': ChallengeType.sayNikoKadi,
+        'goalRange': [3, 6],
+        'baseReward': 150,
+      },
+      {
+        'title': 'Survivor',
+        'description': (int goal) => 'Draw $goal cards in total',
+        'type': ChallengeType.drawCards,
+        'goalRange': [10, 25],
+        'baseReward': 90,
+      },
+      {
+        'title': 'Pyrotechnic',
+        'description': (int goal) => 'Stack bombs $goal times',
+        'type': ChallengeType.bombStack,
+        'goalRange': [2, 4],
+        'baseReward': 200,
+      },
+      {
+        'title': 'Blitz',
+        'description': (int goal) => 'Win a game in under 2 mins',
+        'type': ChallengeType.fastWin,
+        'goalRange': [1, 1],
+        'baseReward': 250,
+      },
     ];
+
+    // Shuffle and pick 3 unique random challenges
+    templatePool.shuffle(random);
+    final List<ChallengeModel> newChallenges = [];
+    
+    for (int i = 0; i < 3; i++) {
+      final template = templatePool[i];
+      final List<int> range = template['goalRange'];
+      final int goal = range[0] + random.nextInt(range[1] - range[0] + 1);
+      final int reward = (template['baseReward'] as int) + (goal * 5); // Scaling reward
+
+      newChallenges.add(
+        ChallengeModel(
+          id: '${template['title'].toString().toLowerCase()}_${DateTime.now().millisecondsSinceEpoch}_$i',
+          title: template['title'],
+          description: (template['description'] as Function)(goal),
+          type: template['type'],
+          goal: goal,
+          reward: reward,
+        ),
+      );
+    }
+
     await saveChallenges(newChallenges);
   }
 
@@ -261,6 +317,18 @@ class ProgressionService {
   Future<void> markDailyChallengesAsViewed() async {
     final now = DateTime.now();
     await _prefs.setString(_getKey(_challengesViewedDateKey), now.toIso8601String());
+  }
+
+  Duration getTimeUntilRefresh() {
+    final lastResetStr = _prefs.getString(_getKey(_lastChallengeResetKey));
+    if (lastResetStr == null) return Duration.zero;
+    
+    final lastReset = DateTime.parse(lastResetStr);
+    final nextReset = DateTime(lastReset.year, lastReset.month, lastReset.day + 1);
+    final now = DateTime.now();
+    
+    if (now.isAfter(nextReset)) return Duration.zero;
+    return nextReset.difference(now);
   }
 
   bool _isSameDay(DateTime a, DateTime b) {
