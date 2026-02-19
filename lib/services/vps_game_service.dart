@@ -285,6 +285,32 @@ class VPSGameService {
     }
   }
 
+  /// Submit feedback/report to VPS
+  Future<bool> submitFeedback(Map<String, dynamic> reportData) async {
+    try {
+      final token = CustomAuthService().token;
+      final username = CustomAuthService().username;
+      
+      final response = await http.post(
+        Uri.parse('$httpUrl/submit_feedback'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({
+          'username': username ?? 'anonymous',
+          'userId': CustomAuthService().userId ?? 'unknown',
+          ...reportData,
+        }),
+      );
+
+      return response.statusCode == 200;
+    } catch (e) {
+      print('Error submitting feedback: $e');
+      return false;
+    }
+  }
+
   void dispose() {
     leaveGame();
     _gameStreamController.close();

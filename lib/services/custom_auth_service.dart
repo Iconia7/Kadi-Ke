@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'dart:io';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'app_config.dart';
@@ -14,6 +15,7 @@ class CustomAuthService {
   String? _token;
   String? _userId;
   String? _username;
+  String? _avatar;
 
   final GoogleSignIn _googleSignIn = GoogleSignIn(
     scopes: ['email', 'profile'],
@@ -22,6 +24,7 @@ class CustomAuthService {
   String? get token => _token;
   String? get userId => _userId;
   String? get username => _username;
+  String? get avatar => _avatar;
 
   bool get isAuthenticated => _token != null && _token!.isNotEmpty;
 
@@ -30,6 +33,7 @@ class CustomAuthService {
     _token = prefs.getString('auth_token');
     _userId = prefs.getString('user_id');
     _username = prefs.getString('username');
+    _avatar = prefs.getString('avatar');
   }
 
   Future<void> register(String username, String password, {String? email}) async {
@@ -54,6 +58,7 @@ class CustomAuthService {
         _userId = data['userId'];
         _username = username;
         _token = data['token']; 
+        _avatar = data['avatar'];
 
         await _saveCredentials();
       } else {
@@ -85,6 +90,7 @@ class CustomAuthService {
         _userId = data['userId'];
         _token = data['token'];
         _username = username;
+        _avatar = data['avatar'];
         
         await _saveCredentials();
       } else {
@@ -186,6 +192,35 @@ class CustomAuthService {
     await prefs.remove('username');
   }
 
+  Future<String> uploadProfilePicture(File image) async {
+    if (_token == null) throw Exception('Not logged in');
+
+    try {
+      var uri = Uri.parse('$baseUrl/upload_avatar');
+      var request = http.MultipartRequest('POST', uri);
+      request.headers['Authorization'] = 'Bearer $_token';
+      
+      request.files.add(await http.MultipartFile.fromPath(
+        'avatar',
+        image.path,
+      ));
+
+      var streamedResponse = await request.send();
+      var response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode == 200) {
+        var data = jsonDecode(response.body);
+        _avatar = data['url'];
+        await _saveCredentials();
+        return _avatar!;
+      } else {
+        throw Exception('Upload failed: ${response.statusCode}');
+      }
+    } catch (e) {
+      throw Exception('Upload error: $e');
+    }
+  }
+
   Future<void> updateProfile(String newUsername) async {
     if (_username == null) throw Exception('Not logged in');
     
@@ -223,5 +258,6 @@ class CustomAuthService {
     if (_token != null) await prefs.setString('auth_token', _token!);
     if (_userId != null) await prefs.setString('user_id', _userId!);
     if (_username != null) await prefs.setString('username', _username!);
+    if (_avatar != null) await prefs.setString('avatar', _avatar!);
   }
 }

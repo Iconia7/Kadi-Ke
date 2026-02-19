@@ -4,7 +4,9 @@ import 'dart:math';
 import 'dart:io'; // For Platform info if needed
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
-import 'package:shelf_web_socket/shelf_web_socket.dart';
+import 'package:shelf_static/shelf_static.dart';
+import 'package:shelf_multipart/shelf_multipart.dart';
+import 'package:mime/mime.dart'; // Ensure mime type check if possible, or just trust extension
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:crypto/crypto.dart';
 import 'package:mailer/mailer.dart';
@@ -75,6 +77,7 @@ class DeckService {
 class Player {
   final String id;
   final String name;
+  final String? avatar;
   final WebSocketChannel socket;
   List<CardModel> hand = [];
   
@@ -83,7 +86,7 @@ class Player {
   int cardsPlayedThisTurn = 0; // Kadi Multi-drop
   int books = 0; // Go Fish
   
-  Player(this.id, this.name, this.socket);
+  Player(this.id, this.name, this.avatar, this.socket);
 }
 
 class GameRoom {
@@ -812,6 +815,27 @@ class MultiGameServer {
     }
   }
 
+  Future<Response> _handleFeedback(Request request) async {
+    try {
+      final payload = await request.readAsString();
+      final data = jsonDecode(payload);
+
+      // Log to DB
+      _dbService.saveFeedback(data);
+
+      // Log to file for easy dev access
+      final logFile = File('feedback.log');
+      final logEntry = "[${DateTime.now().toIso8601String()}] User: ${data['username']} (${data['userId']}) | Type: ${data['type']} | Message: ${data['message']}\n";
+      await logFile.writeAsString(logEntry, mode: FileMode.append);
+
+      _log("Feedback received from ${data['username']}: ${data['message']}");
+      return Response.ok(jsonEncode({'status': 'success'}), headers: _corsHeaders);
+    } catch (e) {
+      _log("Feedback Error: $e", level: 'ERROR');
+      return Response.internalServerError(body: jsonEncode({'error': 'Server error'}), headers: _corsHeaders);
+    }
+  }
+
   Future<Response> _handleFriendsList(Request request) async {
     try {
       final authHeader = request.headers['authorization'];
@@ -880,6 +904,7 @@ class MultiGameServer {
             'userId': userData['id'],
             'username': key,
             'wins': userData['wins'] ?? 0,
+            'avatar': userData['avatar'],
           });
         }
       });
@@ -961,7 +986,11 @@ class MultiGameServer {
                String finalPlayerId = playerId ?? DateTime.now().millisecondsSinceEpoch.toString();
                String playerName = _onlineUsers[finalPlayerId] ?? data['playerName'] ?? "Host"; 
                
-               Player newPlayer = Player(finalPlayerId, playerName, socket);
+               // Fetch Avatar
+               var userData = _dbService.getUserById(finalPlayerId);
+               String? avatar = userData?['avatar'];
+
+               Player newPlayer = Player(finalPlayerId, playerName, avatar, socket);
                _rooms[roomCode]!.players.add(newPlayer);
                playerId = finalPlayerId; // Set current context playerId
 
@@ -981,10 +1010,14 @@ class MultiGameServer {
                  String finalPlayerId = playerId ?? DateTime.now().millisecondsSinceEpoch.toString();
                  String finalName = _onlineUsers[finalPlayerId] ?? name;
 
+                 // Fetch Avatar
+                 var userData = _dbService.getUserById(finalPlayerId);
+                 String? avatar = userData?['avatar'];
+
                  // PREVENT DUPLICATE JOIN
                  bool alreadyIn = _rooms[code]!.players.any((p) => p.id == finalPlayerId);
                  if (!alreadyIn) {
-                   Player newPlayer = Player(finalPlayerId, finalName, socket);
+                   Player newPlayer = Player(finalPlayerId, finalName, avatar, socket);
                    _rooms[code]!.players.add(newPlayer);
                    _log("Player $finalName ($finalPlayerId) joined room $code");
                  } else {
@@ -1073,50 +1106,70 @@ class MultiGameServer {
     );
 
     // Main Pipeline with Health & Auth
+    // Static Handler for Uploads
+    var staticHandler = createStaticHandler('bin/uploads', defaultDocument: 'index.html'); 
+
     var handler = Pipeline()
       .addMiddleware(logRequests())
-      .addHandler((Request request) {
-         if (request.url.path == 'health') {
+      .addHandler((Request request) async {
+         if (request.method == 'OPTIONS') {
+           return Response.ok('', headers: _corsHeaders);
+         }
+         
+         final path = request.url.path;
+
+         // Static Files
+         if (path.startsWith('uploads/')) {
+            final p = path.replaceFirst('uploads/', '');
+            return staticHandler(request.change(path: p)); 
+         }
+
+         if (path == 'health') {
             return Response.ok(jsonEncode({
               'status': 'ok',
               'rooms': _rooms.length,
               'online_users': _onlineUsers.length,
               'version': '13.1.0+43',
-              'uptime': DateTime.now().millisecondsSinceEpoch, // Simple uptime proxy
+              'uptime': DateTime.now().millisecondsSinceEpoch,
             }), headers: {'content-type': 'application/json'});
          }
-         if (request.url.path == 'register' || request.url.path == 'login') {
+         
+         if (path == 'register' || path == 'login') {
             return _handleAuth(request);
          }
-         if (request.url.path == 'leaderboard') {
+         if (path == 'leaderboard') {
             return _handleLeaderboard(request);
          }
-          if (request.url.path == 'update_stats') {
-             return _handleUpdateStats(request);
-          }
-          if (request.url.path == 'active_rooms') {
-             return _handleActiveRooms(request);
-          }
-          if (request.url.path == 'update_profile') {
-             return _handleUpdateProfile(request);
-          }
-          if (request.url.path == 'update_profile') {
-             return _handleUpdateProfile(request);
-          }
-          if (request.url.path == 'forgot_password') {
-             return _handleForgotPassword(request);
-          }
-          if (request.url.path == 'reset_password') {
-             return _handleResetPassword(request);
-          }
-          if (request.url.path == 'google_login') {
-             return _handleGoogleAuth(request);
-          }
-          if (request.url.path == 'friends/request') {return _handleFriendRequest(request);}
-          if (request.url.path == 'friends/accept') {return _handleFriendAccept(request);}
-          if (request.url.path == 'friends/remove') {return _handleFriendRemove(request);}
-          if (request.url.path == 'friends/list') {return _handleFriendsList(request);}
-          if (request.url.path == 'friends/search') {return _handleFriendSearch(request);}
+         if (path == 'update_stats') {
+            return _handleUpdateStats(request);
+         }
+         if (path == 'active_rooms') {
+            return _handleActiveRooms(request);
+         }
+         if (path == 'update_profile') {
+            return _handleUpdateProfile(request);
+         }
+         if (path == 'submit_feedback') {
+            return _handleFeedback(request);
+         }
+         if (path == 'forgot_password') {
+            return _handleForgotPassword(request);
+         }
+         if (path == 'reset_password') {
+            return _handleResetPassword(request);
+         }
+         if (path == 'google_login') {
+            return _handleGoogleAuth(request);
+         }
+         if (path == 'friends/request') return _handleFriendRequest(request);
+         if (path == 'friends/accept') return _handleFriendAccept(request);
+         if (path == 'friends/remove') return _handleFriendRemove(request);
+         if (path == 'friends/list') return _handleFriendsList(request);
+         if (path == 'friends/search') return _handleFriendSearch(request);
+         if (path == 'upload_avatar') return _handleUploadAvatar(request);
+         if (path == 'submit_feedback') return _handleSubmitFeedback(request);
+
+
          return wsHandler(request);
       });
 
@@ -1128,6 +1181,30 @@ class MultiGameServer {
     _log('Game Server running on port ${server.port} (JWT Secret: ${_jwtSecret.substring(0, 3)}...)');
   }
 
+  Future<Response> _handleSubmitFeedback(Request request) async {
+    try {
+      final body = jsonDecode(await request.readAsString()) as Map<String, dynamic>;
+      final message = body['message']?.toString().trim() ?? '';
+      final userId  = body['userId']?.toString() ?? 'anonymous';
+
+      if (message.isEmpty) {
+        return Response(400, body: jsonEncode({'error': 'Message is required'}), headers: {'content-type': 'application/json', ..._corsHeaders});
+      }
+
+      final timestamp = DateTime.now().toIso8601String();
+      final logLine = '[$timestamp] [$userId] $message\n';
+
+      // Append to feedback.log next to the database
+      final logFile = File('feedback.log');
+      await logFile.writeAsString(logLine, mode: FileMode.append);
+
+      _log('Feedback received from $userId: ${message.substring(0, message.length.clamp(0, 60))}...');
+      return Response.ok(jsonEncode({'success': true}), headers: {'content-type': 'application/json', ..._corsHeaders});
+    } catch (e) {
+      return Response(500, body: jsonEncode({'error': e.toString()}), headers: {'content-type': 'application/json', ..._corsHeaders});
+    }
+  }
+
   void _handleGameAction(GameRoom room, String pid, String type, dynamic data) {
      try {
        if (type == 'CHAT') {
@@ -1137,6 +1214,20 @@ class MultiGameServer {
        if (type == 'EMOTE') {
           // Broadcast to all, including sender so they see it too (or exclude sender if local handled)
           room.broadcast("EMOTE", {"senderId": pid, "emote": data['emote']});
+          return;
+       }
+       if (type == 'SAY_NIKO_KADI') {
+          int pIndex = room.players.indexWhere((p) => p.id == pid);
+          if (pIndex != -1) {
+            room.players[pIndex].hasSaidNikoKadi = true;
+            room.broadcast("CHAT", {
+              "sender": room.players[pIndex].name, 
+              "message": "Niko Kadi!",
+              "isSystem": false,
+              "isNikoKadi": true,
+              "playerIndex": pIndex
+            });
+          }
           return;
        }
        if (type == 'ADD_TO_QUEUE') {
@@ -1294,8 +1385,11 @@ class MultiGameServer {
         Player winner = room.players.reduce((curr, next) => curr.books > next.books ? curr : next);
         room.broadcast("GAME_OVER", "${winner.name} Wins with ${winner.books} books!");
         _log("Game Over in room ${room.code}. Winner: ${winner.name}");
-     }
-  }
+        
+        // UPDATE STATS
+        _handleWin(room, winner);
+      }
+   }
 
   // ==========================================
   //               KADI LOGIC
@@ -1424,19 +1518,39 @@ class MultiGameServer {
          // Winning Cards: 4, 5, 6, 7, 9, 10
          // Non-Winning (Power): 2, 3, 8, J, Q, K, A, Joker
          if (['2','3','8','jack','queen','king','ace','joker'].contains(card.rank)) {
-            room.broadcast("CHAT", {"sender": "System", "message": "Cannot win with Power Card!"});
-            _sendHand(player); // Re-sync
-            _advanceTurn(room, skip: skip); 
+            room.broadcast("CHAT", {"sender": "System", "message": "Cannot win with Power Card! Pick 1."});
+            _handleKadiPick(room, pIndex, penalty: 1); // Force pick
             return;
          }
+        // --- OPTIONAL CARDLESS BLOCKER RULE ---
+        if (room.rules['cardlessBlocker'] == true) {
+           bool anyoneElseCardless = false;
+           for (int i = 0; i < room.players.length; i++) {
+             if (i != pIndex && room.players[i].hand.isEmpty) {
+               anyoneElseCardless = true;
+               break;
+             }
+           }
+
+           if (anyoneElseCardless) {
+              room.broadcast("CHAT", {"sender": "Referee", "message": "Multiple finishers! Win blocked by House Rule."});
+              _handleKadiPick(room, pIndex, penalty: 1); // Reduced penalty
+              return;
+           }
+        }
+        
         // Niko Kadi Penalty
         if (!player.hasSaidNikoKadi) {
              room.broadcast("CHAT", {"sender": "Referee", "message": "Forgot Niko Kadi! +2 Cards"});
              _handleKadiPick(room, pIndex, penalty: 2);
              return;
         }
+
         room.broadcast("GAME_OVER", "${player.name} Wins!");
         _log("Game Over in room ${room.code}. Winner: ${player.name}");
+        
+        // UPDATE STATS
+        _handleWin(room, player);
         return;
      }
 
@@ -1578,7 +1692,7 @@ class MultiGameServer {
 
   void _broadcastPlayerInfo(GameRoom room) {
      List<Map<String, dynamic>> pList = room.players.asMap().entries.map((e) => 
-        {'id': e.value.id, 'name': e.value.name, 'index': e.key}
+        {'id': e.value.id, 'name': e.value.name, 'avatar': e.value.avatar, 'index': e.key}
      ).toList();
       for (var p in room.players) {
          p.socket.sink.add(jsonEncode({ 
@@ -1631,6 +1745,92 @@ class MultiGameServer {
       _log("Error in _broadcastFriendStatus: $e", level: 'ERROR');
     }
   }
+
+  // ==========================================
+  //            WIN HANDLING
+  // ==========================================
+
+  void _handleWin(GameRoom room, Player winner) {
+     // 1. Update DB
+     _dbService.incrementWins(winner.id);
+     
+     int coins = 100;
+     // Pot Logic
+     if (room.entryFee > 0) {
+        coins = room.entryFee * room.players.length; 
+        // Or specific pot logic
+     }
+     
+     _dbService.incrementCoins(winner.id, coins);
+     
+     // 2. Broadcast Validated Stats Update
+     // The client will receive this and update its local UserProvider
+     winner.socket.sink.add(jsonEncode({
+        "type": "STATS_UPDATE",
+        "data": {
+           "wins": 1, 
+           "coins": coins
+        }
+     }));
+  }
+
+  // ==========================================
+  //            UPLOAD HANDLING
+  // ==========================================
+
+  Future<Response> _handleUploadAvatar(Request request) async {
+     if (!request.isMultipart) {
+        return Response.badRequest(body: 'Not a multipart request');
+     }
+     
+     // Verify Auth (Optional - usually we check token header)
+     final token = request.headers['Authorization']?.replaceAll('Bearer ', '');
+     if (token == null) return Response.forbidden('Missing Token');
+     
+     String? userId;
+     try {
+       final jwt = JWT.verify(token, SecretKey(_jwtSecret));
+       userId = jwt.payload['id'];
+     } catch (e) {
+       return Response.forbidden('Invalid Token');
+     }
+
+     if (userId == null) return Response.forbidden('Invalid User');
+
+     try {
+       await for (final part in request.parts) {
+         if (part.headers['content-disposition']?.contains('filename=') ?? false) {
+            // It's a file
+            final filename = 'avatar_${userId}_${DateTime.now().millisecondsSinceEpoch}.jpg'; // Force jpg or detect?
+            
+            // Ensure directory exists
+            final directory = Directory('bin/uploads/avatars');
+            if (!await directory.exists()) {
+               await directory.create(recursive: true);
+            }
+
+            final file = File('${directory.path}/$filename');
+            final sink = file.openWrite();
+            await part.pipe(sink);
+            await sink.close();
+            
+            // Construct URL - assuming server at same host
+            // Client needs to know host. We return relative path.
+            final url = '/uploads/avatars/$filename';
+            
+            // Update DB
+            _dbService.updateUser(userId, {'avatar': url});
+            
+            return Response.ok(jsonEncode({'url': url, 'message': 'Avatar Uploaded'}), headers: _corsHeaders);
+         }
+       }
+       return Response.badRequest(body: 'No file found');
+     } catch (e) {
+       _log('Upload Error: $e', level: 'ERROR');
+       return Response.internalServerError(body: 'Upload failed');
+     }
+  }
+
 }
 
 void main() {

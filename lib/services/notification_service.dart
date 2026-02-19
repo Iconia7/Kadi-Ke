@@ -322,7 +322,7 @@ class NotificationService {
       ),
     );
 
-    // 2. Expiry Warning at 8:00 PM (Existing Logic)
+    // 2. Expiry Warning at 8:00 PM
     await AwesomeNotifications().createNotification(
       content: NotificationContent(
         id: 15,
@@ -337,6 +337,41 @@ class NotificationService {
         minute: 0,
         second: 0,
         repeats: true,
+        allowWhileIdle: true,
+      ),
+    );
+  }
+
+  /// Schedule Streak Reminder 24 hours after last play
+  Future<void> scheduleStreakReminder(int currentStreak) async {
+    if (!await _isNotificationEnabled('notif_pref_streaks')) return;
+
+    // Schedule for 24 hours from now
+    final now = DateTime.now();
+    final scheduleTime = now.add(const Duration(hours: 24));
+
+    await AwesomeNotifications().createNotification(
+      content: NotificationContent(
+        id: 14,
+        channelKey: 'progress_channel',
+        title: '🔥 Don\'t Break Your Streak!',
+        body: 'You\'re on a $currentStreak-day streak. Your next game is due soon!',
+        notificationLayout: NotificationLayout.Default,
+        category: NotificationCategory.Reminder,
+        payload: {
+          'type': 'streak_reminder',
+          'streak': currentStreak.toString(),
+        },
+      ),
+      schedule: NotificationCalendar(
+        year: scheduleTime.year,
+        month: scheduleTime.month,
+        day: scheduleTime.day,
+        hour: 10, // Remind at 10 AM next day
+        minute: 0,
+        second: 0,
+        repeats: false,
+        allowWhileIdle: true,
       ),
     );
   }

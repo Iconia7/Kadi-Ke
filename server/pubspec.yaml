@@ -15,3 +15,5 @@ dependencies:
   sqlite3: ^2.3.0
   dbcrypt: ^2.0.0
   dart_jsonwebtoken: ^2.4.2
+  shelf_static: ^1.1.2
+  shelf_multipart: ^0.1.0+1

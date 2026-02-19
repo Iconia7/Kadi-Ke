@@ -12,7 +12,6 @@ import 'package:card_game_ke/services/vps_game_service.dart';
 import 'package:card_game_ke/services/theme_service.dart';
 import 'package:card_game_ke/services/progression_service.dart';
 import '../services/achievement_service.dart';
-import '../services/challenge_service.dart';
 import '../services/notification_service.dart';
 import '../models/challenge_model.dart';
 import '../game_server.dart'; 
@@ -32,6 +31,7 @@ class GameScreen extends StatefulWidget {
   final String difficulty; // 'Easy', 'Medium', 'Hard'
   final String? onlineGameCode;
   final String gameType; // 'kadi' or 'gofish'
+  final Map<String, dynamic>? rules;
 
   const GameScreen({super.key, 
     required this.isHost, 
@@ -40,6 +40,7 @@ class GameScreen extends StatefulWidget {
     this.difficulty = 'Medium',
     this.onlineGameCode,
     this.gameType = 'kadi', 
+    this.rules,
   });
 
   @override
@@ -49,9 +50,10 @@ class GameScreen extends StatefulWidget {
 class PlayerInfo {
   final String id;
   final String name;
+  final String? avatar;
   final int index;
 
-  PlayerInfo({required this.id, required this.name, required this.index});
+  PlayerInfo({required this.id, required this.name, this.avatar, required this.index});
 }
 
 class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
@@ -385,15 +387,15 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                         "Be the first to finish your cards. You MUST end on a valid 'Answer' card. You cannot win with a Power Card."),
                       
                       _buildRuleSection("💣 The Bombs", 
-                        "• 2 (+2 Cards)\n"
-                        "• 3 (+3 Cards)\n"
-                        "• Joker (+5 Cards)\n"
-                        "• Bombs can be stacked on each other."),
+                        "• 2 (+2 Cards) | 3 (+3 Cards) | Joker (+5 Cards)\n"
+                        "• Bombs can be stacked to accumulate penalties.\n"
+                        "• Joker Constraint: If a Joker is played, the next player must Pick OR match the Joker's color (Red/Black)."),
 
-                      _buildRuleSection("🛡️ Defense", 
+                      _buildRuleSection("🛡️ Defense & Pass", 
                         "• Ace: Blocks the bomb (Resets to 0).\n"
                         "• King: Reverses bomb to previous player.\n"
-                        "• Jack: Passes bomb to next player (No penalty for you)."),
+                        "• Jack: Passes bomb to next player (Jump over).\n"
+                        "• Loki Block: Playing two ACES in one turn clears all constraints!"),
 
                       _buildRuleSection("❓ Questions (Q & 8)", 
                         "• If you play a Q or 8, YOU keep the turn.\n"
@@ -414,7 +416,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                       _buildRuleSection("🚫 Winning Restrictions", 
                         "• You CANNOT win with: 2, 3, 8, J, Q, K, A, Joker.\n"
                         "• You CAN win with: 4, 5, 6, 7, 9, 10.\n"
-                        "• Combo Win: Q -> 8 -> 5 is a valid win because it ends on a 5."),
+                        "• Combo Win: Q -> 8 -> 5 is a valid win because it ends on a 5.\n"
+                        "• 🛑 Cardless Blocker: You cannot win if another player is already out of cards (e.g. they finished on a power card and are waiting to pick)."),
                     ],
                   ),
                 ),
@@ -494,6 +497,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         parsedPlayers.add(PlayerInfo(
           id: p['id'],
           name: p['name'] ?? 'Player ${i + 1}',
+          avatar: p['avatar'],
           index: i, 
         ));
       }
@@ -577,6 +581,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
          _hasUnreadMessages = true;
        });
        if (data['data']['message'].toString().contains('Win')) SoundService.play('win');
+       if (data['data']['isNikoKadi'] == true) SoundService.play('niko_kadi');
        _showChatSnackbar(data['data']);
     }
     else if (type == 'GAME_OVER') {
@@ -650,7 +655,14 @@ bool _validateLocalMove(CardModel card) {
     // 4. Ace Counter-Play
     if (card.rank == 'ace') return true;
 
-    // 5. Standard Play
+    // 5. Forced Suit/Rank (The Lock)
+    if (_forcedRank != null && _forcedSuit != null) {
+       return card.rank == _forcedRank && card.suit == _forcedSuit;
+    }
+    if (_forcedRank != null) return card.rank == _forcedRank;
+    if (_forcedSuit != null) return card.suit == _forcedSuit;
+
+    // 6. Standard Play
     if (card.suit == _topDiscardCard!.suit) return true;
     if (card.rank == _topDiscardCard!.rank) return true;
     
@@ -831,7 +843,7 @@ bool _validateLocalMove(CardModel card) {
       _gameStartTime = DateTime.now();
       // ✅ SAFETY CHECK: Prevent crash if engine isn't ready
       if (_localEngine != null) {
-         _localEngine.start(widget.aiCount, widget.difficulty, decks: decks); 
+         _localEngine.start(widget.aiCount, widget.difficulty, decks: decks, rules: widget.rules); 
       } else {
          print("Error: Local Engine not initialized yet");
       }
@@ -1021,10 +1033,15 @@ bool _validateLocalMove(CardModel card) {
                                              width: 2
                                            )
                                         ),
-                                        child: const CircleAvatar(
+                                        child: CircleAvatar(
                                           radius: 14, 
                                           backgroundColor: Colors.black38,
-                                          child: Icon(Icons.person, size: 16, color: Colors.white70),
+                                          backgroundImage: player.avatar != null 
+                                             ? NetworkImage('${CustomAuthService().baseUrl}${player.avatar}')
+                                             : null,
+                                          child: player.avatar == null 
+                                             ? const Icon(Icons.person, size: 16, color: Colors.white70)
+                                             : null,
                                         ),
                                       ),
                                       Row(
@@ -1214,9 +1231,21 @@ bool _validateLocalMove(CardModel card) {
                         SizedBox(width: 16),
                         GestureDetector(
                           onTap: () {
-                             setState(() => _declaredNikoKadi = !_declaredNikoKadi);
-                             if (_declaredNikoKadi) {
+                             if (!_declaredNikoKadi) {
+                               // 1. Local State
+                               setState(() => _declaredNikoKadi = true);
+                               
+                               // 2. Progression Progress
                                ProgressionService().updateChallengeProgress(ChallengeType.sayNikoKadi, 1);
+                               
+                               // 3. Server/Engine Action (Immediate Broadcast)
+                               if (_isOffline) {
+                                  _localEngine?.sayNikoKadi();
+                                } else {
+                                  VPSGameService().sendAction('SAY_NIKO_KADI', {
+                                    'senderName': _myName,
+                                  });
+                                }
                              }
                           },
                           child: AnimatedContainer(
@@ -1392,7 +1421,10 @@ Future<void> _handleGameOver(dynamic data) async {
       coinsEarned = 100;
       
       // Update leaderboard stats for ALL game modes (solo, LAN, online)
-      await VPSGameService().updateStats(wins: 1);
+      // FIX: Only update here for offline. Online is handled by server.
+      if (!_isOnline) {
+         await VPSGameService().updateStats(wins: 1);
+      }
       
       if (_isOnline && _entryFee > 0) {
          // Winner takes the WHOLE pot (based on starting count)

@@ -5,6 +5,7 @@ class Friend {
   final bool isOnline;
   final DateTime? lastSeen;
   final int wins;
+  final String? avatar;
   final DateTime createdAt;
 
   Friend({
@@ -14,6 +15,7 @@ class Friend {
     this.isOnline = false,
     this.lastSeen,
     this.wins = 0,
+    this.avatar,
     DateTime? createdAt,
   }) : createdAt = createdAt ?? DateTime.now();
 
@@ -26,6 +28,7 @@ class Friend {
       'isOnline': isOnline,
       'lastSeen': lastSeen?.toIso8601String(),
       'wins': wins,
+      'avatar': avatar,
       'createdAt': createdAt.toIso8601String(),
     };
   }
@@ -41,6 +44,7 @@ class Friend {
           ? DateTime.parse(json['lastSeen'] as String)
           : null,
       wins: json['wins'] as int? ?? 0,
+      avatar: json['avatar'] as String?,
       createdAt: json['createdAt'] != null
           ? DateTime.parse(json['createdAt'] as String)
           : DateTime.now(),
@@ -55,6 +59,7 @@ class Friend {
     bool? isOnline,
     DateTime? lastSeen,
     int? wins,
+    String? avatar,
     DateTime? createdAt,
   }) {
     return Friend(
@@ -64,6 +69,7 @@ class Friend {
       isOnline: isOnline ?? this.isOnline,
       lastSeen: lastSeen ?? this.lastSeen,
       wins: wins ?? this.wins,
+      avatar: avatar ?? this.avatar,
       createdAt: createdAt ?? this.createdAt,
     );
   }

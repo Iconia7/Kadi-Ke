@@ -45,6 +45,17 @@ class DatabaseService {
         PRIMARY KEY (userId, friendUserId)
       )
     ''');
+
+    _db.execute('''
+      CREATE TABLE IF NOT EXISTS feedback (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        userId TEXT,
+        username TEXT,
+        message TEXT NOT NULL,
+        type TEXT NOT NULL,
+        timestamp TEXT NOT NULL
+      )
+    ''');
     
     _db.execute('CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)');
   }
@@ -155,15 +166,30 @@ class DatabaseService {
     return users;
   }
 
+  void incrementWins(String userId) {
+    _db.execute('UPDATE users SET wins = wins + 1 WHERE id = ?', [userId]);
+  }
+
+  void incrementCoins(String userId, int amount) {
+    _db.execute('UPDATE users SET coins = coins + ? WHERE id = ?', [amount, userId]);
+  }
+
   // --- Friend Operations ---
 
   List<Map<String, dynamic>> getFriends(String userId) {
-    final ResultSet results = _db.select('SELECT * FROM friends WHERE userId = ?', [userId]);
+    final ResultSet results = _db.select('''
+      SELECT f.*, u.avatar 
+      FROM friends f
+      LEFT JOIN users u ON f.friendUserId = u.id
+      WHERE f.userId = ?
+    ''', [userId]);
+    
     return results.map((row) => {
       'userId': row['friendUserId'],
       'username': row['username'],
       'status': row['status'],
       'createdAt': row['createdAt'],
+      'avatar': row['avatar']
     }).toList();
   }
 
@@ -181,6 +207,26 @@ class DatabaseService {
   void removeFriend(String userId, String friendUserId) {
     _db.execute('DELETE FROM friends WHERE (userId = ? AND friendUserId = ?) OR (userId = ? AND friendUserId = ?)', 
       [userId, friendUserId, friendUserId, userId]);
+  }
+
+  // --- Feedback Operations ---
+
+  void saveFeedback(Map<String, dynamic> data) {
+    _db.execute('''
+      INSERT INTO feedback (userId, username, message, type, timestamp)
+      VALUES (?, ?, ?, ?, ?)
+    ''', [
+      data['userId'],
+      data['username'],
+      data['message'],
+      data['type'],
+      data['timestamp'] ?? DateTime.now().toIso8601String()
+    ]);
+  }
+
+  List<Map<String, dynamic>> getAllFeedback() {
+    final ResultSet results = _db.select('SELECT * FROM feedback ORDER BY timestamp DESC');
+    return results.map((row) => Map<String, dynamic>.from(row)).toList();
   }
 
   // --- Helpers ---

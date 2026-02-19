@@ -312,14 +312,17 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
               CircleAvatar(
                 radius: 28,
                 backgroundColor: Color(0xFF00E5FF),
-                child: Text(
+                backgroundImage: friend.avatar != null 
+                   ? NetworkImage('${CustomAuthService().baseUrl}${friend.avatar}')
+                   : null,
+                child: friend.avatar == null ? Text(
                   friend.username.substring(0, 1).toUpperCase(),
                   style: TextStyle(
                     color: Colors.black,
                     fontWeight: FontWeight.bold,
                     fontSize: 24,
                   ),
-                ),
+                ) : null,
               ),
               if (friend.isOnline)
                 Positioned(
@@ -597,14 +600,17 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
                                   CircleAvatar(
                                     radius: 24,
                                     backgroundColor: Colors.blueAccent,
-                                    child: Text(
+                                    backgroundImage: user['avatar'] != null 
+                                       ? NetworkImage('${CustomAuthService().baseUrl}${user['avatar']}')
+                                       : null,
+                                    child: user['avatar'] == null ? Text(
                                       user['username'].toString().substring(0, 1).toUpperCase(),
                                       style: TextStyle(
                                         color: Colors.white,
                                         fontWeight: FontWeight.bold,
                                         fontSize: 20,
                                       ),
-                                    ),
+                                    ) : null,
                                   ),
                                   SizedBox(width: 12),
                                   Expanded(

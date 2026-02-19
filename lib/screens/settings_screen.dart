@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:in_app_review/in_app_review.dart';
 import '../services/sound_service.dart';
 import '../services/custom_auth_service.dart';
 import '../services/vps_game_service.dart'; 
 import '../services/progression_service.dart';
 import '../services/notification_service.dart';
+import '../services/feedback_service.dart';
 import '../widgets/notification_test_dialog.dart';
 import 'auth_screen.dart';
 
@@ -272,7 +274,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _buildSettingsContainer([
             _buildListTile("How to Play", Icons.help_outline, () => _showHowToPlay()),
             const Divider(height: 1, color: Colors.white10),
-            _buildListTile("Contact Support", Icons.email_outlined, () => _launchURL("mailto:support@kadike.com")),
+            _buildListTile("Feedback & Bug Report", Icons.bug_report_outlined, () => _showFeedbackDialog()),
+            const Divider(height: 1, color: Colors.white10),
+            _buildListTile("Rate App on Play Store", Icons.star_outline, () => _requestAppReview()),
+            const Divider(height: 1, color: Colors.white10),
+            _buildListTile("Contact Support", Icons.email_outlined, () => _launchURL("mailto:info@nexoracreatives.co.ke")),
             const Divider(height: 1, color: Colors.white10),
             _buildListTile("Terms & Privacy", Icons.gavel_outlined, () => _showTextDialog(context, "Legal", _legalText)),
             const Divider(height: 1, color: Colors.white10),
@@ -340,6 +346,67 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await NotificationService().showGameVictoryNotification(500);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text("Notification sent! (Check status bar)"), backgroundColor: Colors.green),
+    );
+  }
+
+  Future<void> _requestAppReview() async {
+    try {
+      final InAppReview inAppReview = InAppReview.instance;
+      if (await inAppReview.isAvailable()) {
+        await inAppReview.requestReview();
+      } else {
+        await inAppReview.openStoreListing(appStoreId: 'com.kadi.ke');
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open Play Store review. Try again later.'), backgroundColor: Colors.orange),
+        );
+      }
+    }
+  }
+
+  void _showFeedbackDialog() {
+    final _feedbackController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E293B),
+        title: Text("Feedback & Bug Report", style: TextStyle(color: Colors.white)),
+        content: TextField(
+          controller: _feedbackController,
+          maxLines: 5,
+          style: TextStyle(color: Colors.white),
+          decoration: InputDecoration(
+            hintText: "Describe the bug or share your feedback...",
+            hintStyle: TextStyle(color: Colors.white38),
+            filled: true,
+            fillColor: Colors.white10,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text("CANCEL")),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+            onPressed: () async {
+              if (_feedbackController.text.trim().isEmpty) return;
+              Navigator.pop(ctx);
+              try {
+                await FeedbackService().submitFeedback(_feedbackController.text.trim(), 'bug_report');
+                if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text("Thanks for the feedback!"), backgroundColor: Colors.green),
+                );
+              } catch (e) {
+                if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text("Failed to send: $e"), backgroundColor: Colors.red),
+                );
+              }
+            },
+            child: Text("SUBMIT"),
+          ),
+        ],
+      ),
     );
   }
 

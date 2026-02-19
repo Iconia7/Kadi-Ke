@@ -8,6 +8,7 @@ import 'services/custom_auth_service.dart';
 import 'services/notification_service.dart';
 import 'services/progression_service.dart';
 import 'services/vps_game_service.dart';
+import 'services/feedback_service.dart';
 import 'screens/game_screen.dart';
 
 void main() async {
@@ -43,6 +44,13 @@ void main() async {
     print("✅ Progression & Challenges Initialized");
   } catch (e) {
     print("❌ Progression Error: $e");
+  }
+
+  // 5. Sync Feedback
+  try {
+    FeedbackService().syncCachedFeedback();
+  } catch (e) {
+    print("❌ Feedback Sync Error: $e");
   }
 
   runApp(const MyApp());

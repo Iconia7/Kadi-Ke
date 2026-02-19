@@ -95,6 +95,16 @@ class GameServer {
               _broadcast("QUEUE_UPDATE", {'queue': _musicQueue});
           }
       }
+      else if (data['type'] == 'SAY_NIKO_KADI') {
+          _hasSaidNikoKadi[playerIndex] = true;
+          _broadcast("CHAT", {
+            "sender": data['senderName'] ?? "Player ${playerIndex + 1}", 
+            "message": "Niko Kadi!",
+            "isSystem": false,
+            "isNikoKadi": true, // Special flag for UI bubble
+            "playerIndex": playerIndex
+          });
+      }
       else if (data['type'] == 'SONG_ENDED') {
           _playNextLanSong();
       }
@@ -308,9 +318,29 @@ void _playNextLanSong() {
       if (powerCardFinish) {
          _broadcast("CHAT", {"sender": "System", "message": "Cannot win with Power Card!"});
          _updateGameState();
-         if (turnEnds) _advanceTurn(skip: skipCount);
+         if (turnEnds) {
+            _advanceTurn(skip: skipCount);
+         } else {
+            _broadcastTurn(); // UI Sync
+         }
          return;
       } else {
+         // --- CARDLESS BLOCKER RULE ---
+         bool anyoneElseCardless = false;
+         for (int i = 0; i < _playerHands.length; i++) {
+           if (i != playerIndex && _playerHands[i].isEmpty) {
+             anyoneElseCardless = true;
+             break;
+           }
+         }
+
+         if (anyoneElseCardless) {
+           _broadcast("CHAT", {"sender": "Referee", "message": "Multiple finishers! Player ${playerIndex + 1} cannot win while another is cardless."});
+           _drawCardsForPlayer(playerIndex, 2); // Penalty for trying to win while blocked? Or just pick?
+           if (turnEnds) _advanceTurn(skip: skipCount);
+           return;
+         }
+
          _broadcast("GAME_OVER", "Player ${playerIndex + 1} Wins!");
          return; 
       }
@@ -327,7 +357,7 @@ void _playNextLanSong() {
   }
 
   bool _isWinningCard(CardModel card) {
-    const nonWinningRanks = ['2', '3', '8', 'jack', 'queen', 'king', 'joker'];
+    const nonWinningRanks = ['2', '3', '8', 'jack', 'queen', 'king', 'ace', 'joker'];
     return !nonWinningRanks.contains(card.rank);
   }
 
@@ -429,10 +459,8 @@ void _playNextLanSong() {
     if (_forcedRank != null && _forcedSuit != null) {
       return card.rank == _forcedRank && card.suit == _forcedSuit;
     }
-
-    if (_forcedSuit != null) {
-      return card.suit == _forcedSuit;
-    }
+    if (_forcedRank != null) return card.rank == _forcedRank;
+    if (_forcedSuit != null) return card.suit == _forcedSuit;
 
     // 6. Standard Play
     return card.suit == _topCard!.suit || card.rank == _topCard!.rank || ['2','3','joker'].contains(card.rank);

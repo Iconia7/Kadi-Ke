@@ -81,9 +81,15 @@ class AiBot {
      if (c.suit == top.suit) score += 2;
      if (c.rank == top.rank) score += 3; // Rank match breaks suit flow (good)
      
-     // Save Power Cards
-     if (c.rank == 'ace') score -= 5; 
-     if (c.rank == '2' || c.rank == '3') score -= 2; 
+     // Save Power Cards (UNLESS hand is getting small)
+     // If hand is small, we should try to dump power cards so our LAST card is a standard card.
+     if (hand.length > 3) {
+        if (c.rank == 'ace') score -= 5; 
+        if (c.rank == '2' || c.rank == '3') score -= 2; 
+     } else {
+        // Hand is small, DUMP power cards now!
+        if (['2','3','8','jack','queen','king','ace','joker'].contains(c.rank)) score += 10;
+     }
      
      // Dump non-power
      if (!['2','3','8','jack','queen','king','ace','joker'].contains(c.rank)) score += 5;
@@ -185,8 +191,10 @@ class LocalGameEngine {
   List<CardModel> _discardPile = [];
   
   Timer? _botTimer; 
+  Map<String, dynamic> _rules = {'cardlessBlocker': true};
 
-void start(int aiCount, String difficulty, {int decks = 1}) async {
+void start(int aiCount, String difficulty, {int decks = 1, Map<String, dynamic>? rules}) async {
+    if (rules != null) _rules = rules;
     _deckService.initializeDeck(decks: decks); 
     _deckService.shuffle();
 
@@ -228,6 +236,17 @@ void start(int aiCount, String difficulty, {int decks = 1}) async {
   }
 
 
+
+  void sayNikoKadi() {
+    _hasSaidMap[0] = true;
+    _broadcast("CHAT", {
+      "sender": "You", 
+      "message": "Niko Kadi!",
+      "isSystem": false,
+      "isNikoKadi": true,
+      "playerIndex": 0
+    });
+  }
 
   void pickCard() {
     if (_currentPlayerIndex != 0) return;
@@ -361,9 +380,8 @@ void start(int aiCount, String difficulty, {int decks = 1}) async {
     if (_forcedRank != null && _forcedSuit != null) {
        return card.rank == _forcedRank && card.suit == _forcedSuit;
     }
-    if (_forcedSuit != null) {
-      return card.suit == _forcedSuit;
-    }
+    if (_forcedRank != null) return card.rank == _forcedRank;
+    if (_forcedSuit != null) return card.suit == _forcedSuit;
 
     // 7. Standard Play
     return card.suit == _topCard!.suit || card.rank == _topCard!.rank;
@@ -507,19 +525,40 @@ void start(int aiCount, String difficulty, {int decks = 1}) async {
     _broadcastUpdate(playerIndex, hand);
 
     // --- WIN CHECK ---
-    if (hand.isEmpty) {
-       bool powerCardFinish = ['2','3','8','jack','queen','king','ace','joker'].contains(card.rank);
-       
-       if (powerCardFinish) {
-          _broadcast("CHAT", {"sender": "System", "message": "Cannot win with Power Card!"});
-          _broadcastUpdate(playerIndex, hand);
-          if (turnEnds) _advanceTurn(skip: skip);
-          return;
-       } else {
-          _broadcast("GAME_OVER", playerIndex == 0 ? "You Win!" : "Bot ${playerIndex} Wins!");
-          return;
-       }
-    }
+     if (hand.isEmpty) {
+        bool powerCardFinish = ['2','3','8','jack','queen','king','ace','joker'].contains(card.rank);
+        
+        if (powerCardFinish) {
+           _broadcast("CHAT", {"sender": "System", "message": "Cannot win with Power Card! Pick 1."});
+           _processPick(playerIndex, hand, penaltyAmount: 1); // Force pick
+           return;
+         } else {
+           // --- OPTIONAL CARDLESS BLOCKER RULE ---
+           if (_rules['cardlessBlocker'] == true) {
+             bool anyoneElseCardless = false;
+             // Check player
+             if (playerIndex != 0 && _playerHand.isEmpty) anyoneElseCardless = true;
+             // Check bots
+             for (int i = 0; i < _bots.length; i++) {
+               int botIdx = i + 1;
+               if (playerIndex != botIdx && _bots[i].hand.isEmpty) {
+                 anyoneElseCardless = true;
+                 break;
+               }
+             }
+
+             if (anyoneElseCardless) {
+               _broadcast("CHAT", {"sender": "Referee", "message": "Someone else is cardless! Win blocked by House Rule."});
+               _drawCardsForHand(hand, 1); // Reduced penalty to 1 so they don't get stuck forever
+               if (turnEnds) _advanceTurn(skip: skip);
+               return;
+             }
+           }
+
+           _broadcast("GAME_OVER", playerIndex == 0 ? "You Win!" : "Bot ${playerIndex} Wins!");
+           return;
+         }
+     }
 
     if (turnEnds) {
       _advanceTurn(skip: skip);

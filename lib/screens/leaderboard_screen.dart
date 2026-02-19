@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:ui';
 import '../services/vps_game_service.dart';
+import '../services/custom_auth_service.dart';
 
 class LeaderboardScreen extends StatefulWidget {
   @override
@@ -112,9 +113,15 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                               ? LinearGradient(colors: [rankColor!, rankColor.withOpacity(0.6)])
                               : null,
                             color: isTop3 ? null : Colors.white10,
+                            image: user['avatar'] != null 
+                               ? DecorationImage(
+                                   image: NetworkImage('${CustomAuthService().baseUrl}${user['avatar']}'),
+                                   fit: BoxFit.cover
+                                 )
+                               : null,
                             boxShadow: isTop3 ? [BoxShadow(color: rankColor!.withOpacity(0.4), blurRadius: 12)] : [],
                           ),
-                          child: isTop3 && index == 0
+                          child: user['avatar'] != null ? null : (isTop3 && index == 0
                             ? Icon(Icons.emoji_events, color: Colors.black, size: 24)
                             : Text(
                                 '${index + 1}',
@@ -123,7 +130,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                                   fontWeight: FontWeight.w900,
                                   fontSize: 20
                                 ),
-                              ),
+                              )),
                         ),
                         SizedBox(width: 20),
                         Expanded(

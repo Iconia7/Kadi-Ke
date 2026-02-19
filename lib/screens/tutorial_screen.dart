@@ -199,14 +199,14 @@ class _TutorialScreenState extends State<TutorialScreen> {
 
   Widget _buildStep2CardMeanings() {
     final cardMeanings = [
-      {'card': 'J (Jack)', 'rank': 'jack', 'suit': 'spades', 'effect': '⏭️ Skip next player', 'color': Colors.orange},
-      {'card': 'K (King)', 'rank': 'king', 'suit': 'hearts', 'effect': '🔄 Reverse turn direction', 'color': Colors.purple},
-      {'card': 'Q (Queen)', 'rank': 'queen', 'suit': 'diamonds', 'effect': '❓ Player must answer or pick an answer', 'color': Colors.pink},
-      {'card': '8 (Eight)', 'rank': '8', 'suit': 'clubs', 'effect': '❓ Player must answer or pick an answer', 'color': Colors.pink},
-      {'card': '2 (Two)', 'rank': '2', 'suit': 'spades', 'effect': '💣 Pick 2 cards', 'color': Colors.red},
-      {'card': '3 (Three)', 'rank': '3', 'suit': 'hearts', 'effect': '💣 Pick 3 cards', 'color': Colors.red},
-      {'card': 'A (Ace)', 'rank': 'ace', 'suit': 'spades', 'effect': '🎯 Change suit/rank', 'color': Colors.blue},
-      {'card': 'Joker', 'rank': 'joker', 'suit': 'red', 'effect': '🃏 Pick 5 and next player must play a card of the same color', 'color': Colors.amber},
+      {'card': 'J (Jack)', 'rank': 'jack', 'suit': 'spades', 'effect': '⏭️ Skip next player. Can be used to block bombs!', 'color': Colors.orange},
+      {'card': 'K (King)', 'rank': 'king', 'suit': 'hearts', 'effect': '🔄 Reverse turn direction. Returns bombs to sender!', 'color': Colors.purple},
+      {'card': 'Q (Queen)', 'rank': 'queen', 'suit': 'diamonds', 'effect': '❓ Question! Player must answer or pick cards. You keep your turn.', 'color': Colors.pink},
+      {'card': '8 (Eight)', 'rank': '8', 'suit': 'clubs', 'effect': '❓ Question! Works like Queen but with different suits.', 'color': Colors.pink},
+      {'card': '2 (Two)', 'rank': '2', 'suit': 'spades', 'effect': '💣 Bomb! Adds +2 cards to the next player. Can be stacked!', 'color': Colors.red},
+      {'card': '3 (Three)', 'rank': '3', 'suit': 'hearts', 'effect': '💣 Super Bomb! Adds +3 cards. Stacks with Twos and Jokers!', 'color': Colors.red},
+      {'card': 'A (Ace)', 'rank': 'ace', 'suit': 'spades', 'effect': '🎯 Request: Change suit/rank. Spades Ace LOCKS the game if it is your second-to-last card!', 'color': Colors.blue},
+      {'card': 'Joker', 'rank': 'joker', 'suit': 'red', 'effect': '🃏 Mega Bomb! +5 cards. Next player must pick OR match the Joker\'s color!', 'color': Colors.amber},
     ];
 
     return SingleChildScrollView(
@@ -304,13 +304,13 @@ class _TutorialScreenState extends State<TutorialScreen> {
           ),
           SizedBox(height: 12),
           _buildInfoCard(
-            '3️⃣ Multi-Drop',
-            'You can play multiple cards of the same rank! Play as many as you want, then press "DONE".',
+            '3️⃣ Multi-Drop & Chaining',
+            'Play multiple cards of the same rank! You can also CHAIN Questions (Q or 8) to keep your turn.',
           ),
           SizedBox(height: 12),
           _buildInfoCard(
-            '4️⃣ Special Cards',
-            'Power cards (J, K, Q, 8, 2, 3, A, Joker) can change the game. Use them wisely!',
+            '4️⃣ Defense & Stacking',
+            'Aces block bombs. Kings & Jacks pass/return them. Bombs (2, 3, Joker) stack up for massive penalties!',
           ),
           SizedBox(height: 24),
           Container(

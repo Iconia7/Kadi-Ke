@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
 import 'dart:ui';
+import 'dart:io';
+import 'package:provider/provider.dart';
+import 'package:image_picker/image_picker.dart';
 import '../services/progression_service.dart';
 import '../services/theme_service.dart';
 import '../services/custom_auth_service.dart';
+import '../services/app_config.dart';
 import '../services/achievement_service.dart';
+import '../services/feedback_service.dart';
+import 'package:in_app_review/in_app_review.dart';
 
 class ProfileScreen extends StatefulWidget {
   @override
@@ -83,28 +89,45 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 children: [
                   SizedBox(height: 20),
                   // Avatar Section
-                  Container(
-                    width: 120, height: 120,
-                    padding: EdgeInsets.all(4),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(color: theme.accentColor.withOpacity(0.5), width: 2),
-                    ),
+                  GestureDetector(
+                    onTap: _pickImage,
                     child: Container(
+                      width: 120, height: 120,
+                      padding: EdgeInsets.all(4),
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        gradient: LinearGradient(
-                          colors: [theme.accentColor, theme.accentColor.withOpacity(0.6)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        boxShadow: [
-                          BoxShadow(color: theme.accentColor.withOpacity(0.3), blurRadius: 20, spreadRadius: 5)
-                        ],
+                        border: Border.all(color: theme.accentColor.withOpacity(0.5), width: 2),
                       ),
-                      child: Icon(Icons.person, size: 64, color: Colors.black),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.black26, 
+                          image: CustomAuthService().avatar != null 
+                             ? DecorationImage(
+                                 image: NetworkImage("${CustomAuthService().baseUrl}${CustomAuthService().avatar}"),
+                                 fit: BoxFit.cover
+                               ) 
+                             : null,
+                          gradient: CustomAuthService().avatar == null ? LinearGradient(
+                            colors: [theme.accentColor, theme.accentColor.withOpacity(0.6)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ) : null,
+                          boxShadow: [
+                            BoxShadow(color: theme.accentColor.withOpacity(0.3), blurRadius: 20, spreadRadius: 5)
+                          ],
+                        ),
+                        child: CustomAuthService().avatar == null 
+                           ? Icon(Icons.person, size: 64, color: Colors.black)
+                           : null,
+                      ),
                     ),
                   ),
+                  if (CustomAuthService().userId == "offline")
+                     Padding(
+                       padding: const EdgeInsets.only(top: 8.0),
+                       child: Text("Login to upload avatar", style: TextStyle(color: Colors.white38, fontSize: 10)),
+                     ),
                   SizedBox(height: 20),
                   Text(CustomAuthService().username ?? "Player One", style: TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.w900, letterSpacing: 1)),
                   Container(
@@ -149,8 +172,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ],
                     ),
                   ),
-                  
-                  Container(
+                                    Container(
                     height: 120,
                     margin: EdgeInsets.only(bottom: 24),
                     child: ListView.builder(
@@ -191,6 +213,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                        },
                     ),
                   ),
+                  
+                  SizedBox(height: 30),
                 ],
               ),
             ),
@@ -198,6 +222,115 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
       ),
     );
+  }
+
+  Widget _buildActionRow(String label, IconData icon, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.white.withOpacity(0.1)),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: Colors.white70, size: 24),
+            SizedBox(width: 16),
+            Text(label, style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+            Spacer(),
+            Icon(Icons.chevron_right, color: Colors.white30),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showFeedbackDialog() {
+    final TextEditingController feedbackController = TextEditingController();
+    String type = 'Bug Report';
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: Color(0xFF1E293B),
+          title: Text("Submit Feedback", style: TextStyle(color: Colors.white)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButton<String>(
+                value: type,
+                dropdownColor: Color(0xFF2E3E5E),
+                isExpanded: true,
+                style: TextStyle(color: Colors.white),
+                items: ['Bug Report', 'Suggestion', 'Praise', 'Other']
+                   .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                   .toList(),
+                onChanged: (v) => setDialogState(() => type = v!),
+              ),
+              SizedBox(height: 16),
+              TextField(
+                controller: feedbackController,
+                maxLines: 4,
+                style: TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  hintText: "Tell us what happened or what you'd like to see...",
+                  hintStyle: TextStyle(color: Colors.white30),
+                  filled: true,
+                  fillColor: Colors.black26,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: Text("Cancel")),
+            ElevatedButton(
+              onPressed: () async {
+                String msg = feedbackController.text.trim();
+                if (msg.isEmpty) return;
+                
+                Navigator.pop(context);
+                bool sent = await FeedbackService().submitFeedback(msg, type);
+                
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(sent ? "Thank you for your feedback!" : "Feedback saved locally. Will sync when online."),
+                      backgroundColor: sent ? Colors.green : Colors.orange,
+                    )
+                  );
+                }
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.amber, foregroundColor: Colors.black),
+              child: Text("SUBMIT"),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _requestAppReview() async {
+    try {
+      final InAppReview inAppReview = InAppReview.instance;
+      if (await inAppReview.isAvailable()) {
+        await inAppReview.requestReview();
+      } else {
+        // Fallback: Open Play Store directly with real package name
+        await inAppReview.openStoreListing(appStoreId: 'com.kadi.ke');
+      }
+    } catch (e) {
+      // Gracefully handle if Play Store isn't available
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open Play Store review. Try again later.'), backgroundColor: Colors.orange),
+        );
+      }
+    }
   }
 
   Widget _buildModernStatCard(String title, String value, IconData icon, Color color) {
@@ -232,5 +365,32 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _pickImage() async {
+    final ImagePicker picker = ImagePicker();
+    final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+    
+    if (image != null) {
+        _uploadAvatar(File(image.path));
+    }
+  }
+
+  Future<void> _uploadAvatar(File file) async {
+      try {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Uploading Avatar...")));
+        
+        await CustomAuthService().uploadProfilePicture(file);
+        
+        if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Avatar Uploaded!")));
+            setState(() {}); // Refresh to show new avatar
+        }
+      } catch (e) {
+         if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Upload Failed: $e")));
+         }
+      }
   }
 }

@@ -238,7 +238,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
      Map<String, dynamic> rules = {
        'jokerPenalty': 5,
        'queenAction': 'question',
-       'allowBombStacking': true
+       'allowBombStacking': true,
+       'cardlessBlocker': true,
      };
 
      showDialog(
@@ -280,6 +281,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                              ].toList(),
                              onChanged: (v) => setState(() => rules['queenAction'] = v),
                           ),
+                       ),
+                       SwitchListTile(
+                          title: Text("Cardless Blocker?", style: TextStyle(color: Colors.white)),
+                          subtitle: Text("Block win if others are out of cards?", style: TextStyle(color: Colors.white54, fontSize: 12)),
+                          value: rules['cardlessBlocker'] ?? true,
+                          activeColor: Colors.amber,
+                          onChanged: (v) => setState(() => rules['cardlessBlocker'] = v),
                        ),
                     ],
                  ),
@@ -328,6 +336,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             hostAddress: 'online', 
             onlineGameCode: roomCode,
             gameType: _selectedGameMode, 
+            rules: rules,
           )
         ));
       }
@@ -576,6 +585,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         hostAddress: 'offline', 
         aiCount: aiCount,
         gameType: _selectedGameMode,
+        difficulty: difficulty,
+        rules: {'cardlessBlocker': true}, // Default rules for offline Quick Play
       )
     ));
   }
@@ -1545,7 +1556,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Challenge Complete! +${rewards['coins']} coins'),
+              content: Text('Challenge Complete! +${challenge.reward} coins'),
               backgroundColor: Color(0xFF00E5FF),
               behavior: SnackBarBehavior.floating,
             ),
