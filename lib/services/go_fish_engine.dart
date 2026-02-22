@@ -13,10 +13,12 @@ class GoFishEngine {
   int _playerCount = 0;
   
   Timer? _botTimer; 
+  bool _isGameOver = false;
   Map<int, Set<String>> _botMemory = {}; 
 
   // FIX: Added 'decks' parameter to match call signature, even if unused for now
   void start(int aiCount, String difficulty, {int decks = 1}) {
+    _isGameOver = false;
     _playerCount = aiCount + 1;
     _hands = List.generate(_playerCount, (_) => []);
     _books = List.filled(_playerCount, 0);
@@ -36,11 +38,12 @@ class GoFishEngine {
   }
 
   void askForCard(int targetIndex, String rank) {
-    if (_currentPlayerIndex != 0) return;
+    if (_currentPlayerIndex != 0 || _isGameOver) return;
     _processAsk(0, targetIndex, rank);
   }
 
   void _processAsk(int askerIndex, int targetIndex, String rank) {
+    if (_isGameOver) return;
     List<CardModel> targetHand = _hands[targetIndex];
     List<CardModel> foundCards = targetHand.where((c) => c.rank == rank).toList();
 
@@ -104,6 +107,7 @@ class GoFishEngine {
   }
 
   void _advanceTurn() {
+    if (_isGameOver) return;
     _currentPlayerIndex = (_currentPlayerIndex + 1) % _playerCount;
     
     if (_hands[_currentPlayerIndex].isEmpty) {
@@ -131,6 +135,7 @@ class GoFishEngine {
 
   void _runBotTurn() {
     int botIdx = _currentPlayerIndex;
+    if (_isGameOver) return;
     if (_hands[botIdx].isEmpty) { _advanceTurn(); return; }
 
     List<CardModel> hand = _hands[botIdx];
@@ -193,6 +198,8 @@ class GoFishEngine {
     String msg = winners.contains(0) ? "You Won!" : "Player ${winners.first + 1} Wins!";
     if (winners.length > 1) msg = "It's a Tie!";
     
+    _isGameOver = true;
+    _botTimer?.cancel();
     _broadcast("GAME_OVER", msg);
   }
 

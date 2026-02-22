@@ -764,20 +764,16 @@ bool _validateLocalMove(CardModel card) {
     else {_channel?.sink.add(jsonEncode({"type": "PLAY_CARD", ...payload}));}
 
     // AUTO-PASS LOGIC (Question Answer / Playing Question)
+    // Do NOT auto-pass if this was potentially a winning move.
+    // _myHand still contains the played card at this point (UI update comes via DEAL_HAND later),
+    // so <= 1 means we just played the last card.
+    bool wasLastCard = _myHand.length <= 1;
     bool wasAnswering = _waitingForAnswer; 
-    
-    // Check if we should allow multi-drop (Chaining Qs or Multi-Answer)
-    // Condition: 
-    // 1. If we played a Q/8, do we have another Q/8?
-    // 2. If we answered (Wait=true), do we have another matching answer?
     
     bool canContinue = false;
     
     // STARTING A CHAIN (Q/8)
     if (['queen','8'].contains(card.rank)) {
-       // We can continue if we have:
-       // 1. Another Q/8 (Rank Match - Chain)
-       // 2. An Answer (Suit Match)
        canContinue = _myHand.any((c) => c != card && (c.rank == card.rank || c.suit == card.suit)); 
     }
     // ANSWERING A QUESTION
@@ -786,8 +782,8 @@ bool _validateLocalMove(CardModel card) {
        canContinue = _myHand.any((c) => c != card && c.rank == card.rank);
     }
 
-    if ((wasAnswering || ['queen','8'].contains(card.rank)) && !canContinue) {
-       // Only auto-pass if we CANNOT continue the chain/answer set
+    // Only auto-pass if: this was a Q/8 or answer play, we can't continue, AND it wasn't the last card
+    if (!wasLastCard && (wasAnswering || ['queen','8'].contains(card.rank)) && !canContinue) {
        Future.delayed(Duration(milliseconds: 600), () {
           if (mounted && _isMyTurn) _passTurn();
        });
@@ -1408,10 +1404,11 @@ bool _validateLocalMove(CardModel card) {
   }
   
 Future<void> _handleGameOver(dynamic data) async {
-    bool didIWin = data['winner'] == _myPlayerId;
-    // Map data might be string or map, handle both
+    bool didIWin = false;
     if (data is String) {
        didIWin = data.contains("You") || data.contains(_myName);
+    } else if (data is Map) {
+       didIWin = data['winner'] == _myPlayerId;
     }
     
     int coinsEarned = 0;

@@ -191,9 +191,11 @@ class LocalGameEngine {
   List<CardModel> _discardPile = [];
   
   Timer? _botTimer; 
+  bool _isGameOver = false;
   Map<String, dynamic> _rules = {'cardlessBlocker': true};
 
 void start(int aiCount, String difficulty, {int decks = 1, Map<String, dynamic>? rules}) async {
+    _isGameOver = false;
     if (rules != null) _rules = rules;
     _deckService.initializeDeck(decks: decks); 
     _deckService.shuffle();
@@ -284,6 +286,7 @@ void start(int aiCount, String difficulty, {int decks = 1, Map<String, dynamic>?
   }
 
   void _advanceTurn({int skip = 0, bool reset = false}) {
+    if (_isGameOver) return;
     if (reset) {
       _currentPlayerIndex = 0;
     } else {
@@ -312,6 +315,7 @@ void start(int aiCount, String difficulty, {int decks = 1, Map<String, dynamic>?
   }
 
   void _runBotTurn() {
+    if (_isGameOver) return;
     int botIndex = _currentPlayerIndex - 1;
     
     // Debug logging
@@ -388,6 +392,7 @@ void start(int aiCount, String difficulty, {int decks = 1, Map<String, dynamic>?
   }
 
   void _processMove(int playerIndex, List<CardModel> hand, int cardIndex, {String? reqSuit, String? reqRank}) {
+    if (_isGameOver) return;
     CardModel card = hand[cardIndex];
 
     if (!_isValidMove(card)) {
@@ -468,8 +473,15 @@ void start(int aiCount, String difficulty, {int decks = 1, Map<String, dynamic>?
     }
 
     // --- NIKO KADI CHECK ---
-    bool isWinningHand = hand.isNotEmpty && hand.every((c) => c.rank == hand[0].rank);
-    if (hand.length == 1) {
+    // Only penalise if:
+    //  - hand now has exactly 1 card
+    //  - player didn't say Niko Kadi
+    //  - the REMAINING card is a winning (non-power) card
+    //  - the card just played was NOT itself a power card
+    //    (if you played Ace/Q/etc you literally couldn't win this turn anyway)
+    bool justPlayedPower = ['2','3','8','jack','queen','king','ace','joker'].contains(card.rank);
+    print('[KADI] NikoCheck p=$playerIndex: handLen=${hand.length} justPlayedPower=$justPlayedPower hasSaid=${_hasSaidMap[playerIndex]}');
+    if (hand.length == 1 && !justPlayedPower) {
       if (!_hasSaidMap[playerIndex]) {
         if (_isWinningCard(hand[0])) {
            if (playerIndex == 0) _broadcast("CHAT", {"sender": "Referee", "message": "Forgot Niko Kadi! Penalty!"});
@@ -478,7 +490,8 @@ void start(int aiCount, String difficulty, {int decks = 1, Map<String, dynamic>?
         }
       }
     }
-    if (hand.length > 1 && !isWinningHand) _hasSaidMap[playerIndex] = false;
+    // Don't reset the Niko Kadi flag when a card is PLAYED (hand shrank).
+    // Only reset it when cards are PICKED (hand grows) — handled in _processPick.
 
     // --- TURN FLOW LOGIC ---
     bool turnEnds = true;
@@ -527,6 +540,7 @@ void start(int aiCount, String difficulty, {int decks = 1, Map<String, dynamic>?
     // --- WIN CHECK ---
      if (hand.isEmpty) {
         bool powerCardFinish = ['2','3','8','jack','queen','king','ace','joker'].contains(card.rank);
+        print('[KADI] WinCheck: player=$playerIndex card=${card.rank} powerCardFinish=$powerCardFinish hasSaid=${_hasSaidMap[playerIndex]}');
         
         if (powerCardFinish) {
            _broadcast("CHAT", {"sender": "System", "message": "Cannot win with Power Card! Pick 1."});
@@ -555,6 +569,9 @@ void start(int aiCount, String difficulty, {int decks = 1, Map<String, dynamic>?
              }
            }
 
+           print('[KADI] GAME_OVER broadcasting for player=$playerIndex');
+           _isGameOver = true;
+           _botTimer?.cancel();
            _broadcast("GAME_OVER", playerIndex == 0 ? "You Win!" : "Bot ${playerIndex} Wins!");
            return;
          }
@@ -572,6 +589,7 @@ void start(int aiCount, String difficulty, {int decks = 1, Map<String, dynamic>?
   }
 
   void _processPick(int playerIndex, List<CardModel> hand, {int penaltyAmount = 0}) {
+    if (_isGameOver) return;
     int count = penaltyAmount > 0 ? penaltyAmount : ((_bombStack > 0) ? _bombStack : 1);
     
     if (_bombStack > 0 && _topCard != null && _topCard!.rank == 'joker') {

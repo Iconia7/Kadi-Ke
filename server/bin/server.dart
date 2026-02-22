@@ -228,16 +228,28 @@ class MultiGameServer {
   Future<Response> _handleAuth(Request request) async {
     final path = request.url.path;
     
-    // CORS Preflight
-    if (request.method == 'OPTIONS') {
-      return Response.ok('', headers: _corsHeaders);
+    // Only accept POST
+    if (request.method != 'POST') {
+      return Response(405, body: 'Method Not Allowed', headers: _corsHeaders);
     }
 
     try {
       final payload = await request.readAsString();
-      final data = jsonDecode(payload);
-      final username = data['username'];
-      final password = data['password']; // In prod, HASH THIS!
+      if (payload.isEmpty) {
+        return Response(400, body: jsonEncode({'error': 'Empty request body'}), headers: {'content-type': 'application/json', ..._corsHeaders});
+      }
+
+      final decoded = jsonDecode(payload);
+      if (decoded is! Map<String, dynamic>) {
+        return Response(400, body: jsonEncode({'error': 'Invalid JSON format'}), headers: {'content-type': 'application/json', ..._corsHeaders});
+      }
+      final data = decoded;
+      final username = data['username']?.toString().trim();
+      final password = data['password']?.toString();
+
+      if (username == null || username.isEmpty || password == null || password.isEmpty) {
+        return Response(400, body: jsonEncode({'error': 'Username and password are required'}), headers: {'content-type': 'application/json', ..._corsHeaders});
+      }
 
       if (path == 'register') {
         if (_dbService.getUserByUsername(username) != null) {
@@ -307,7 +319,8 @@ class MultiGameServer {
       }
       
     } catch (e) {
-      return Response.internalServerError(body: "Auth Error: $e", headers: _corsHeaders);
+      _log("Auth Error: $e", level: 'ERROR');
+      return Response(400, body: jsonEncode({'error': 'Bad request: $e'}), headers: {'content-type': 'application/json', ..._corsHeaders});
     }
     
     return Response.notFound('Not Found');
@@ -1247,10 +1260,9 @@ class MultiGameServer {
 
        // --- GAMEPLAY ROUTER ---
        int pIndex = room.players.indexWhere((p) => p.id == pid);
-       if (pIndex != -1 && pIndex == room.currentPlayerIndex) {
+       if (pIndex != -1 && pIndex == room.currentPlayerIndex && room.isGameStarted) {
           
           if (room.gameType == 'kadi') {
-             if (type == 'PLAY_CARD') _handleKadiPlay(room, pIndex, data);
              if (type == 'PLAY_CARD') _handleKadiPlay(room, pIndex, data);
              else if (type == 'PICK_CARD') _handleKadiPick(room, pIndex);
              else if (type == 'PASS_TURN') _handleKadiPass(room, pIndex);
@@ -1383,6 +1395,7 @@ class MultiGameServer {
      int totalBooks = room.players.fold(0, (sum, pl) => sum + pl.books);
      if (totalBooks == 13 || (room.deckService.remainingCards == 0 && room.players.every((pl)=>pl.hand.isEmpty))) {
         Player winner = room.players.reduce((curr, next) => curr.books > next.books ? curr : next);
+        room.isGameStarted = false;
         room.broadcast("GAME_OVER", "${winner.name} Wins with ${winner.books} books!");
         _log("Game Over in room ${room.code}. Winner: ${winner.name}");
         
@@ -1514,12 +1527,10 @@ class MultiGameServer {
 
      // Win Check
      if (player.hand.isEmpty) {
-         // Power Card restriction
-         // Winning Cards: 4, 5, 6, 7, 9, 10
-         // Non-Winning (Power): 2, 3, 8, J, Q, K, A, Joker
+         // Power Card restriction: 2, 3, 8, J, Q, K, A, Joker can never be the winning card
          if (['2','3','8','jack','queen','king','ace','joker'].contains(card.rank)) {
             room.broadcast("CHAT", {"sender": "System", "message": "Cannot win with Power Card! Pick 1."});
-            _handleKadiPick(room, pIndex, penalty: 1); // Force pick
+            _handleKadiPick(room, pIndex, penalty: 1);
             return;
          }
         // --- OPTIONAL CARDLESS BLOCKER RULE ---
@@ -1531,10 +1542,9 @@ class MultiGameServer {
                break;
              }
            }
-
            if (anyoneElseCardless) {
               room.broadcast("CHAT", {"sender": "Referee", "message": "Multiple finishers! Win blocked by House Rule."});
-              _handleKadiPick(room, pIndex, penalty: 1); // Reduced penalty
+              _handleKadiPick(room, pIndex, penalty: 1);
               return;
            }
         }
@@ -1546,12 +1556,25 @@ class MultiGameServer {
              return;
         }
 
+        room.isGameStarted = false;
         room.broadcast("GAME_OVER", "${player.name} Wins!");
         _log("Game Over in room ${room.code}. Winner: ${player.name}");
-        
-        // UPDATE STATS
         _handleWin(room, player);
         return;
+     }
+
+     // --- NIKO KADI CHECK (hand > 0) ---
+     // Only penalise if hand is now exactly 1, the remaining card is a winning card,
+     // AND the card just played was NOT itself a power card.
+     // (If you played Ace/Q/8 and now have 1 card left, Niko Kadi fires on the NEXT turn.)
+     bool justPlayedPower = ['2','3','8','jack','queen','king','ace','joker'].contains(card.rank);
+     if (player.hand.length == 1 && !justPlayedPower) {
+        bool remainingIsWinCard = !['2','3','8','jack','queen','king','ace','joker'].contains(player.hand[0].rank);
+        if (!player.hasSaidNikoKadi && remainingIsWinCard) {
+           room.broadcast("CHAT", {"sender": "Referee", "message": "Forgot Niko Kadi! +2 Cards"});
+           _handleKadiPick(room, pIndex, penalty: 2);
+           return;
+        }
      }
 
      _sendHand(player);
@@ -1601,7 +1624,6 @@ class MultiGameServer {
       
      player.hasSaidNikoKadi = false;
      
-     _sendHand(player);
      _sendHand(player);
      _advanceTurn(room);
   }

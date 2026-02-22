@@ -341,6 +341,7 @@ void _playNextLanSong() {
            return;
          }
 
+         _isGameRunning = false;
          _broadcast("GAME_OVER", "Player ${playerIndex + 1} Wins!");
          return; 
       }
