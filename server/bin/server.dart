@@ -6,7 +6,7 @@ import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_static/shelf_static.dart';
 import 'package:shelf_multipart/shelf_multipart.dart';
-import 'package:mime/mime.dart'; // Ensure mime type check if possible, or just trust extension
+import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:crypto/crypto.dart';
 import 'package:mailer/mailer.dart';
@@ -1131,11 +1131,10 @@ class MultiGameServer {
          
          final path = request.url.path;
 
-         // Static Files
-         if (path.startsWith('uploads/')) {
-            final p = path.replaceFirst('uploads/', '');
-            return staticHandler(request.change(path: p)); 
-         }
+          // Static Files
+          if (path.startsWith('uploads/')) {
+             return staticHandler(request.change(path: 'uploads/')); 
+          }
 
          if (path == 'health') {
             return Response.ok(jsonEncode({
@@ -1801,50 +1800,59 @@ class MultiGameServer {
   // ==========================================
 
   Future<Response> _handleUploadAvatar(Request request) async {
-     if (!request.isMultipart) {
-        return Response.badRequest(body: 'Not a multipart request');
+     // Verify Auth
+     final authHeader = request.headers['Authorization'];
+     _log('Upload avatar - Auth header: ${authHeader != null ? "present" : "MISSING"}');
+     final token = authHeader?.replaceAll('Bearer ', '');
+     if (token == null) {
+       _log('Upload avatar - REJECTED: Missing Token', level: 'WARNING');
+       return Response.forbidden('Missing Token');
      }
-     
-     // Verify Auth (Optional - usually we check token header)
-     final token = request.headers['Authorization']?.replaceAll('Bearer ', '');
-     if (token == null) return Response.forbidden('Missing Token');
      
      String? userId;
      try {
        final jwt = JWT.verify(token, SecretKey(_jwtSecret));
-       userId = jwt.payload['id'];
+       userId = jwt.payload['userId'];
+       _log('Upload avatar - Token valid, userId: $userId');
      } catch (e) {
+       _log('Upload avatar - REJECTED: Invalid Token: $e', level: 'WARNING');
        return Response.forbidden('Invalid Token');
      }
 
-     if (userId == null) return Response.forbidden('Invalid User');
+     if (userId == null) {
+       _log('Upload avatar - REJECTED: userId is null', level: 'WARNING');
+       return Response.forbidden('Invalid User');
+     }
 
      try {
-       await for (final part in request.parts) {
-         if (part.headers['content-disposition']?.contains('filename=') ?? false) {
-            // It's a file
-            final filename = 'avatar_${userId}_${DateTime.now().millisecondsSinceEpoch}.jpg'; // Force jpg or detect?
-            
-            // Ensure directory exists
-            final directory = Directory('bin/uploads/avatars');
-            if (!await directory.exists()) {
-               await directory.create(recursive: true);
-            }
+       // shelf_multipart v2.x API
+       final multipart = request.multipart();
+       if (multipart == null) {
+          return Response.badRequest(body: 'Not a multipart request');
+       }
 
-            final file = File('${directory.path}/$filename');
-            final sink = file.openWrite();
-            await part.pipe(sink);
-            await sink.close();
-            
-            // Construct URL - assuming server at same host
-            // Client needs to know host. We return relative path.
-            final url = '/uploads/avatars/$filename';
-            
-            // Update DB
-            _dbService.updateUser(userId, {'avatar': url});
-            
-            return Response.ok(jsonEncode({'url': url, 'message': 'Avatar Uploaded'}), headers: _corsHeaders);
-         }
+       await for (final part in multipart.parts) {
+          final contentDisposition = part.headers['content-disposition'] ?? '';
+          if (contentDisposition.contains('filename=')) {
+             final filename = 'avatar_${userId}_${DateTime.now().millisecondsSinceEpoch}.jpg';
+             
+             // Ensure directory exists
+             final directory = Directory('bin/uploads/avatars');
+             if (!await directory.exists()) {
+                await directory.create(recursive: true);
+             }
+
+             final file = File('${directory.path}/$filename');
+             final bytes = await part.readBytes();
+             await file.writeAsBytes(bytes);
+             
+             final url = '/uploads/avatars/$filename';
+             
+             // Update DB
+             _dbService.updateUser(userId, {'avatar': url});
+             
+             return Response.ok(jsonEncode({'url': url, 'message': 'Avatar Uploaded'}), headers: _corsHeaders);
+          }
        }
        return Response.badRequest(body: 'No file found');
      } catch (e) {

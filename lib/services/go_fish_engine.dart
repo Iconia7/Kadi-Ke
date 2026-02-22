@@ -17,7 +17,7 @@ class GoFishEngine {
   Map<int, Set<String>> _botMemory = {}; 
 
   // FIX: Added 'decks' parameter to match call signature, even if unused for now
-  void start(int aiCount, String difficulty, {int decks = 1}) {
+  void start(int aiCount, String difficulty, {int decks = 1, Map<String, dynamic>? rules}) {
     _isGameOver = false;
     _playerCount = aiCount + 1;
     _hands = List.generate(_playerCount, (_) => []);

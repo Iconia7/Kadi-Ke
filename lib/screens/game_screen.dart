@@ -1417,6 +1417,9 @@ Future<void> _handleGameOver(dynamic data) async {
     if (didIWin) {
       coinsEarned = 100;
       
+      // Record win LOCALLY so Profile screen shows it
+      await ProgressionService().recordGameResult(true);
+      
       // Update leaderboard stats for ALL game modes (solo, LAN, online)
       // FIX: Only update here for offline. Online is handled by server.
       if (!_isOnline) {
