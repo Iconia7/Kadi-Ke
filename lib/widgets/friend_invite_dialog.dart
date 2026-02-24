@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/friend_model.dart';
 import '../services/friend_service.dart';
+import '../widgets/custom_toast.dart';
 
 class FriendInviteDialog extends StatefulWidget {
   final String gameType; // 'kadi' or 'gofish'
@@ -42,9 +43,7 @@ class _FriendInviteDialogState extends State<FriendInviteDialog> {
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to load friends: $e')),
-        );
+        CustomToast.show(context, 'Failed to load friends: $e', isError: true);
       }
     }
   }
@@ -57,12 +56,7 @@ class _FriendInviteDialogState extends State<FriendInviteDialog> {
     widget.onInviteSent?.call(friend.userId, friend.username);
     
     // Show confirmation
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Invitation sent to ${friend.username}!'),
-        duration: Duration(seconds: 2),
-      ),
-    );
+    CustomToast.show(context, 'Invitation sent to ${friend.username}!');
   }
 
   @override

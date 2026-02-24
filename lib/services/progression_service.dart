@@ -11,6 +11,7 @@ class ProgressionService {
   static const String _selectedThemeKey = 'selected_theme';
   static const String _totalWinsKey = 'total_wins';
   static const String _totalGamesKey = 'total_games';
+  static const String _totalXpKey = 'total_xp';
   static const String _challengesKey = 'daily_challenges';
   static const String _lastChallengeResetKey = 'last_challenge_reset';
   static const String _notificationsEnabledKey = 'notifications_enabled';
@@ -45,6 +46,7 @@ class ProgressionService {
       await _prefs.setString(_getKey(_selectedThemeKey), 'midnight_elite');
       await _prefs.setInt(_getKey(_totalWinsKey), 0);
       await _prefs.setInt(_getKey(_totalGamesKey), 0);
+      await _prefs.setInt(_getKey(_totalXpKey), 0);
     }
   }
 
@@ -76,6 +78,49 @@ class ProgressionService {
   Future<void> recordGameResult(bool won) async {
     await _prefs.setInt(_getKey(_totalGamesKey), getTotalGames() + 1);
     if (won) await _prefs.setInt(_getKey(_totalWinsKey), getTotalWins() + 1);
+  }
+
+  // --- XP & LEVEL SYSTEM ---
+  int getXP() => _prefs.getInt(_getKey(_totalXpKey)) ?? 0;
+  Future<void> addXP(int amount) async => await _prefs.setInt(_getKey(_totalXpKey), getXP() + amount);
+
+  static const List<Map<String, dynamic>> _levelTiers = [
+    {'level': 1, 'title': 'Rookie',       'xp': 0,     'color': 0xFF9E9E9E},
+    {'level': 2, 'title': 'Apprentice',   'xp': 200,   'color': 0xFF4CAF50},
+    {'level': 3, 'title': 'Skilled',       'xp': 500,   'color': 0xFF2196F3},
+    {'level': 4, 'title': 'Elite Player',  'xp': 1000,  'color': 0xFF9C27B0},
+    {'level': 5, 'title': 'Card Master',   'xp': 2500,  'color': 0xFFFFD700},
+    {'level': 6, 'title': 'Grand Master',  'xp': 5000,  'color': 0xFFF44336},
+    {'level': 7, 'title': 'Legend',        'xp': 10000, 'color': 0xFF00E5FF},
+  ];
+
+  Map<String, dynamic> getLevel() {
+    int xp = getXP();
+    Map<String, dynamic> current = _levelTiers.first;
+    Map<String, dynamic>? next;
+
+    for (int i = 0; i < _levelTiers.length; i++) {
+      if (xp >= _levelTiers[i]['xp']) {
+        current = _levelTiers[i];
+        next = (i + 1 < _levelTiers.length) ? _levelTiers[i + 1] : null;
+      }
+    }
+
+    int xpForCurrent = current['xp'] as int;
+    int xpForNext = next != null ? next['xp'] as int : xpForCurrent;
+    int xpInLevel = xp - xpForCurrent;
+    int xpNeeded = xpForNext - xpForCurrent;
+    double progress = xpNeeded > 0 ? (xpInLevel / xpNeeded).clamp(0.0, 1.0) : 1.0;
+
+    return {
+      'level': current['level'],
+      'title': current['title'],
+      'color': current['color'],
+      'xp': xp,
+      'xpForNext': xpForNext > 0 ? xpForNext : xpForCurrent,
+      'progress': progress,
+      'isMaxLevel': next == null,
+    };
   }
 
   // --- UNLOCKABLES ---

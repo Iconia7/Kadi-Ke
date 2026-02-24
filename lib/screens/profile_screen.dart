@@ -10,6 +10,7 @@ import '../services/app_config.dart';
 import '../services/achievement_service.dart';
 import '../services/feedback_service.dart';
 import 'package:in_app_review/in_app_review.dart';
+import '../widgets/custom_toast.dart';
 
 class ProfileScreen extends StatefulWidget {
   @override
@@ -23,6 +24,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   int _totalGames = 0;
   double _winRate = 0.0;
   String _currentThemeId = 'midnight_elite';
+  Map<String, dynamic> _levelInfo = {'level': 1, 'title': 'Rookie', 'color': 0xFF9E9E9E, 'xp': 0, 'xpForNext': 200, 'progress': 0.0, 'isMaxLevel': false};
 
   @override
   void initState() {
@@ -46,6 +48,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _totalGames = _progressionService.getTotalGames();
         _winRate = _progressionService.getWinRate();
         _currentThemeId = _progressionService.getSelectedTheme();
+        _levelInfo = _progressionService.getLevel();
       });
     }
   }
@@ -92,7 +95,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   GestureDetector(
                     onTap: _pickImage,
                     child: Container(
-                      width: 120, height: 120,
+                      width: 100, height: 100,
                       padding: EdgeInsets.all(4),
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
@@ -129,29 +132,59 @@ class _ProfileScreenState extends State<ProfileScreen> {
                        child: Text("Login to upload avatar", style: TextStyle(color: Colors.white38, fontSize: 10)),
                      ),
                   SizedBox(height: 20),
-                  Text(CustomAuthService().username ?? "Player One", style: TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.w900, letterSpacing: 1)),
+                  Text(CustomAuthService().username ?? "Player One", style: TextStyle(color: Colors.white, fontSize: 25, fontWeight: FontWeight.w900, letterSpacing: 1)),
                   Container(
                     margin: EdgeInsets.only(top: 8),
                     padding: EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                     decoration: BoxDecoration(
-                      color: theme.accentColor.withOpacity(0.1), 
+                      color: Color(_levelInfo['color'] as int).withOpacity(0.15),
                       borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: theme.accentColor.withOpacity(0.3)),
+                      border: Border.all(color: Color(_levelInfo['color'] as int).withOpacity(0.4)),
                     ),
-                    child: Text(
-                      _totalWins > 50 ? "CARD MASTER" : (_totalWins > 10 ? "ELITE PLAYER" : "ROOKIE"), 
-                      style: TextStyle(color: theme.accentColor, fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 2)
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.shield, color: Color(_levelInfo['color'] as int), size: 14),
+                        SizedBox(width: 6),
+                        Text(
+                          "LV.${_levelInfo['level']} ${(_levelInfo['title'] as String).toUpperCase()}",
+                          style: TextStyle(color: Color(_levelInfo['color'] as int), fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 2)
+                        ),
+                      ],
                     ),
                   ),
-                  SizedBox(height: 40),
+                  // XP Progress Bar
+                  Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 50, vertical: 12),
+                    child: Column(
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child: LinearProgressIndicator(
+                            value: _levelInfo['progress'] as double,
+                            backgroundColor: Colors.white10,
+                            valueColor: AlwaysStoppedAnimation<Color>(Color(_levelInfo['color'] as int)),
+                            minHeight: 8,
+                          ),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          _levelInfo['isMaxLevel'] == true
+                            ? "MAX LEVEL · ${_levelInfo['xp']} XP"
+                            : "${_levelInfo['xp']} / ${_levelInfo['xpForNext']} XP",
+                          style: TextStyle(color: Colors.white38, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1),
+                        ),
+                      ],
+                    ),
+                  ),
                   
                   // Stats Grid
                   Expanded(
                     child: GridView.count(
                       crossAxisCount: 2,
                       padding: EdgeInsets.symmetric(horizontal: 20),
-                      mainAxisSpacing: 20,
-                      crossAxisSpacing: 20,
+                      mainAxisSpacing: 15,
+                      crossAxisSpacing: 15,
                       childAspectRatio: 1.1,
                       children: [
                         _buildModernStatCard("Total Coins", "$_coins", Icons.monetization_on, Colors.amber),
@@ -163,7 +196,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -173,7 +206,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                   ),
                                     Container(
-                    height: 120,
+                    height: 100,
                     margin: EdgeInsets.only(bottom: 24),
                     child: ListView.builder(
                        scrollDirection: Axis.horizontal,
@@ -297,12 +330,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 bool sent = await FeedbackService().submitFeedback(msg, type);
                 
                 if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(sent ? "Thank you for your feedback!" : "Feedback saved locally. Will sync when online."),
-                      backgroundColor: sent ? Colors.green : Colors.orange,
-                    )
-                  );
+                  CustomToast.show(context, sent ? "Thank you for your feedback!" : "Feedback saved locally. Will sync when online.");
                 }
               },
               style: ElevatedButton.styleFrom(backgroundColor: Colors.amber, foregroundColor: Colors.black),
@@ -326,9 +354,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     } catch (e) {
       // Gracefully handle if Play Store isn't available
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not open Play Store review. Try again later.'), backgroundColor: Colors.orange),
-        );
+        CustomToast.show(context, 'Could not open Play Store review. Try again later.', isError: true);
       }
     }
   }
@@ -379,17 +405,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _uploadAvatar(File file) async {
       try {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Uploading Avatar...")));
+        CustomToast.show(context, "Uploading Avatar...");
         
         await CustomAuthService().uploadProfilePicture(file);
         
         if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Avatar Uploaded!")));
+            CustomToast.show(context, "Avatar Uploaded!");
             setState(() {}); // Refresh to show new avatar
         }
       } catch (e) {
          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Upload Failed: $e")));
+            CustomToast.show(context, "Upload Failed: $e", isError: true);
          }
       }
   }

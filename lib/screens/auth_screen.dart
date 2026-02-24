@@ -179,11 +179,11 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                       fit: BoxFit.contain,
                     ),
                   ),
-                  SizedBox(height: 20),
+                  SizedBox(height: 10),
                   Text(
                     'Welcome',
                     style: TextStyle(
-                      fontSize: 36,
+                      fontSize: 30,
                       fontWeight: FontWeight.bold,
                       color: Colors.white,
                       letterSpacing: 4,
@@ -259,7 +259,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
 
                         // Fixed height for TabBarView to prevent overflow
                         SizedBox(
-                           height: 400,
+                           height: 315,
                            child: TabBarView(
                              controller: _tabController,
                              children: [
@@ -353,7 +353,7 @@ Widget _buildLoginForm() {
                 child: Text('Forgot Password?', style: TextStyle(color: Color(0xFF00E5FF))),
               ),
             ),
-            SizedBox(height: 20),
+            SizedBox(height: 10),
             _buildActionButton('ENTER GAME', _isLoading ? null : _handleLogin),
           ],
 

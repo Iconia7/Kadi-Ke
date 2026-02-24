@@ -163,6 +163,120 @@ class VPSGameService {
     }));
   }
 
+  /// Create a new tournament
+  Future<Map<String, dynamic>> createTournament(String name, String gameType, int maxPlayers, int entryFee) async {
+    await connect();
+    
+    final completer = Completer<Map<String, dynamic>>();
+    late StreamSubscription subscription;
+
+    subscription = gameStream.listen((data) {
+      print('gameStream received: $data');
+      if (data['type'] == 'TOURNAMENT_CREATED') {
+         try {
+           // Ensure we safely extract the ID
+           var payload = data['data'];
+           if (payload is String) payload = jsonDecode(payload);
+           
+           print('Parsed ID: ${payload['id']}');
+           completer.complete(payload);
+         } catch (e) {
+           print('Error parsing: $e');
+           completer.completeError('Failed to parse tournament ID: $e');
+         }
+         subscription.cancel();
+      } else if (data['type'] == 'ERROR') {
+        print('Error from server: ${data['data']}');
+        completer.completeError(data['data']);
+        subscription.cancel();
+      }
+    });
+
+    String playerName = CustomAuthService().username ?? "Player";
+    
+    _channel!.sink.add(jsonEncode({
+      'type': 'CREATE_TOURNAMENT',
+      'name': name,
+      'gameType': gameType,
+      'maxPlayers': maxPlayers,
+      'entryFee': entryFee,
+      'playerName': playerName,
+    }));
+
+    return completer.future.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () {
+        subscription.cancel();
+        throw Exception('Tournament creation timeout');
+      },
+    );
+  }
+
+  /// Join an existing tournament
+  Future<Map<String, dynamic>> joinTournament(String tournamentId) async {
+    await connect();
+    
+    final completer = Completer<Map<String, dynamic>>();
+    late StreamSubscription subscription;
+
+    subscription = gameStream.listen((data) {
+      if (data['type'] == 'TOURNAMENT_UPDATED') {
+         try {
+           var payload = data['data'];
+           if (payload is String) payload = jsonDecode(payload);
+           if (payload['id'] == tournamentId) {
+              completer.complete(payload);
+              subscription.cancel();
+           }
+         } catch (e) {
+           completer.completeError('Failed to parse tournament data: $e');
+           subscription.cancel();
+         }
+      } else if (data['type'] == 'ERROR') {
+        completer.completeError(data['data']);
+        subscription.cancel();
+      }
+    });
+
+    String playerName = CustomAuthService().username ?? "Player";
+
+    _channel!.sink.add(jsonEncode({
+      'type': 'JOIN_TOURNAMENT',
+      'tournamentId': tournamentId,
+      'playerName': playerName,
+    }));
+
+    return completer.future.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () {
+        subscription.cancel();
+        throw Exception('Tournament join timeout');
+      },
+    );
+  }
+
+  /// Start a tournament (Host only)
+  Future<void> startTournament(String tournamentId) async {
+    if (!_isConnected || _channel == null) return;
+    
+    _channel!.sink.add(jsonEncode({
+      'type': 'START_TOURNAMENT',
+      'tournamentId': tournamentId,
+    }));
+  }
+
+  /// Report tournament match result
+  Future<void> reportTournamentMatch(String tournamentId, String matchId, String winnerId) async {
+    if (!_isConnected || _channel == null) return;
+    
+    _channel!.sink.add(jsonEncode({
+      'type': 'REPORT_TOURNAMENT_MATCH',
+      'tournamentId': tournamentId,
+      'matchId': matchId,
+      'winnerId': winnerId,
+    }));
+  }
+
   /// Send a game action to the server
   void sendAction(String type, Map<String, dynamic> data) {
     if (!_isConnected || _channel == null) {
@@ -211,6 +325,21 @@ class VPSGameService {
       return [];
     } catch (e) {
       print('Error fetching active rooms: $e');
+      return [];
+    }
+  }
+
+  /// Fetch active tournaments from VPS
+  Future<List<Map<String, dynamic>>> getActiveTournaments() async {
+    try {
+      final response = await http.get(Uri.parse('$httpUrl/active_tournaments'));
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        return List<Map<String, dynamic>>.from(data);
+      }
+      return [];
+    } catch (e) {
+      print('Error fetching active tournaments: $e');
       return [];
     }
   }

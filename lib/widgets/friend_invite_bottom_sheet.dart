@@ -3,6 +3,7 @@ import '../models/friend_model.dart';
 import '../services/friend_service.dart';
 import '../services/notification_service.dart';
 import '../services/vps_game_service.dart';
+import '../widgets/custom_toast.dart';
 
 /// Bottom sheet for inviting friends to a game
 /// Supports both Online (room code) and LAN (IP address) modes
@@ -43,18 +44,14 @@ class _FriendInviteBottomSheetState extends State<FriendInviteBottomSheet> {
     } catch (e) {
       setState(() => _loading = false);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading friends: $e')),
-        );
+        CustomToast.show(context, 'Error loading friends: $e', isError: true);
       }
     }
   }
 
   Future<void> _sendInvites() async {
     if (_selectedFriendIds.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select at least one friend')),
-      );
+      CustomToast.show(context, 'Please select at least one friend', isError: true);
       return;
     }
 
@@ -83,18 +80,11 @@ class _FriendInviteBottomSheetState extends State<FriendInviteBottomSheet> {
 
       if (mounted) {
         Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Sent ${_selectedFriendIds.length} invite(s)!'),
-            backgroundColor: Colors.green,
-          ),
-        );
+        CustomToast.show(context, 'Sent ${_selectedFriendIds.length} invite(s)!');
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error sending invites: $e')),
-        );
+        CustomToast.show(context, 'Error sending invites: $e', isError: true);
       }
     }
   }

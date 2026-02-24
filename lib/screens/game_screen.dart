@@ -18,6 +18,7 @@ import '../game_server.dart';
 import '../widgets/playing_card_widget.dart';
 import '../widgets/achievement_notification.dart';
 import '../widgets/chat_bubble.dart';
+import '../widgets/custom_toast.dart';
 import '../services/deck_service.dart';
 import '../services/sound_service.dart';
 import '../services/local_game_engine.dart';
@@ -32,6 +33,7 @@ class GameScreen extends StatefulWidget {
   final String? onlineGameCode;
   final String gameType; // 'kadi' or 'gofish'
   final Map<String, dynamic>? rules;
+  final bool isTournament; // Determine if we should return "WON" result
 
   const GameScreen({super.key, 
     required this.isHost, 
@@ -41,6 +43,7 @@ class GameScreen extends StatefulWidget {
     this.onlineGameCode,
     this.gameType = 'kadi', 
     this.rules,
+    this.isTournament = false,
   });
 
   @override
@@ -304,6 +307,10 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   }
 
   void _showDisconnectDialog(String title, String message) {
+    // If disconnected before game started, refund fee
+    if (!_gameHasStarted) {
+      _refundEntryFee();
+    }
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -322,6 +329,18 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         ],
       ),
     );
+  }
+
+  void _refundEntryFee() {
+    // Only refund if fee was actually paid and game hadn't started
+    if (_entryFee > 0 && _hasPaidEntry && !_gameHasStarted) {
+      ProgressionService().addCoins(_entryFee);
+      print("Refunded $_entryFee coins because game hasn't started.");
+      if (mounted) {
+         CustomToast.show(context, "Refunded $_entryFee Coins");
+      }
+      _hasPaidEntry = false; // Prevent double refund
+    }
   }
 
   void _showAchievementSnackbar(String text) {
@@ -597,7 +616,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
        }
     }
     else if (type == 'ERROR') {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(data['data']), backgroundColor: Colors.red));
+      CustomToast.show(context, data['data'], isError: true);
     }
     
   }
@@ -675,11 +694,7 @@ bool _validateLocalMove(CardModel card) {
 
     if (!_validateLocalMove(card)) {
        SoundService.play('error');
-       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-         content: Text("Invalid move! Check Kadi rules.", style: TextStyle(color: Colors.white)),
-         backgroundColor: Colors.red.withOpacity(0.8),
-         behavior: SnackBarBehavior.floating,
-       ));
+       CustomToast.show(context, "Invalid move! Check Kadi rules.", isError: true);
        return;
     }
 
@@ -823,7 +838,7 @@ bool _validateLocalMove(CardModel card) {
      } else {
         // Not enough money
         Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Not enough coins for this room! Entry: $_entryFee"), backgroundColor: Colors.red));
+        CustomToast.show(context, "Not enough coins for this room! Entry: $_entryFee", isError: true);
      }
   }
 
@@ -972,7 +987,13 @@ bool _validateLocalMove(CardModel card) {
         child: Row(
           children: [
             GestureDetector(
-              onTap: () => Navigator.pop(context),
+              onTap: () {
+                // If leaving lobby before game started, refund fee
+                if (!_gameHasStarted) {
+                  _refundEntryFee();
+                }
+                Navigator.pop(context);
+              },
               child: Container(
                 padding: EdgeInsets.all(8),
                 decoration: BoxDecoration(color: Colors.white10, shape: BoxShape.circle),
@@ -1412,10 +1433,12 @@ Future<void> _handleGameOver(dynamic data) async {
     }
     
     int coinsEarned = 0;
+    int xpEarned = 0;
 
     // 1. Handle Stats & Coins
     if (didIWin) {
-      coinsEarned = 100;
+      coinsEarned = 100; // Base win reward
+      xpEarned = 50;
       
       // Record win LOCALLY so Profile screen shows it
       await ProgressionService().recordGameResult(true);
@@ -1430,11 +1453,18 @@ Future<void> _handleGameOver(dynamic data) async {
          // Winner takes the WHOLE pot (based on starting count)
          int winnerCount = _startingPlayerCount > 0 ? _startingPlayerCount : _players.length;
          int winnings = _entryFee * winnerCount;
-         await ProgressionService().addCoins(winnings);
+         coinsEarned += winnings; // Add pot on top of base
          _showAchievementSnackbar("Won pot of $winnings Coins!");
       }
+      
+      await ProgressionService().addCoins(coinsEarned);
+      await ProgressionService().addXP(xpEarned);
     } else {
+      coinsEarned = 25; // Consolation reward
+      xpEarned = 10;
       await ProgressionService().recordGameResult(false);
+      await ProgressionService().addCoins(coinsEarned);
+      await ProgressionService().addXP(xpEarned);
     }
       
     // Achievement: First Win & Sniper & Rich Kid
@@ -1530,55 +1560,74 @@ Future<void> _handleGameOver(dynamic data) async {
                         children: [
                            _buildRewardItem(Icons.emoji_events, "${didIWin ? 1 : 0}", "Wins"),
                            _buildRewardItem(Icons.monetization_on, "$coinsEarned", "Coins"),
-                           _buildRewardItem(Icons.star, "50", "XP"),
+                           _buildRewardItem(Icons.star, "$xpEarned", "XP"),
                         ]
                       )
                    ),
                    
                    Spacer(),
                    
-                   Row(
-                    children: [
-                      Expanded(
-                        child: ElevatedButton.icon(
-                        onPressed: () {
-                           Navigator.pop(context); // Close Dialog
-                           Navigator.pop(context); // Back to Home
-                        },
-                        icon: Icon(Icons.home),
-                        label: Text("HOME"),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.white10,
-                          padding: EdgeInsets.symmetric(vertical: 12),
-                          shape: StadiumBorder()
-                        ),
-                      )),
-                      SizedBox(width: 12),
-                      Expanded(
-                        child: ElevatedButton.icon(
-                        onPressed: () {
-                           Navigator.pop(context); // Close Dialog
-                           // Restart logic
-                           if (widget.isHost || _isOffline) {        
-                             _startGame();
-                             // Notify others? Usually room persists.
-                           } else {
-                             // Guest waiting for host
-                             ScaffoldMessenger.of(context).showSnackBar(
-                               SnackBar(content: Text("Waiting for Host to restart...", style: TextStyle(color: Colors.white)))
-                             );
-                           }
-                        },
-                        icon: Icon(Icons.refresh),
-                        label: Text("PLAY AGAIN"),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: didIWin ? Colors.green : Colors.grey[700],
-                          padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                          shape: StadiumBorder()
-                        ),
-                      )),
-                    ],
-                  )
+                   if (widget.isTournament)
+                     Row(
+                       children: [
+                         Expanded(
+                           child: ElevatedButton.icon(
+                             onPressed: () {
+                               Navigator.pop(context); // Close dialog
+                               Navigator.pop(context, didIWin ? 'WON' : 'LOST'); // Return result
+                             },
+                             icon: Icon(Icons.arrow_forward),
+                             label: Text(didIWin ? "NEXT MATCH" : "CONTINUE"),
+                             style: ElevatedButton.styleFrom(
+                               backgroundColor: didIWin ? Colors.green : Colors.grey[700],
+                               padding: EdgeInsets.symmetric(vertical: 12),
+                               shape: StadiumBorder(),
+                             ),
+                           ),
+                         ),
+                       ],
+                     )
+                   else
+                     Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton.icon(
+                          onPressed: () {
+                             Navigator.pop(context); // Close Dialog
+                             Navigator.pop(context); // Back to Home
+                          },
+                          icon: Icon(Icons.home),
+                          label: Text("HOME"),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.white10,
+                            padding: EdgeInsets.symmetric(vertical: 12),
+                            shape: StadiumBorder()
+                          ),
+                        )),
+                        SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                          onPressed: () {
+                             Navigator.pop(context); // Close Dialog
+                             // Restart logic
+                             if (widget.isHost || _isOffline) {        
+                               _startGame();
+                               // Notify others? Usually room persists.
+                             } else {
+                               // Guest waiting for host
+                               CustomToast.show(context, "Waiting for Host to restart...");
+                             }
+                          },
+                          icon: Icon(Icons.refresh),
+                          label: Text("PLAY AGAIN"),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: didIWin ? Colors.green : Colors.grey[700],
+                            padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                            shape: StadiumBorder()
+                          ),
+                        )),
+                      ],
+                    )
                 ],
               ),
             ),
@@ -2008,12 +2057,7 @@ Future<void> _handleGameOver(dynamic data) async {
        });
     } else {
        // Only show snackbar for real unknown players, not System
-       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text("$senderName: $message", style: TextStyle(color: Colors.white)), 
-          duration: Duration(seconds: 2),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: Colors.black87,
-       ));
+       CustomToast.show(context, "$senderName: $message");
     }
   }
   
@@ -2169,6 +2213,11 @@ Future<void> _handleGameOver(dynamic data) async {
 
   @override
   void dispose() {
+    // Safety net: if the screen is disposed (e.g., swiped back) before the game starts
+    if (!_gameHasStarted) {
+      _refundEntryFee();
+    }
+    
     _statusSubscription?.cancel();
     _gameSubscription?.cancel();
     if (_isOnline) VPSGameService().leaveGame();

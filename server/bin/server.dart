@@ -147,8 +147,72 @@ class GameRoom {
     };
   }
 }
+
+class TournamentMatch {
+  final String id;
+  List<String> playerIds = [];
+  String status = 'pending'; // 'pending', 'active', 'finished'
+  String? winnerId;
+  int round; // 0 = Quarter, 1 = Semi, 2 = Final
+  GameRoom? room; // Associated game room when active
+
+  TournamentMatch(this.id, this.round);
+}
+
+class TournamentRoom {
+  final String id;
+  final String hostId;
+  String name;
+  String gameMode;
+  int maxPlayers; // 4, 8, 16
+  int entryFee;
+  String status = 'recruiting'; // 'recruiting', 'in_progress', 'completed'
+  List<Player> currentPlayers = [];
+  List<TournamentMatch> matches = [];
+  int prizePool = 0;
+
+  TournamentRoom({
+    required this.id,
+    required this.hostId,
+    required this.name,
+    this.gameMode = 'kadi',
+    this.maxPlayers = 8,
+    this.entryFee = 0,
+  });
+
+  void broadcast(String type, dynamic data) {
+    String payload = jsonEncode({"type": type, "data": data});
+    for (var p in currentPlayers) {
+      try { p.socket.sink.add(payload); } catch (e) { MultiGameServer._log("Socket error for ${p.id}: $e", level: 'ERROR'); }
+    }
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'hostId': hostId,
+      'name': name,
+      'gameMode': gameMode,
+      'maxPlayers': maxPlayers,
+      'entryFee': entryFee,
+      'status': status,
+      'currentPlayers': currentPlayers.map((p) => p.id).toList(),
+      'matches': matches.map((m) => {
+        'id': m.id,
+        'playerIds': m.playerIds,
+        'status': m.status,
+        'winnerId': m.winnerId,
+        'round': m.round,
+      }).toList(),
+      'prizePool': prizePool,
+    };
+  }
+}
+
 class MultiGameServer {
   final Map<String, GameRoom> _rooms = {}; 
+  final Map<String, TournamentRoom> _tournaments = {};
+  
   
   // Track online users by userId -> username
   final Map<String, String> _onlineUsers = {};
@@ -593,7 +657,7 @@ class MultiGameServer {
   }
 
   Future<Response> _handleActiveRooms(Request request) async {
-     final activeRooms = _rooms.values
+    final activeRooms = _rooms.values
         .where((r) => !r.isGameStarted && r.players.length < 8)
         .map((r) => {
            'code': r.code,
@@ -602,7 +666,30 @@ class MultiGameServer {
            'entryFee': r.entryFee
         }).toList();
      
-     return Response.ok(jsonEncode(activeRooms), headers: _corsHeaders);
+    return Response.ok(jsonEncode(activeRooms), headers: _corsHeaders);
+  }
+
+  Future<Response> _handleActiveTournaments(Request request) async {
+    try {
+      final activeTournaments = _tournaments.values
+          .where((t) => t.status == 'recruiting' && t.currentPlayers.length < t.maxPlayers)
+          .map((t) => {
+             'id': t.id,
+             'name': t.name,
+             'gameMode': t.gameMode,
+             'maxPlayers': t.maxPlayers,
+             'playerCount': t.currentPlayers.length,
+             'currentPlayers': t.currentPlayers.map((p) => p.id).toList(),
+             'entryFee': t.entryFee,
+             'prizePool': t.prizePool,
+             'status': t.status,
+          }).toList();
+      
+      return Response.ok(jsonEncode(activeTournaments), headers: _corsHeaders);
+    } catch (e) {
+      _log("Error in _handleActiveTournaments: $e", level: 'ERROR');
+      return Response.internalServerError(body: jsonEncode({'error': e.toString()}), headers: _corsHeaders);
+    }
   }
 
   Future<Response> _handleUpdateStats(Request request) async {
@@ -1051,6 +1138,198 @@ class MultiGameServer {
                  socket.sink.add(jsonEncode({"type": "ERROR", "data": "Room not found"}));
                }
              }
+
+             // --- TOURNAMENT MANAGEMENT ---
+             else if (type == 'CREATE_TOURNAMENT') {
+               String tournamentId = _generateRoomCode();
+               _tournaments[tournamentId] = TournamentRoom(
+                 id: tournamentId,
+                 hostId: playerId ?? DateTime.now().millisecondsSinceEpoch.toString(),
+                 name: data['name'] ?? 'Tournament $tournamentId',
+                 gameMode: data['gameType'] ?? 'kadi',
+                 maxPlayers: data['maxPlayers'] ?? 8,
+                 entryFee: data['entryFee'] ?? 0,
+               );
+               
+               String finalPlayerId = playerId ?? DateTime.now().millisecondsSinceEpoch.toString();
+               String playerName = _onlineUsers[finalPlayerId] ?? data['playerName'] ?? "Host"; 
+               
+               var userData = _dbService.getUserById(finalPlayerId);
+               Player newPlayer = Player(finalPlayerId, playerName, userData?['avatar'], socket);
+               _tournaments[tournamentId]!.currentPlayers.add(newPlayer);
+               _tournaments[tournamentId]!.prizePool += _tournaments[tournamentId]!.entryFee;
+               
+               socket.sink.add(jsonEncode({"type": "TOURNAMENT_CREATED", "data": _tournaments[tournamentId]!.toJson()}));
+               _log("Tournament Created: $tournamentId by $playerName.");
+             }
+             else if (type == 'JOIN_TOURNAMENT') {
+               String tId = data['tournamentId'].toString().toUpperCase();
+               
+               if (_tournaments.containsKey(tId)) {
+                 TournamentRoom tRoom = _tournaments[tId]!;
+                 
+                 if (tRoom.status != 'recruiting') {
+                    socket.sink.add(jsonEncode({"type": "ERROR", "data": "Tournament already started or finished"}));
+                    return;
+                 }
+                 if (tRoom.currentPlayers.length >= tRoom.maxPlayers) {
+                    socket.sink.add(jsonEncode({"type": "ERROR", "data": "Tournament is full"}));
+                    return;
+                 }
+
+                 String finalPlayerId = playerId ?? DateTime.now().millisecondsSinceEpoch.toString();
+                 String playerName = _onlineUsers[finalPlayerId] ?? data['playerName'] ?? "Player";
+                 
+                 bool alreadyIn = tRoom.currentPlayers.any((p) => p.id == finalPlayerId);
+                 if (!alreadyIn) {
+                   var userData = _dbService.getUserById(finalPlayerId);
+                   Player newPlayer = Player(finalPlayerId, playerName, userData?['avatar'], socket);
+                   tRoom.currentPlayers.add(newPlayer);
+                   tRoom.prizePool += tRoom.entryFee;
+                   
+                   tRoom.broadcast("TOURNAMENT_UPDATED", tRoom.toJson());
+                   _log("Player $playerName joined tournament $tId");
+                 }
+               } else {
+                 socket.sink.add(jsonEncode({"type": "ERROR", "data": "Tournament not found"}));
+               }
+             }
+             else if (type == 'START_TOURNAMENT') {
+                String tId = data['tournamentId'].toString().toUpperCase();
+                if (_tournaments.containsKey(tId)) {
+                   TournamentRoom tRoom = _tournaments[tId]!;
+                   if (tRoom.hostId != playerId) {
+                      socket.sink.add(jsonEncode({"type": "ERROR", "data": "Only host can start tournament"}));
+                      return;
+                   }
+                   if (tRoom.currentPlayers.length < 2) {
+                      socket.sink.add(jsonEncode({"type": "ERROR", "data": "Not enough players"}));
+                      return;
+                   }
+
+                   tRoom.status = 'in_progress';
+                   
+                   // Generate bracket (1v1v1v1 where possible)
+                   tRoom.matches.clear();
+                   List<Player> shuffledPlayers = List.from(tRoom.currentPlayers)..shuffle();
+                   
+                   int matchCount = (shuffledPlayers.length / 4).ceil();
+                   if (shuffledPlayers.length <= 4) matchCount = 1;
+                   
+                   for (int i = 0; i < matchCount; i++) {
+                      String matchId = _generateRoomCode();
+                      TournamentMatch newMatch = TournamentMatch(matchId, 0); // Round 0
+                      
+                      // Assign up to 4 players to this match
+                      int playersToTake = (shuffledPlayers.length / (matchCount - i)).ceil();
+                      if (playersToTake > 4) playersToTake = 4;
+                      
+                      for (int p = 0; p < playersToTake; p++) {
+                         if (shuffledPlayers.isNotEmpty) {
+                            newMatch.playerIds.add(shuffledPlayers.removeAt(0).id);
+                         }
+                      }
+                      
+                      // Create corresponding GameRoom for this tournament match
+                      _rooms[matchId] = GameRoom(matchId);
+                      _rooms[matchId]!.gameType = tRoom.gameMode;
+                      _rooms[matchId]!.entryFee = 0; // Fee already collected globally
+                      newMatch.room = _rooms[matchId];
+                      
+                      tRoom.matches.add(newMatch);
+                   }
+                   
+                   // Broadcast the complete bracket tree and start signal
+                   tRoom.broadcast("TOURNAMENT_STARTED", tRoom.toJson());
+                   _log("Tournament $tId started with ${tRoom.matches.length} matches.");
+                }
+             }
+             else if (type == 'REPORT_TOURNAMENT_MATCH') {
+                String tId = data['tournamentId'].toString().toUpperCase();
+                if (_tournaments.containsKey(tId)) {
+                   TournamentRoom tRoom = _tournaments[tId]!;
+                   String matchId = data['matchId'];
+                   String winnerId = data['winnerId'];
+                   
+                   var match = tRoom.matches.firstWhere((m) => m.id == matchId);
+                   if (match.status == 'finished') return; // Prevent duplicate reports
+                   
+                   match.status = 'finished';
+                   match.winnerId = winnerId;
+                   _rooms.remove(matchId); // Cleanup game room
+                   
+                   // Check if all matches in this round are finished
+                   int currentRound = match.round;
+                   bool roundFinished = tRoom.matches.where((m) => m.round == currentRound).every((m) => m.status == 'finished');
+                   
+                   if (roundFinished) {
+                      // Collect all winners from this round
+                      List<String> roundWinners = tRoom.matches
+                         .where((m) => m.round == currentRound)
+                         .map((m) => m.winnerId!)
+                         .toList();
+                         
+                      if (roundWinners.length == 1) {
+                         // TOURNAMENT OVER!
+                         tRoom.status = 'completed';
+                         String championId = roundWinners.first;
+                         Player? champion = tRoom.currentPlayers.where((p) => p.id == championId).firstOrNull;
+                         
+                         if (champion != null && tRoom.prizePool > 0) {
+                            var championData = _dbService.getUserById(championId);
+                            if (championData != null) {
+                               int currentCoins = championData['coins'] ?? 0;
+                               _dbService.updateUser(championId, {'coins': currentCoins + tRoom.prizePool});
+                            }
+                         }
+                         
+                         tRoom.broadcast("TOURNAMENT_FINISHED", {
+                            "championId": championId,
+                            "championName": champion?.name ?? "Unknown",
+                            "prizePool": tRoom.prizePool,
+                            "tournamentData": tRoom.toJson()
+                         });
+                         _log("Tournament $tId FINISHED! Champion: ${champion?.name}");
+                         
+                         // Clean up tournament memory after 1 minute
+                         Future.delayed(Duration(minutes: 1), () => _tournaments.remove(tId));
+                      } else {
+                         // Build Next Round Matches
+                         int nextRound = currentRound + 1;
+                         int matchCount = (roundWinners.length / 4).ceil();
+                         if (roundWinners.length <= 4) matchCount = 1;
+
+                         for (int i = 0; i < matchCount; i++) {
+                            String nextMatchId = _generateRoomCode();
+                            TournamentMatch nextMatch = TournamentMatch(nextMatchId, nextRound);
+                            
+                            int playersToTake = (roundWinners.length / (matchCount - i)).ceil();
+                            if (playersToTake > 4) playersToTake = 4;
+                            
+                            for (int p = 0; p < playersToTake; p++) {
+                               if (roundWinners.isNotEmpty) {
+                                  nextMatch.playerIds.add(roundWinners.removeAt(0));
+                               }
+                            }
+                            
+                            // Create next room
+                            _rooms[nextMatchId] = GameRoom(nextMatchId);
+                            _rooms[nextMatchId]!.gameType = tRoom.gameMode;
+                            _rooms[nextMatchId]!.entryFee = 0; 
+                            nextMatch.room = _rooms[nextMatchId];
+                            
+                            tRoom.matches.add(nextMatch);
+                         }
+                         
+                         tRoom.broadcast("TOURNAMENT_ROUND_ADVANCED", tRoom.toJson());
+                         _log("Tournament $tId advanced to Round $nextRound");
+                      }
+                   } else {
+                     tRoom.broadcast("TOURNAMENT_UPDATED", tRoom.toJson());
+                   }
+                }
+             }
+
              
              // --- SOCIAL ACTIONS ---
              else if (type == 'INVITE') {
@@ -1157,6 +1436,9 @@ class MultiGameServer {
          }
          if (path == 'active_rooms') {
             return _handleActiveRooms(request);
+         }
+         if (path == 'active_tournaments') {
+            return _handleActiveTournaments(request);
          }
          if (path == 'update_profile') {
             return _handleUpdateProfile(request);

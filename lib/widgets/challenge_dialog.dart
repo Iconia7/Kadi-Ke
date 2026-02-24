@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/challenge_model.dart';
 import '../services/progression_service.dart';
+import '../widgets/custom_toast.dart';
 
 class ChallengeDialog extends StatefulWidget {
   const ChallengeDialog({super.key});
@@ -21,12 +22,7 @@ class _ChallengeDialogState extends State<ChallengeDialog> {
   void _claimReward(ChallengeModel challenge) async {
     final success = await ProgressionService().claimChallengeReward(challenge.id);
     if (success) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Claimed ${challenge.reward} Coins!"),
-          backgroundColor: Colors.green,
-        ),
-      );
+      CustomToast.show(context, "Claimed ${challenge.reward} Coins!");
       setState(() {
         _challenges = ProgressionService().getChallenges();
       });
@@ -55,13 +51,16 @@ class _ChallengeDialogState extends State<ChallengeDialog> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
-                  "DAILY CHALLENGES",
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 2,
+                const Expanded(
+                  child: Text(
+                    "DAILY CHALLENGES",
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 2,
+                    ),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
                 IconButton(
@@ -101,10 +100,14 @@ class _ChallengeDialogState extends State<ChallengeDialog> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                challenge.title,
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+              Expanded(
+                child: Text(
+                  challenge.title,
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
+              const SizedBox(width: 8),
               Text(
                 "${challenge.reward} 🪙",
                 style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold),

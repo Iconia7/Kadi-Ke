@@ -3,6 +3,7 @@ import 'dart:ui';
 import '../models/friend_model.dart';
 import '../services/friend_service.dart';
 import '../services/custom_auth_service.dart';
+import '../widgets/custom_toast.dart';
 
 class FriendsScreen extends StatefulWidget {
   const FriendsScreen({super.key});
@@ -52,9 +53,7 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading friends: $e')),
-        );
+        CustomToast.show(context, 'Error loading friends: $e', isError: true);
       }
     }
   }
@@ -77,9 +76,7 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
     } catch (e) {
       if (mounted) {
         setState(() => _isSearching = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Search error: $e')),
-        );
+        CustomToast.show(context, 'Search error: $e', isError: true);
       }
     }
   }
@@ -88,17 +85,13 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
     try {
       await FriendService().sendFriendRequest(username);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Friend request sent to $username!')),
-        );
+        CustomToast.show(context, 'Friend request sent to $username!');
         _searchController.clear();
         setState(() => _searchResults = []);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to send request: $e')),
-        );
+        CustomToast.show(context, 'Failed to send request: $e', isError: true);
       }
     }
   }
@@ -106,9 +99,7 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
   Future<void> _acceptRequest(Friend friend) async {
     final success = await FriendService().acceptFriendRequest(friend.userId);
     if (success && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${friend.username} is now your friend!')),
-      );
+      CustomToast.show(context, '${friend.username} is now your friend!');
       _loadFriends();
     }
   }
@@ -140,9 +131,7 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
     if (confirm == true) {
       final success = await FriendService().removeFriend(friend.userId);
       if (success && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Removed ${friend.username}')),
-        );
+        CustomToast.show(context, 'Removed ${friend.username}');
         _loadFriends();
       }
     }

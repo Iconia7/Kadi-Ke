@@ -9,6 +9,7 @@ import '../services/progression_service.dart';
 import '../services/notification_service.dart';
 import '../services/feedback_service.dart';
 import '../widgets/notification_test_dialog.dart';
+import '../widgets/custom_toast.dart';
 import 'auth_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -63,13 +64,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await CustomAuthService().updateProfile(_nameController.text.trim());
       await _loadCurrentName();
       setState(() => _isEditingName = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Username updated successfully!"), backgroundColor: Colors.green),
-      );
+      CustomToast.show(context, "Username updated successfully!");
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString()), backgroundColor: Colors.red),
-      );
+      CustomToast.show(context, e.toString(), isError: true);
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -106,9 +103,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _launchURL(String url) async {
     final Uri uri = Uri.parse(url);
     if (!await launchUrl(uri)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Could not launch $url")),
-      );
+      CustomToast.show(context, "Could not launch $url", isError: true);
     }
   }
 
@@ -344,9 +339,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _testNotification() async {
     await NotificationService().requestPermission();
     await NotificationService().showGameVictoryNotification(500);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("Notification sent! (Check status bar)"), backgroundColor: Colors.green),
-    );
+    CustomToast.show(context, "Notification sent! (Check status bar)");
   }
 
   Future<void> _requestAppReview() async {
@@ -359,9 +352,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not open Play Store review. Try again later.'), backgroundColor: Colors.orange),
-        );
+        CustomToast.show(context, 'Could not open Play Store review. Try again later.', isError: true);
       }
     }
   }
@@ -394,13 +385,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               Navigator.pop(ctx);
               try {
                 await FeedbackService().submitFeedback(_feedbackController.text.trim(), 'bug_report');
-                if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text("Thanks for the feedback!"), backgroundColor: Colors.green),
-                );
+                if (mounted) CustomToast.show(context, "Thanks for the feedback!");
               } catch (e) {
-                if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text("Failed to send: $e"), backgroundColor: Colors.red),
-                );
+                if (mounted) CustomToast.show(context, "Failed to send: $e", isError: true);
               }
             },
             child: Text("SUBMIT"),

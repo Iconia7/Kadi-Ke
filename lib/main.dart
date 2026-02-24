@@ -8,8 +8,10 @@ import 'services/custom_auth_service.dart';
 import 'services/notification_service.dart';
 import 'services/progression_service.dart';
 import 'services/vps_game_service.dart';
+import 'services/vps_game_service.dart';
 import 'services/feedback_service.dart';
 import 'screens/game_screen.dart';
+import 'screens/tournament_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -185,18 +187,30 @@ class _MyAppState extends State<MyApp> {
             onPressed: () {
               Navigator.pop(context);
               // Auto-join: Navigating to $gameType lobby $roomCode
-              print("Auto-join: Navigating to $gameType lobby $roomCode");
-              
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (context) => GameScreen(
-                    isHost: false,
-                    hostAddress: 'online',
-                    onlineGameCode: roomCode,
-                    gameType: gameType,
-                  ),
-                ),
-              );
+              if (gameType.toLowerCase() == 'tournament') {
+                 print("Auto-join: Navigating to TOURNAMENT lobby $roomCode");
+                 Navigator.of(context).push(
+                   MaterialPageRoute(
+                     builder: (context) => TournamentScreen(
+                       isHost: false,
+                       tournamentId: roomCode,
+                       gameType: 'kadi', // tournaments default to kadi for now
+                     ),
+                   ),
+                 );
+              } else {
+                 print("Auto-join: Navigating to $gameType lobby $roomCode");
+                 Navigator.of(context).push(
+                   MaterialPageRoute(
+                     builder: (context) => GameScreen(
+                       isHost: false,
+                       hostAddress: 'online',
+                       onlineGameCode: roomCode,
+                       gameType: gameType,
+                     ),
+                   ),
+                 );
+              }
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF00E5FF),
