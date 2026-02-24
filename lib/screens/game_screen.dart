@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:ui'; 
 import 'package:flutter/services.dart'; 
 import 'package:flutter/material.dart';
+import 'dart:math' as math;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:confetti/confetti.dart';
 import 'package:in_app_update/in_app_update.dart'; 
@@ -24,6 +25,7 @@ import '../services/sound_service.dart';
 import '../services/local_game_engine.dart';
 import '../services/go_fish_engine.dart';
 import '../widgets/flying_emoji.dart'; // Add Import
+import '../widgets/particle_overlay.dart';
 
 class GameScreen extends StatefulWidget {
   final bool isHost;
@@ -55,8 +57,17 @@ class PlayerInfo {
   final String name;
   final String? avatar;
   final int index;
+  final String? title;
+  final int xp;
 
-  PlayerInfo({required this.id, required this.name, this.avatar, required this.index});
+  PlayerInfo({
+    required this.id, 
+    required this.name, 
+    this.avatar, 
+    required this.index, 
+    this.title, 
+    this.xp = 0
+  });
 }
 
 class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
@@ -224,11 +235,14 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   }
 
   Future<void> _loadTheme() async {
-    // We assume ProgressionService is already initialized correctly in _initializeConnection
     if(mounted) {
+       final themeId = ProgressionService().getSelectedTheme();
+       final theme = TableThemes.getTheme(themeId);
        setState(() {
-           _currentThemeId = ProgressionService().getSelectedTheme();
+           _currentThemeId = themeId;
        });
+       // Start theme-specific BGM (Temporarily Disabled by User Request)
+       // SoundService.playBGM(theme.bgmPath);
     }
   }
 
@@ -518,6 +532,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           name: p['name'] ?? 'Player ${i + 1}',
           avatar: p['avatar'],
           index: i, 
+          title: p['title'],
+          xp: int.tryParse(p['xp']?.toString() ?? "0") ?? 0,
         ));
       }
 
@@ -908,6 +924,11 @@ bool _validateLocalMove(CardModel card) {
                 opacity: 0.05,
                 child: Image.asset("assets/images/pattern.png", repeat: ImageRepeat.repeat, errorBuilder: (c,e,s)=>SizedBox()),
               ),
+            ),
+            
+            // DYNAMIC ATMOSPHERE
+            Positioned.fill(
+              child: ParticleOverlay(color: theme.fxColor),
             ),
             
             Column(
@@ -1513,17 +1534,17 @@ Future<void> _handleGameOver(dynamic data) async {
             // --- MAIN CARD ---
             Container(
               width: double.infinity,
-              height: 400,
+              height: 440, // Slightly taller
               padding: EdgeInsets.fromLTRB(20, 60, 20, 20),
               decoration: BoxDecoration(
                  color: Color(0xFF1E293B),
                  borderRadius: BorderRadius.circular(24),
                  boxShadow: [
-                    BoxShadow(color: Colors.black45, blurRadius: 20, offset: Offset(0, 10))
+                    BoxShadow(color: Colors.black45, blurRadius: 40, offset: Offset(0, 10))
                  ],
                  border: Border.all(
-                    color: didIWin ? Colors.amber.withOpacity(0.3) : Colors.white10,
-                    width: 1
+                    color: didIWin ? Colors.amber.withOpacity(0.5) : Colors.white10,
+                    width: 2
                  )
               ),
               child: Column(
@@ -1532,39 +1553,58 @@ Future<void> _handleGameOver(dynamic data) async {
                    Text(
                      didIWin ? "VICTORY!" : "DEFEAT",
                      style: TextStyle(
-                        fontFamily: 'Orbitron',
-                        fontSize: 32,
-                        fontWeight: FontWeight.bold,
-                        color: didIWin ? Colors.amber : Colors.grey,
+                        fontSize: 36,
+                        fontWeight: FontWeight.w900,
+                        color: didIWin ? Colors.amber : Colors.grey[400],
+                        letterSpacing: 2,
                         shadows: [
-                          if (didIWin) Shadow(color: Colors.amberAccent, blurRadius: 20)
+                          if (didIWin) Shadow(color: Colors.amberAccent.withOpacity(0.5), blurRadius: 20)
                         ]
                      ),
                    ),
                    SizedBox(height: 10),
                    Text(
-                     didIWin ? "You dominated the table!" : "Better luck next time.",
-                     style: TextStyle(color: Colors.white70, fontSize: 16),
+                     didIWin ? "YOU DOMINATED THE TABLE!" : "BETTER LUCK NEXT TIME.",
+                     style: TextStyle(color: Colors.white38, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.5),
                    ),
                    SizedBox(height: 30),
                    
                    // REWARDS
                    Container(
-                      padding: EdgeInsets.all(16),
+                      padding: EdgeInsets.all(20),
                       decoration: BoxDecoration(
-                         color: Colors.black26,
-                         borderRadius: BorderRadius.circular(16)
+                         color: Colors.black45,
+                         borderRadius: BorderRadius.circular(20),
+                         border: Border.all(color: Colors.white10)
                       ),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                         children: [
-                           _buildRewardItem(Icons.emoji_events, "${didIWin ? 1 : 0}", "Wins"),
-                           _buildRewardItem(Icons.monetization_on, "$coinsEarned", "Coins"),
+                           _buildRewardItem(Icons.emoji_events, "${didIWin ? 1 : 0}", "WINS"),
+                           _buildRewardItem(Icons.monetization_on, "$coinsEarned", "COINS"),
                            _buildRewardItem(Icons.star, "$xpEarned", "XP"),
                         ]
                       )
                    ),
                    
+                   if (didIWin) ...[
+                      SizedBox(height: 20),
+                      OutlinedButton.icon(
+                        onPressed: () {
+                           // Simple share functionality
+                           // In a real app we'd use 'share_plus' package
+                           CustomToast.show(context, "Link Copied to Clipboard! 🔗");
+                        },
+                        icon: Icon(Icons.share, size: 16),
+                        label: Text("SHARE VICTORY", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                        style: OutlinedButton.styleFrom(
+                           foregroundColor: Colors.blueAccent,
+                           side: BorderSide(color: Colors.blueAccent.withOpacity(0.5)),
+                           shape: StadiumBorder()
+                        ),
+                      ),
+                   ],
+
                    Spacer(),
                    
                    if (widget.isTournament)
@@ -2228,6 +2268,7 @@ Future<void> _handleGameOver(dynamic data) async {
     _confettiController.dispose();
     _pulseController.dispose();
     _cardThrowController.dispose();
+    // SoundService.stopBGM(); // Temporarily Disabled
     super.dispose();
   }
 }

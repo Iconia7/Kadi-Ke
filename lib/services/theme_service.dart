@@ -7,6 +7,8 @@ class ThemeModel {
   final Color tableColor;           // Felt color
   final Color accentColor;          // Buttons/Highlights
   final Color cardBackColor;        // Fallback card back
+  final String bgmPath;             // Path to music file
+  final Color fxColor;              // Color for particles/effects
   final Color textColor;
 
   ThemeModel({
@@ -16,6 +18,8 @@ class ThemeModel {
     required this.tableColor,
     required this.accentColor,
     required this.cardBackColor,
+    required this.bgmPath,
+    required this.fxColor,
     this.textColor = Colors.white,
   });
 }
@@ -43,6 +47,8 @@ class TableThemes {
     tableColor: Color(0xFF232946).withOpacity(0.5),
     accentColor: Color(0xFF00E5FF),
     cardBackColor: Color(0xFF304FFE),
+    bgmPath: 'midnight_loops',
+    fxColor: Color(0xFF00E5FF).withOpacity(0.3),
   );
 
   static final ThemeModel greenTable = ThemeModel(
@@ -52,6 +58,8 @@ class TableThemes {
     tableColor: Color(0xFF2E7D32).withOpacity(0.8),
     accentColor: Colors.amber,
     cardBackColor: Colors.red,
+    bgmPath: 'casino_lounge',
+    fxColor: Colors.amber.withOpacity(0.2),
   );
 
   static final ThemeModel oceanBlue = ThemeModel(
@@ -61,6 +69,8 @@ class TableThemes {
     tableColor: Color(0xFF01579B).withOpacity(0.6),
     accentColor: Colors.lightBlueAccent,
     cardBackColor: Colors.blue,
+    bgmPath: 'ocean_waves',
+    fxColor: Colors.white.withOpacity(0.2),
   );
 
   static final ThemeModel sunset = ThemeModel(
@@ -70,6 +80,8 @@ class TableThemes {
     tableColor: Color(0xFF4527A0).withOpacity(0.5),
     accentColor: Colors.orangeAccent,
     cardBackColor: Colors.deepOrange,
+    bgmPath: 'synthwave_drive',
+    fxColor: Colors.orangeAccent.withOpacity(0.3),
   );
 
   // Added missing getter

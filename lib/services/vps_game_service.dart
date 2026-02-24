@@ -20,6 +20,9 @@ class VPSGameService {
   
   Stream<Map<String, dynamic>> get gameStream => _gameStreamController.stream;
   
+  final StreamController<String> _tickerStreamController = StreamController<String>.broadcast();
+  Stream<String> get tickerStream => _tickerStreamController.stream;
+  
   String? _currentGameCode;
   int _reconnectDelay = 1000; // Start with 1s
   static const int _maxReconnectDelay = 30000; // Max 30s
@@ -57,6 +60,11 @@ class VPSGameService {
                print('Server rejected WebSocket connection: Unauthorized');
                leaveGame();
                return;
+            }
+
+            if (data['type'] == 'GLOBAL_TICKER') {
+              _tickerStreamController.add(data['data'].toString());
+              return;
             }
 
             _gameStreamController.add(data);

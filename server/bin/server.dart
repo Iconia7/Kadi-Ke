@@ -81,12 +81,16 @@ class Player {
   final WebSocketChannel socket;
   List<CardModel> hand = [];
   
-  // Game-Specific State
-  bool hasSaidNikoKadi = false; // Kadi
-  int cardsPlayedThisTurn = 0; // Kadi Multi-drop
-  int books = 0; // Go Fish
+  // Prestige State
+  String? title;
+  int xp = 0;
   
-  Player(this.id, this.name, this.avatar, this.socket);
+  // Game State
+  bool hasSaidNikoKadi = false;
+  int cardsPlayedThisTurn = 0;
+  int books = 0;
+  
+  Player(this.id, this.name, this.avatar, this.socket, {this.title, this.xp = 0});
 }
 
 class GameRoom {
@@ -1090,7 +1094,14 @@ class MultiGameServer {
                var userData = _dbService.getUserById(finalPlayerId);
                String? avatar = userData?['avatar'];
 
-               Player newPlayer = Player(finalPlayerId, playerName, avatar, socket);
+               Player newPlayer = Player(
+                 finalPlayerId, 
+                 playerName, 
+                 avatar, 
+                 socket,
+                 title: userData?['title'],
+                 xp: int.tryParse(userData?['xp']?.toString() ?? "0") ?? 0
+               );
                _rooms[roomCode]!.players.add(newPlayer);
                playerId = finalPlayerId; // Set current context playerId
 
@@ -1117,7 +1128,14 @@ class MultiGameServer {
                  // PREVENT DUPLICATE JOIN
                  bool alreadyIn = _rooms[code]!.players.any((p) => p.id == finalPlayerId);
                  if (!alreadyIn) {
-                   Player newPlayer = Player(finalPlayerId, finalName, avatar, socket);
+                   Player newPlayer = Player(
+                     finalPlayerId, 
+                     finalName, 
+                     avatar, 
+                     socket,
+                     title: userData?['title'],
+                     xp: int.tryParse(userData?['xp']?.toString() ?? "0") ?? 0
+                   );
                    _rooms[code]!.players.add(newPlayer);
                    _log("Player $finalName ($finalPlayerId) joined room $code");
                  } else {
@@ -1155,7 +1173,14 @@ class MultiGameServer {
                String playerName = _onlineUsers[finalPlayerId] ?? data['playerName'] ?? "Host"; 
                
                var userData = _dbService.getUserById(finalPlayerId);
-               Player newPlayer = Player(finalPlayerId, playerName, userData?['avatar'], socket);
+               Player newPlayer = Player(
+                 finalPlayerId, 
+                 playerName, 
+                 userData?['avatar'], 
+                 socket,
+                 title: userData?['title'],
+                 xp: int.tryParse(userData?['xp']?.toString() ?? "0") ?? 0
+               );
                _tournaments[tournamentId]!.currentPlayers.add(newPlayer);
                _tournaments[tournamentId]!.prizePool += _tournaments[tournamentId]!.entryFee;
                
@@ -1183,7 +1208,14 @@ class MultiGameServer {
                  bool alreadyIn = tRoom.currentPlayers.any((p) => p.id == finalPlayerId);
                  if (!alreadyIn) {
                    var userData = _dbService.getUserById(finalPlayerId);
-                   Player newPlayer = Player(finalPlayerId, playerName, userData?['avatar'], socket);
+                   Player newPlayer = Player(
+                     finalPlayerId, 
+                     playerName, 
+                     userData?['avatar'], 
+                     socket,
+                     title: userData?['title'],
+                     xp: int.tryParse(userData?['xp']?.toString() ?? "0") ?? 0
+                   );
                    tRoom.currentPlayers.add(newPlayer);
                    tRoom.prizePool += tRoom.entryFee;
                    
@@ -1242,6 +1274,7 @@ class MultiGameServer {
                    // Broadcast the complete bracket tree and start signal
                    tRoom.broadcast("TOURNAMENT_STARTED", tRoom.toJson());
                    _log("Tournament $tId started with ${tRoom.matches.length} matches.");
+                   _broadcastGlobalTicker("🏆 Tournament $tId has started! Good luck to the contestants.");
                 }
              }
              else if (type == 'REPORT_TOURNAMENT_MATCH') {
@@ -1995,7 +2028,14 @@ class MultiGameServer {
 
   void _broadcastPlayerInfo(GameRoom room) {
      List<Map<String, dynamic>> pList = room.players.asMap().entries.map((e) => 
-        {'id': e.value.id, 'name': e.value.name, 'avatar': e.value.avatar, 'index': e.key}
+        {
+          'id': e.value.id, 
+          'name': e.value.name, 
+          'avatar': e.value.avatar, 
+          'index': e.key,
+          'title': e.value.title,
+          'xp': e.value.xp
+        }
      ).toList();
       for (var p in room.players) {
          p.socket.sink.add(jsonEncode({ 
@@ -2007,6 +2047,20 @@ class MultiGameServer {
             } 
          }));
       }
+  }
+
+  void _broadcastGlobalTicker(String message) {
+    String payload = jsonEncode({
+      "type": "GLOBAL_TICKER",
+      "data": message
+    });
+    for (var ws in _userSockets.values) {
+      try {
+        ws.add(payload);
+      } catch (e) {
+        // ignore dead sockets
+      }
+    }
   }
 
   String _generateRoomCode() {
@@ -2066,6 +2120,8 @@ class MultiGameServer {
      
      _dbService.incrementCoins(winner.id, coins);
      
+     _broadcastGlobalTicker("🎉 ${winner.name} just won a game of Kadi!");
+     
      // 2. Broadcast Validated Stats Update
      // The client will receive this and update its local UserProvider
      winner.socket.sink.add(jsonEncode({
@@ -2107,7 +2163,7 @@ class MultiGameServer {
      }
 
      try {
-       // shelf_multipart v2.x API
+       // shelf_multipart API
        final multipart = request.multipart();
        if (multipart == null) {
           return Response.badRequest(body: 'Not a multipart request');
@@ -2142,9 +2198,9 @@ class MultiGameServer {
        return Response.internalServerError(body: 'Upload failed');
      }
   }
-
 }
 
 void main() {
+
   MultiGameServer()._start();
 }

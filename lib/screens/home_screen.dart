@@ -29,6 +29,7 @@ import '../models/tournament_model.dart';
 import '../widgets/custom_toast.dart';
 import '../widgets/challenge_dialog.dart';
 import '../widgets/friend_invite_bottom_sheet.dart';
+import '../widgets/activity_ticker.dart';
 
 class HomeScreen extends StatefulWidget {
   @override
@@ -1191,14 +1192,22 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 ),
               ),
             ),
-            // 2. HEADER ACTIONS & STATS (Moved here so it floats strictly above the scroll view and avoids touch interception)
+            // 2. HEADER ACTIONS & STATS (Merged with Global Ticker to prevent overlapping)
             Positioned(
-              top: 50,
-              left: 10,
-              right: 10,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
+              top: 0,
+              left: 0,
+              right: 0,
+              child: SafeArea(
+                bottom: false,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(height: 10),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
                   // Challenges Button
                   Flexible(
                     child: GestureDetector(
@@ -1346,9 +1355,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           child: const Icon(Icons.settings, color: Colors.white, size: 16),
                         ),
                       ),
-                    ],
-                  ),
-                ],
+                    ],)
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    ActivityTicker(eventStream: VPSGameService().tickerStream),
+                  ],
+                ),
               ),
             ),
           ],
