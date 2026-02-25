@@ -244,7 +244,7 @@ class _MyAppState extends State<MyApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       navigatorKey: navigatorKey, // Connect global navigator key
-      title: 'Kadi Ke',
+      title: 'Kadi KE',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,

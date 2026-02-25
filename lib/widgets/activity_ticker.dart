@@ -21,6 +21,7 @@ class _ActivityTickerState extends State<ActivityTicker> {
   final List<String> _messages = [
     "Welcome to Kadi Ke Online! 🃏",
     "Join a tournament to win big prizes! 🏆",
+    "Join a clan today and win coins and points for your clan! 🏆",
     "Customize your table in the Shop menu. 🎨",
   ];
   late ScrollController _scrollController;

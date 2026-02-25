@@ -61,6 +61,7 @@ class PlayerInfo {
   final int index;
   final String? title;
   final int xp;
+  final String? clanTag;
 
   PlayerInfo({
     required this.id, 
@@ -68,7 +69,8 @@ class PlayerInfo {
     this.avatar, 
     required this.index, 
     this.title, 
-    this.xp = 0
+    this.xp = 0,
+    this.clanTag,
   });
 }
 
@@ -535,13 +537,18 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       final parsedPlayers = <PlayerInfo>[];
       for (int i = 0; i < playersRaw.length; i++) {
         final p = playersRaw[i];
+        final rawName = p['name'] ?? 'Player ${i + 1}';
+        final clanTag = p['clanTag'];
+        final finalName = clanTag != null ? '[$clanTag] $rawName' : rawName;
+
         parsedPlayers.add(PlayerInfo(
           id: p['id'],
-          name: p['name'] ?? 'Player ${i + 1}',
+          name: finalName,
           avatar: p['avatar'],
           index: i, 
           title: p['title'],
           xp: int.tryParse(p['xp']?.toString() ?? "0") ?? 0,
+          clanTag: clanTag,
         ));
       }
 

@@ -56,8 +56,9 @@ class DatabaseService {
         timestamp TEXT NOT NULL
       )
     ''');
-    
-    _db.execute('CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)');
+
+    _db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)');
 
     _db.execute('''
       CREATE TABLE IF NOT EXISTS fcm_tokens (
@@ -66,6 +67,32 @@ class DatabaseService {
         lastUpdated TEXT NOT NULL
       )
     ''');
+
+    // --- Clan System Expansion ---
+    _db.execute('''
+      CREATE TABLE IF NOT EXISTS clans (
+        id TEXT PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL,
+        tag TEXT UNIQUE NOT NULL,
+        description TEXT,
+        ownerId TEXT NOT NULL,
+        totalScore INTEGER DEFAULT 0,
+        capacity INTEGER DEFAULT 50,
+        createdAt TEXT NOT NULL
+      )
+    ''');
+
+    _db.execute('''
+      CREATE TABLE IF NOT EXISTS clan_members (
+        userId TEXT PRIMARY KEY,
+        clanId TEXT NOT NULL,
+        role TEXT NOT NULL,
+        joinedAt TEXT NOT NULL,
+        FOREIGN KEY (clanId) REFERENCES clans(id) ON DELETE CASCADE
+      )
+    ''');
+    _db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_clan_members_clanId ON clan_members(clanId)');
   }
 
   // --- Migration ---
@@ -119,13 +146,15 @@ class DatabaseService {
   // --- User Operations ---
 
   Map<String, dynamic>? getUserByUsername(String username) {
-    final ResultSet results = _db.select('SELECT * FROM users WHERE username = ?', [username]);
+    final ResultSet results =
+        _db.select('SELECT * FROM users WHERE username = ?', [username]);
     if (results.isEmpty) return null;
     return _rowToMap(results.first);
   }
 
   Map<String, dynamic>? getUserById(String userId) {
-    final ResultSet results = _db.select('SELECT * FROM users WHERE id = ?', [userId]);
+    final ResultSet results =
+        _db.select('SELECT * FROM users WHERE id = ?', [userId]);
     if (results.isEmpty) return null;
     return _rowToMap(results.first);
   }
@@ -151,17 +180,18 @@ class DatabaseService {
 
   void updateUser(String userId, Map<String, dynamic> updates) {
     if (updates.isEmpty) return;
-    
+
     final keys = updates.keys.toList();
     final values = updates.values.toList();
     final setClause = keys.map((k) => '$k = ?').join(', ');
-    
+
     values.add(userId);
     _db.execute('UPDATE users SET $setClause WHERE id = ?', values);
   }
 
   void updateUsername(String oldUsername, String newUsername) {
-    _db.execute('UPDATE users SET username = ? WHERE username = ?', [newUsername, oldUsername]);
+    _db.execute('UPDATE users SET username = ? WHERE username = ?',
+        [newUsername, oldUsername]);
   }
 
   Map<String, Map<String, dynamic>> getAllUsers() {
@@ -179,7 +209,8 @@ class DatabaseService {
   }
 
   void incrementCoins(String userId, int amount) {
-    _db.execute('UPDATE users SET coins = coins + ? WHERE id = ?', [amount, userId]);
+    _db.execute(
+        'UPDATE users SET coins = coins + ? WHERE id = ?', [amount, userId]);
   }
 
   // --- FCM Token Operations ---
@@ -192,7 +223,8 @@ class DatabaseService {
   }
 
   String? getFCMToken(String userId) {
-    final ResultSet results = _db.select('SELECT token FROM fcm_tokens WHERE userId = ?', [userId]);
+    final ResultSet results =
+        _db.select('SELECT token FROM fcm_tokens WHERE userId = ?', [userId]);
     if (results.isEmpty) return null;
     return results.first['token'] as String;
   }
@@ -200,6 +232,135 @@ class DatabaseService {
   List<String> getAllFCMTokens() {
     final ResultSet results = _db.select('SELECT token FROM fcm_tokens');
     return results.map((row) => row['token'] as String).toList();
+  }
+
+  // --- Clan System Operations ---
+
+  Map<String, dynamic>? createClan(String clanId, String name, String tag,
+      String description, String ownerId) {
+    try {
+      _db.execute('BEGIN TRANSACTION');
+
+      // Charge 500 Coins
+      final ResultSet userRes =
+          _db.select('SELECT coins FROM users WHERE id = ?', [ownerId]);
+      if (userRes.isEmpty) throw Exception("User not found");
+      int coins = userRes.first['coins'] as int;
+      if (coins < 500) throw Exception("Insufficient coins (500 required)");
+
+      _db.execute(
+          'UPDATE users SET coins = coins - 500 WHERE id = ?', [ownerId]);
+
+      // Insert Clan
+      _db.execute('''
+        INSERT INTO clans (id, name, tag, description, ownerId, createdAt)
+        VALUES (?, ?, ?, ?, ?, ?)
+      ''', [
+        clanId,
+        name,
+        tag,
+        description,
+        ownerId,
+        DateTime.now().toIso8601String()
+      ]);
+
+      // Add owner as member
+      _db.execute('''
+        INSERT INTO clan_members (userId, clanId, role, joinedAt)
+        VALUES (?, ?, ?, ?)
+      ''', [ownerId, clanId, 'owner', DateTime.now().toIso8601String()]);
+
+      _db.execute('COMMIT');
+      return {'success': true, 'clanId': clanId, 'tag': tag};
+    } catch (e) {
+      _db.execute('ROLLBACK');
+      throw Exception('Failed to create clan: $e');
+    }
+  }
+
+  void joinClan(String userId, String clanId) {
+    try {
+      _db.execute('BEGIN TRANSACTION');
+
+      // Check if already in a clan
+      final memberCheck = _db
+          .select('SELECT clanId FROM clan_members WHERE userId = ?', [userId]);
+      if (memberCheck.isNotEmpty) throw Exception("User already in a clan");
+
+      // Check capacity
+      final clanCheck = _db.select('''
+        SELECT c.capacity, (SELECT COUNT(*) FROM clan_members WHERE clanId = ?) as memberCount 
+        FROM clans c WHERE c.id = ?
+      ''', [clanId, clanId]);
+
+      if (clanCheck.isEmpty) throw Exception("Clan not found");
+
+      int capacity = clanCheck.first['capacity'] as int;
+      int memberCount = clanCheck.first['memberCount'] as int;
+      if (memberCount >= capacity) throw Exception("Clan is full");
+
+      _db.execute('''
+        INSERT INTO clan_members (userId, clanId, role, joinedAt)
+        VALUES (?, ?, 'member', ?)
+      ''', [userId, clanId, DateTime.now().toIso8601String()]);
+
+      _db.execute('COMMIT');
+    } catch (e) {
+      _db.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  void leaveClan(String userId) {
+    _db.execute('DELETE FROM clan_members WHERE userId = ?', [userId]);
+    // Note: If the owner leaves, we'll need logic to transfer ownership or disband.
+    // For V1, we'll let owners leave, making it an abandoned clan, or we handle it in server.dart.
+  }
+
+  Map<String, dynamic>? getClanDetails(String clanId) {
+    final ResultSet clanRes =
+        _db.select('SELECT * FROM clans WHERE id = ?', [clanId]);
+    if (clanRes.isEmpty) return null;
+
+    var clan = _rowToMap(clanRes.first);
+
+    final ResultSet memberRes = _db.select('''
+      SELECT cm.userId, cm.role, cm.joinedAt, u.username, u.avatar, u.wins 
+      FROM clan_members cm
+      JOIN users u ON cm.userId = u.id
+      WHERE cm.clanId = ?
+    ''', [clanId]);
+
+    clan['members'] = memberRes.map((r) => _rowToMap(r)).toList();
+    return clan;
+  }
+
+  List<Map<String, dynamic>> searchClans() {
+    final ResultSet results = _db.select('''
+      SELECT c.*, (SELECT COUNT(*) FROM clan_members WHERE clanId = c.id) as memberCount 
+      FROM clans c
+      ORDER BY totalScore DESC 
+      LIMIT 50
+    ''');
+    return results.map((r) => _rowToMap(r)).toList();
+  }
+
+  String? getUserClanTag(String userId) {
+    final ResultSet results = _db.select('''
+      SELECT c.tag FROM clans c
+      JOIN clan_members cm ON c.id = cm.clanId
+      WHERE cm.userId = ?
+    ''', [userId]);
+    if (results.isEmpty) return null;
+    return results.first['tag'] as String;
+  }
+
+  Map<String, dynamic>? getMyClan(String userId) {
+    final ResultSet results = _db
+        .select('SELECT clanId FROM clan_members WHERE userId = ?', [userId]);
+    if (results.isEmpty) return null;
+    String clanId = results.first['clanId'] as String;
+    return getClanDetails(clanId);
   }
 
   // --- Friend Operations ---
@@ -211,30 +372,42 @@ class DatabaseService {
       LEFT JOIN users u ON f.friendUserId = u.id
       WHERE f.userId = ?
     ''', [userId]);
-    
-    return results.map((row) => {
-      'userId': row['friendUserId'],
-      'username': row['username'],
-      'status': row['status'],
-      'createdAt': row['createdAt'],
-      'avatar': row['avatar']
-    }).toList();
+
+    return results
+        .map((row) => {
+              'userId': row['friendUserId'],
+              'username': row['username'],
+              'status': row['status'],
+              'createdAt': row['createdAt'],
+              'avatar': row['avatar']
+            })
+        .toList();
   }
 
-  void addFriendRequest(String userId, String friendUserId, String friendUsername) {
+  void addFriendRequest(
+      String userId, String friendUserId, String friendUsername) {
     _db.execute('''
       INSERT OR IGNORE INTO friends (userId, friendUserId, username, status, createdAt)
       VALUES (?, ?, ?, ?, ?)
-    ''', [userId, friendUserId, friendUsername, 'pending', DateTime.now().toIso8601String()]);
+    ''', [
+      userId,
+      friendUserId,
+      friendUsername,
+      'pending',
+      DateTime.now().toIso8601String()
+    ]);
   }
 
   void acceptFriendRequest(String userId, String friendUserId) {
-    _db.execute('UPDATE friends SET status = ? WHERE userId = ? AND friendUserId = ?', ['accepted', userId, friendUserId]);
+    _db.execute(
+        'UPDATE friends SET status = ? WHERE userId = ? AND friendUserId = ?',
+        ['accepted', userId, friendUserId]);
   }
 
   void removeFriend(String userId, String friendUserId) {
-    _db.execute('DELETE FROM friends WHERE (userId = ? AND friendUserId = ?) OR (userId = ? AND friendUserId = ?)', 
-      [userId, friendUserId, friendUserId, userId]);
+    _db.execute(
+        'DELETE FROM friends WHERE (userId = ? AND friendUserId = ?) OR (userId = ? AND friendUserId = ?)',
+        [userId, friendUserId, friendUserId, userId]);
   }
 
   // --- Feedback Operations ---
@@ -253,7 +426,8 @@ class DatabaseService {
   }
 
   List<Map<String, dynamic>> getAllFeedback() {
-    final ResultSet results = _db.select('SELECT * FROM feedback ORDER BY timestamp DESC');
+    final ResultSet results =
+        _db.select('SELECT * FROM feedback ORDER BY timestamp DESC');
     return results.map((row) => Map<String, dynamic>.from(row)).toList();
   }
 
@@ -266,7 +440,7 @@ class DatabaseService {
     // But let's see if we can refactor server.dart to use getFriends(userId) separately.
     return map;
   }
-  
+
   void close() {
     _db.dispose();
   }

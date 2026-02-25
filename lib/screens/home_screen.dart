@@ -30,6 +30,7 @@ import '../widgets/custom_toast.dart';
 import '../widgets/challenge_dialog.dart';
 import '../widgets/friend_invite_bottom_sheet.dart';
 import '../widgets/activity_ticker.dart';
+import 'clan_hub_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   @override
@@ -1175,10 +1176,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       ),
                       const SizedBox(height: 40),
                       
-                      // Bottom Row (Fixed: Removed the Positioned widget from here)
+                      // Bottom Row
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
+                          _buildIconButton("Clans", Icons.shield, Colors.redAccent, () {
+                            Navigator.push(context, MaterialPageRoute(builder: (_) => ClanHubScreen()));
+                          }),
+                          SizedBox(width: 40),
                           _buildIconButton("Shop", Icons.shopping_bag_outlined, Colors.amber, () {
                             Navigator.push(context, MaterialPageRoute(builder: (_) => ShopScreen())).then((_) => _refreshCoins());
                           }),

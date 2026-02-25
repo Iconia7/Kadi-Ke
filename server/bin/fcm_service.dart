@@ -16,14 +16,15 @@ class FCMService {
   Future<void> initialize() async {
     final file = File('service-account.json');
     if (!await file.exists()) {
-      print('FCM Warning: service-account.json not found. Push notifications will be disabled.');
+      print(
+          'FCM Warning: service-account.json not found. Push notifications will be disabled.');
       return;
     }
 
     try {
       final jsonString = await file.readAsString();
       final credentials = auth.ServiceAccountCredentials.fromJson(jsonString);
-      
+
       final Map<String, dynamic> jsonMap = jsonDecode(jsonString);
       _projectId = jsonMap['project_id'];
 
@@ -35,13 +36,15 @@ class FCMService {
     }
   }
 
-  Future<bool> sendPushNotification(String fcmToken, String title, String body, {Map<String, dynamic>? data}) async {
+  Future<bool> sendPushNotification(String fcmToken, String title, String body,
+      {Map<String, dynamic>? data}) async {
     if (!_initialized || _client == null || _projectId == null) {
       print('FCM Error: Service not initialized. Cannot send push.');
       return false;
     }
 
-    final url = Uri.parse('https://fcm.googleapis.com/v1/projects/$_projectId/messages:send');
+    final url = Uri.parse(
+        'https://fcm.googleapis.com/v1/projects/$_projectId/messages:send');
 
     final message = {
       'message': {

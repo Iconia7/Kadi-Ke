@@ -23,6 +23,9 @@ class VPSGameService {
   
   final StreamController<String> _tickerStreamController = StreamController<String>.broadcast();
   Stream<String> get tickerStream => _tickerStreamController.stream;
+
+  final StreamController<Map<String, dynamic>> _clanChatStreamController = StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get clanChatStream => _clanChatStreamController.stream;
   
   String? _currentGameCode;
   int _reconnectDelay = 1000; // Start with 1s
@@ -65,6 +68,11 @@ class VPSGameService {
 
             if (data['type'] == 'GLOBAL_TICKER') {
               _tickerStreamController.add(data['data'].toString());
+              return;
+            }
+
+            if (data['type'] == 'CLAN_CHAT_MESSAGE') {
+              _clanChatStreamController.add(data['data']);
               return;
             }
 
@@ -161,6 +169,19 @@ class VPSGameService {
         throw Exception('Room creation timeout');
       },
     );
+  }
+
+  /// Send a clan chat message
+  void sendClanChat(String clanId, String message) {
+    if (_isConnected && _channel != null) {
+      _channel!.sink.add(jsonEncode({
+        'type': 'CLAN_CHAT',
+        'data': {
+          'clanId': clanId,
+          'message': message,
+        }
+      }));
+    }
   }
 
   /// Join an existing game room

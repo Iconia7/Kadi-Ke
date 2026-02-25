@@ -3,12 +3,12 @@ set SERVER_IP=5.189.178.132
 set PORT=8080
 
 :: Extract ADMIN_SECRET_KEY from .env
-for /f "tokens=1,2 delims==" %%A in (.env) do (
+for /f "tokens=1,2 delims==" %%A in (..\.env) do (
     if "%%A"=="ADMIN_SECRET_KEY" set ADMIN_KEY=%%B
 )
 
 if "%ADMIN_KEY%"=="" (
-    echo Error: ADMIN_SECRET_KEY not found in .env file!
+    echo Error: ADMIN_SECRET_KEY not found in ..\.env file!
     pause
     exit /b
 )
