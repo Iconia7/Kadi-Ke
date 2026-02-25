@@ -1952,10 +1952,17 @@ class MultiGameServer {
   }
 
   bool _isValidKadiMove(GameRoom room, CardModel card) {
+     // Question Logic (Highest Priority: Strict Answer mode)
+     if (room.waitingForAnswer) {
+        if (card.rank == 'queen' || card.rank == '8') return card.suit == room.topCard!.suit || card.rank == room.topCard!.rank;
+        if (['4','5','6','7','9','10'].contains(card.rank)) return card.suit == room.topCard!.suit;
+        return false;
+     }
+
      // 1. Bomb Override (Bomb can be played on ANY suit/rank/constraint/lock)
      if (['2','3','joker'].contains(card.rank)) return true;
 
-     // 2. Joker Constraint (Highest Priority if not bomb)
+     // 2. Joker Constraint (Priority if not bomb)
      if (room.jokerColorConstraint != null) {
         String color = (['hearts','diamonds','red'].contains(card.suit)) ? 'red' : 'black';
         return color == room.jokerColorConstraint;
@@ -1963,16 +1970,8 @@ class MultiGameServer {
 
      // 3. Bomb Defense
      if (room.bombStack > 0) {
-        // Stack already handled by #1
         // Defense: Ace, King, Jack are valid
         if (['ace','king','jack'].contains(card.rank)) return true;
-        return false;
-     }
-
-     // 4. Question Logic
-     if (room.waitingForAnswer) {
-        if (card.rank == 'queen' || card.rank == '8') return card.suit == room.topCard!.suit || card.rank == room.topCard!.rank;
-        if (['4','5','6','7','9','10'].contains(card.rank)) return card.suit == room.topCard!.suit;
         return false;
      }
 

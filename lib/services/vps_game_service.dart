@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'custom_auth_service.dart';
+import 'notification_service.dart';
 import 'app_config.dart';
 
 /// VPS-based online game service using WebSockets
@@ -98,17 +99,20 @@ class VPSGameService {
     }
   }
 
-  void _authenticate() {
+  void _authenticate() async {
     final token = CustomAuthService().token;
     final username = CustomAuthService().username;
     final userId = CustomAuthService().userId;
 
     if (token != null && username != null) {
+      String? fcmToken = await NotificationService().getFCMToken();
+      
       _channel?.sink.add(jsonEncode({
         'action': 'JOIN',
         'token': token,
         'username': username,
         'userId': userId,
+        'fcmToken': fcmToken,
       }));
     }
   }

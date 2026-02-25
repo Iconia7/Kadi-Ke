@@ -1,6 +1,7 @@
 import 'package:awesome_notifications/awesome_notifications.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
@@ -78,6 +79,34 @@ class NotificationService {
     bool isAllowed = await AwesomeNotifications().isNotificationAllowed();
     if (!isAllowed) {
       await AwesomeNotifications().requestPermissionToSendNotifications();
+    }
+
+    // Init Firebase Messaging
+    await FirebaseMessaging.instance.requestPermission();
+    
+    // Listen to Firebase foreground messages
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      if (message.notification != null) {
+        AwesomeNotifications().createNotification(
+          content: NotificationContent(
+            id: DateTime.now().millisecondsSinceEpoch.remainder(100000),
+            channelKey: 'basic_channel',
+            title: message.notification?.title,
+            body: message.notification?.body,
+            notificationLayout: NotificationLayout.Default,
+          )
+        );
+      }
+    });
+  }
+
+  Future<String?> getFCMToken() async {
+    try {
+      String? token = await FirebaseMessaging.instance.getToken();
+      return token;
+    } catch(e) {
+      print("Error getting FCM token: $e");
+      return null;
     }
   }
 

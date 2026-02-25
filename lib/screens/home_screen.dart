@@ -352,6 +352,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             onlineGameCode: roomCode,
             gameType: _selectedGameMode, 
             rules: rules,
+            initialEntryFee: fee,
           )
         ));
       }

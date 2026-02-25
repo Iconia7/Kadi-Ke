@@ -36,6 +36,7 @@ class GameScreen extends StatefulWidget {
   final String gameType; // 'kadi' or 'gofish'
   final Map<String, dynamic>? rules;
   final bool isTournament; // Determine if we should return "WON" result
+  final int? initialEntryFee; // Add this
 
   const GameScreen({super.key, 
     required this.isHost, 
@@ -46,6 +47,7 @@ class GameScreen extends StatefulWidget {
     this.gameType = 'kadi', 
     this.rules,
     this.isTournament = false,
+    this.initialEntryFee,
   });
 
   @override
@@ -158,6 +160,12 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   void initState() {
     super.initState();
     _myPlayerId = widget.isHost ? 0 : 1; 
+    
+    if (widget.isHost && widget.initialEntryFee != null) {
+       _entryFee = widget.initialEntryFee!;
+       _hasPaidEntry = true;
+    }
+    
     _confettiController = ConfettiController(duration: const Duration(seconds: 3));
     
     _pulseController = AnimationController(duration: const Duration(milliseconds: 1500), vsync: this)..repeat(reverse: true);
@@ -655,26 +663,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 bool _validateLocalMove(CardModel card) {
     if (_topDiscardCard == null) return true;
     
-    // 1. Joker Constraint
-    if (_jokerColorConstraint != null) {
-      bool isBomb = ['2', '3', 'joker'].contains(card.rank);
-      if (isBomb) return true;
-      String cardColor = (card.suit == 'hearts' || card.suit == 'diamonds' || card.suit == 'red') ? 'red' : 'black';
-      return cardColor == _jokerColorConstraint;
-    }
-
-    if (['2', '3', 'joker'].contains(card.rank)) return true;
-
-    // 2. Bomb Stack Logic
-    if (_currentBombStack > 0) {
-      if (card.rank == 'ace') return true; 
-      if (card.rank == 'king') return true; 
-      if (card.rank == 'jack') return true; 
-      return false; 
-    }
-
-    // 3. Question Mode (Self-Answering & Chaining)
-    // The UI must allow you to tap Q/8 or the matching Answer suit
+    // 1. Question Mode (Highest Priority: Strict Answer mode)
     if (_waitingForAnswer) {
        // Chain Q/8
        if (card.rank == 'queen' || card.rank == '8') {
@@ -684,7 +673,24 @@ bool _validateLocalMove(CardModel card) {
        if (['4','5','6','7','9','10'].contains(card.rank)) {
            return card.suit == _topDiscardCard!.suit;
        }
-       return false;
+       return false; // NO BOMBS ALLOWED
+    }
+
+    // 2. Bomb Override (Bomb can be played on ANY suit/rank/constraint/lock)
+    if (['2', '3', 'joker'].contains(card.rank)) return true;
+
+    // 3. Joker Constraint (Priority if not bomb)
+    if (_jokerColorConstraint != null) {
+      String cardColor = (card.suit == 'hearts' || card.suit == 'diamonds' || card.suit == 'red') ? 'red' : 'black';
+      return cardColor == _jokerColorConstraint;
+    }
+
+    // 4. Bomb Stack Defense
+    if (_currentBombStack > 0) {
+      if (card.rank == 'ace') return true; 
+      if (card.rank == 'king') return true; 
+      if (card.rank == 'jack') return true; 
+      return false; 
     }
 
     // 4. Ace Counter-Play

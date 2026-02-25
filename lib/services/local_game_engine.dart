@@ -99,27 +99,7 @@ class AiBot {
   
   // ignore: unused_element
   bool _isPlayable(CardModel card, CardModel topCard, String? forcedSuit, String? forcedRank, int bombStack, bool waitingForAnswer, String? jokerConstraint) {
-    // 1. Joker Constraint (Highest Priority)
-    if (jokerConstraint != null) {
-      bool isBomb = ['2', '3', 'joker'].contains(card.rank);
-      if (isBomb) return true;
-      String cardColor = (card.suit == 'hearts' || card.suit == 'diamonds' || card.suit == 'red') ? 'red' : 'black';
-      return cardColor == jokerConstraint;
-    }
-
-    // 2. Bomb Overrides (Bomb can be played on ANY suit/rank/constraint/lock)
-    if (['2', '3', 'joker'].contains(card.rank)) return true;
-
-    // 3. Bomb Stack Logic
-    if (bombStack > 0) {
-      // Stack already handled by #2
-      if (card.rank == 'ace') return true; // Block
-      if (card.rank == 'king') return true; // Return
-      if (card.rank == 'jack') return true; // Pass
-      return false;
-    }
-
-    // 4. Question/Answer Logic (CRITICAL FIX: Add chaining support)
+    // Question Logic (Highest Priority: Strict Answer mode)
     if (waitingForAnswer) {
        // Case A: Chaining Questions (e.g., Q -> Q or Q -> 8)
        // Can play another Question if it matches Suit OR Rank
@@ -133,8 +113,25 @@ class AiBot {
            return card.suit == topCard.suit;
        }
 
-       // Cannot play Power cards (A, K, J) to answer a Question (Bombs handled in #2)
-       return false;
+       return false; // NO BOMBS ALLOWED
+    }
+
+    // 1. Bomb Overrides: 2, 3, Joker always valid on ANY suit
+    if (['2', '3', 'joker'].contains(card.rank)) return true;
+
+    // 2. Joker Constraint (Priority if not bomb)
+    if (jokerConstraint != null) {
+      String cardColor = (card.suit == 'hearts' || card.suit == 'diamonds' || card.suit == 'red') ? 'red' : 'black';
+      return cardColor == jokerConstraint;
+    }
+
+    // 3. Bomb Stack Logic
+    if (bombStack > 0) {
+      // Defense: Ace, King, Jack are valid
+      if (card.rank == 'ace') return true; // Block
+      if (card.rank == 'king') return true; // Return
+      if (card.rank == 'jack') return true; // Pass
+      return false;
     }
 
     // 5. Ace Counter-Play (CRITICAL: Ace breaks any lock)
@@ -347,24 +344,7 @@ void start(int aiCount, String difficulty, {int decks = 1, Map<String, dynamic>?
   }
 
   bool _isValidMove(CardModel card) {
-    // 1. Bomb Override: 2, 3, Joker always valid on ANY suit
-    if (['2','3','joker'].contains(card.rank)) return true;
-
-    // 2. Joker Constraint (Highest Priority if not bomb)
-    if (_jokerColorConstraint != null) {
-      String cardColor = (card.suit == 'hearts' || card.suit == 'diamonds' || card.suit == 'red') ? 'red' : 'black';
-      return cardColor == _jokerColorConstraint;
-    }
-
-    // 3. Bomb Stack Defense
-    if (_bombStack > 0) {
-      // Stack (2, 3, Joker) already handled by #1
-      // Defense: Ace, King, Jack are valid
-      if (['ace','king','jack'].contains(card.rank)) return true;
-      return false;
-    }
-
-    // 4. Question/Answer Logic (SELF-ANSWERING & CHAINING)
+    // Question Logic (Highest Priority: Strict Answer mode)
     if (_waitingForAnswer) {
        // Case A: Chaining Questions (e.g., Q -> Q or Q -> 8)
        if (card.rank == 'queen' || card.rank == '8') {
@@ -374,7 +354,23 @@ void start(int aiCount, String difficulty, {int decks = 1, Map<String, dynamic>?
        if (['4','5','6','7','9','10'].contains(card.rank)) {
            return card.suit == _topCard!.suit;
        }
-       return false; 
+       return false; // NO BOMBS ALLOWED
+    }
+
+    // 1. Bomb Override: 2, 3, Joker always valid on ANY suit
+    if (['2','3','joker'].contains(card.rank)) return true;
+
+    // 2. Joker Constraint (Priority if not bomb)
+    if (_jokerColorConstraint != null) {
+      String cardColor = (card.suit == 'hearts' || card.suit == 'diamonds' || card.suit == 'red') ? 'red' : 'black';
+      return cardColor == _jokerColorConstraint;
+    }
+
+    // 3. Bomb Stack Defense
+    if (_bombStack > 0) {
+      // Defense: Ace, King, Jack are valid
+      if (['ace','king','jack'].contains(card.rank)) return true;
+      return false;
     }
 
     // 5. Ace Counter-Play
@@ -634,6 +630,7 @@ void start(int aiCount, String difficulty, {int decks = 1, Map<String, dynamic>?
       "playerIndex": _currentPlayerIndex,
       "bombStack": _bombStack,
       "waitingForAnswer": _waitingForAnswer,
+      "jokerColorConstraint": _jokerColorConstraint,
       "direction": _direction,
       "forcedSuit": _forcedSuit,
       "forcedRank": _forcedRank,

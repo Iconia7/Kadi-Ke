@@ -58,6 +58,14 @@ class DatabaseService {
     ''');
     
     _db.execute('CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)');
+
+    _db.execute('''
+      CREATE TABLE IF NOT EXISTS fcm_tokens (
+        userId TEXT PRIMARY KEY,
+        token TEXT NOT NULL,
+        lastUpdated TEXT NOT NULL
+      )
+    ''');
   }
 
   // --- Migration ---
@@ -172,6 +180,26 @@ class DatabaseService {
 
   void incrementCoins(String userId, int amount) {
     _db.execute('UPDATE users SET coins = coins + ? WHERE id = ?', [amount, userId]);
+  }
+
+  // --- FCM Token Operations ---
+
+  void saveFCMToken(String userId, String token) {
+    _db.execute('''
+      INSERT OR REPLACE INTO fcm_tokens (userId, token, lastUpdated)
+      VALUES (?, ?, ?)
+    ''', [userId, token, DateTime.now().toIso8601String()]);
+  }
+
+  String? getFCMToken(String userId) {
+    final ResultSet results = _db.select('SELECT token FROM fcm_tokens WHERE userId = ?', [userId]);
+    if (results.isEmpty) return null;
+    return results.first['token'] as String;
+  }
+
+  List<String> getAllFCMTokens() {
+    final ResultSet results = _db.select('SELECT token FROM fcm_tokens');
+    return results.map((row) => row['token'] as String).toList();
   }
 
   // --- Friend Operations ---

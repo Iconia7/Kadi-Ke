@@ -44,6 +44,15 @@ fi
 echo "🔒 Uploading security config..."
 scp ../server/config.json $SSH_USER@$VPS_IP:$HOME_DIR/kadi-server/
 
+# Upload new security and FCM files
+echo "🔑 Uploading .env and service-account.json..."
+scp ../server/.env $SSH_USER@$VPS_IP:$HOME_DIR/kadi-server/
+scp ../server/service-account.json $SSH_USER@$VPS_IP:$HOME_DIR/kadi-server/
+
+# Upload scripts directory
+echo "🛠️  Uploading helper scripts..."
+scp -r ../server/scripts $SSH_USER@$VPS_IP:$HOME_DIR/kadi-server/
+
 # 3. Install dependencies and setup
 echo "⚙️  Setting up server..."
 ssh $SSH_USER@$VPS_IP << ENDSSH

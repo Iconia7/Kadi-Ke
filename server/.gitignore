@@ -1,0 +1,21 @@
+# Node/Dart environment configurations
+.env
+.env.local
+.env.production
+
+# Service Account Keys
+service-account.json
+google-services.json
+
+# Build directories
+build/
+bin/build/
+
+# Database files 
+*.db
+*.sqlite
+
+# Dart
+.dart_tool/
+.packages
+pubspec.lock
