@@ -13,4 +13,12 @@ class AppConfig {
   // Game Settings
   static const String appTitle = 'Kadi Ke';
   static const String version = '13.1.0+43';
+
+  /// Resolves an avatar path to a full URL.
+  /// Handles both relative paths (/uploads/...) and already-full URLs.
+  static String? resolveAvatarUrl(String? path) {
+    if (path == null || path.isEmpty) return null;
+    if (path.startsWith('http://') || path.startsWith('https://')) return path;
+    return '$baseUrl$path';
+  }
 }

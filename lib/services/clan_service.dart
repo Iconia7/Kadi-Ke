@@ -137,4 +137,37 @@ class ClanService {
       throw Exception('Get my clan error: $e');
     }
   }
+
+  /// Owner kicks a member from the clan
+  Future<void> kickMember(String targetUserId) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/clans/kick'),
+        headers: _headers,
+        body: jsonEncode({'targetUserId': targetUserId}),
+      );
+      final data = jsonDecode(response.body);
+      if (response.statusCode != 200) {
+        throw Exception(data['error'] ?? 'Failed to kick member');
+      }
+    } catch (e) {
+      throw Exception('Kick member error: $e');
+    }
+  }
+
+  /// Owner deletes the clan entirely
+  Future<void> deleteClan() async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/clans/delete'),
+        headers: _headers,
+      );
+      final data = jsonDecode(response.body);
+      if (response.statusCode != 200) {
+        throw Exception(data['error'] ?? 'Failed to delete clan');
+      }
+    } catch (e) {
+      throw Exception('Delete clan error: $e');
+    }
+  }
 }

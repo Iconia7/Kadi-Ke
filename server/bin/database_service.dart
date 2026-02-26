@@ -27,6 +27,7 @@ class DatabaseService {
         email TEXT,
         googleId TEXT,
         wins INTEGER DEFAULT 0,
+        games_played INTEGER DEFAULT 0,
         coins INTEGER DEFAULT 0,
         created_at TEXT NOT NULL,
         avatar TEXT,
@@ -34,6 +35,12 @@ class DatabaseService {
         resetTokenExpiry TEXT
       )
     ''');
+
+    try {
+      _db.execute('ALTER TABLE users ADD COLUMN games_played INTEGER DEFAULT 0');
+    } catch (_) {
+      // Column might already exist
+    }
 
     _db.execute('''
       CREATE TABLE IF NOT EXISTS friends (
@@ -77,6 +84,8 @@ class DatabaseService {
         description TEXT,
         ownerId TEXT NOT NULL,
         totalScore INTEGER DEFAULT 0,
+        seasonScore INTEGER DEFAULT 0,
+        trophies INTEGER DEFAULT 0,
         capacity INTEGER DEFAULT 50,
         createdAt TEXT NOT NULL
       )
@@ -88,11 +97,33 @@ class DatabaseService {
         clanId TEXT NOT NULL,
         role TEXT NOT NULL,
         joinedAt TEXT NOT NULL,
+        seasonPoints INTEGER DEFAULT 0,
+        totalPoints INTEGER DEFAULT 0,
         FOREIGN KEY (clanId) REFERENCES clans(id) ON DELETE CASCADE
       )
     ''');
     _db.execute(
         'CREATE INDEX IF NOT EXISTS idx_clan_members_clanId ON clan_members(clanId)');
+
+    _db.execute('''
+      CREATE TABLE IF NOT EXISTS clan_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        clanId TEXT NOT NULL,
+        senderId TEXT NOT NULL,
+        senderName TEXT NOT NULL,
+        senderAvatar TEXT,
+        message TEXT NOT NULL,
+        timestamp TEXT NOT NULL
+      )
+    ''');
+    _db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_clan_messages_clanId ON clan_messages(clanId)');
+
+    // Safe schema migrations for existing database files
+    try { _db.execute('ALTER TABLE clans ADD COLUMN seasonScore INTEGER DEFAULT 0'); } catch (_) {}
+    try { _db.execute('ALTER TABLE clans ADD COLUMN trophies INTEGER DEFAULT 0'); } catch (_) {}
+    try { _db.execute('ALTER TABLE clan_members ADD COLUMN seasonPoints INTEGER DEFAULT 0'); } catch (_) {}
+    try { _db.execute('ALTER TABLE clan_members ADD COLUMN totalPoints INTEGER DEFAULT 0'); } catch (_) {}
   }
 
   // --- Migration ---
@@ -102,8 +133,8 @@ class DatabaseService {
       usersData.forEach((username, data) {
         final id = data['id'];
         _db.execute('''
-          INSERT OR IGNORE INTO users (id, username, password, email, googleId, wins, coins, created_at, avatar, resetToken, resetTokenExpiry)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT OR IGNORE INTO users (id, username, password, email, googleId, wins, games_played, coins, created_at, avatar, resetToken, resetTokenExpiry)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', [
           id,
           username,
@@ -111,6 +142,7 @@ class DatabaseService {
           data['email'],
           data['googleId'],
           data['wins'] ?? 0,
+          data['games_played'] ?? 0,
           data['coins'] ?? 0,
           data['created_at'] ?? DateTime.now().toIso8601String(),
           data['avatar'],
@@ -161,8 +193,8 @@ class DatabaseService {
 
   void saveUser(String username, Map<String, dynamic> userData) {
     _db.execute('''
-      INSERT OR REPLACE INTO users (id, username, password, email, googleId, wins, coins, created_at, avatar, resetToken, resetTokenExpiry)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT OR REPLACE INTO users (id, username, password, email, googleId, wins, games_played, coins, created_at, avatar, resetToken, resetTokenExpiry)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', [
       userData['id'],
       username,
@@ -170,6 +202,7 @@ class DatabaseService {
       userData['email'],
       userData['googleId'],
       userData['wins'],
+      userData['games_played'],
       userData['coins'],
       userData['created_at'],
       userData['avatar'],
@@ -208,9 +241,62 @@ class DatabaseService {
     _db.execute('UPDATE users SET wins = wins + 1 WHERE id = ?', [userId]);
   }
 
+  void incrementGamesPlayed(String userId) {
+    _db.execute('UPDATE users SET games_played = games_played + 1 WHERE id = ?', [userId]);
+  }
+
   void incrementCoins(String userId, int amount) {
     _db.execute(
         'UPDATE users SET coins = coins + ? WHERE id = ?', [amount, userId]);
+  }
+
+  /// Adds points to a user's clan contributions and the clan's overall score
+  void addClanPoints(String userId, int points) {
+    final rs = _db.select('SELECT clanId FROM clan_members WHERE userId = ?', [userId]);
+    if (rs.isNotEmpty) {
+      final clanId = rs.first['clanId'];
+      _db.execute('''
+        UPDATE clan_members 
+        SET seasonPoints = seasonPoints + ?, totalPoints = totalPoints + ? 
+        WHERE userId = ?
+      ''', [points, points, userId]);
+      
+      _db.execute('''
+        UPDATE clans 
+        SET seasonScore = seasonScore + ?, totalScore = totalScore + ? 
+        WHERE id = ?
+      ''', [points, points, clanId]);
+    }
+  }
+
+  /// Ends the weekly clan war:
+  /// 1. Finds the clan with the highest seasonScore
+  /// 2. Awards them +1 trophy
+  /// 3. Resets seasonScore (for clans) and seasonPoints (for members)
+  /// Returns the winning clan's details (or null if no points were scored)
+  Map<String, dynamic>? resetClanWars() {
+    // Find winner
+    final rs = _db.select('''
+      SELECT id, name, tag, seasonScore 
+      FROM clans 
+      WHERE seasonScore > 0 
+      ORDER BY seasonScore DESC 
+      LIMIT 1
+    ''');
+    
+    Map<String, dynamic>? winner;
+    if (rs.isNotEmpty) {
+      winner = Map<String, dynamic>.from(rs.first);
+      final winnerId = winner['id'];
+      // Award trophy
+      _db.execute('UPDATE clans SET trophies = trophies + 1 WHERE id = ?', [winnerId]);
+    }
+
+    // Reset all season scores and points
+    _db.execute('UPDATE clans SET seasonScore = 0');
+    _db.execute('UPDATE clan_members SET seasonPoints = 0');
+
+    return winner;
   }
 
   // --- FCM Token Operations ---
@@ -241,15 +327,8 @@ class DatabaseService {
     try {
       _db.execute('BEGIN TRANSACTION');
 
-      // Charge 500 Coins
-      final ResultSet userRes =
-          _db.select('SELECT coins FROM users WHERE id = ?', [ownerId]);
-      if (userRes.isEmpty) throw Exception("User not found");
-      int coins = userRes.first['coins'] as int;
-      if (coins < 500) throw Exception("Insufficient coins (500 required)");
-
-      _db.execute(
-          'UPDATE users SET coins = coins - 500 WHERE id = ?', [ownerId]);
+      // Removed server-side coin validation since coins are currently managed locally by ProgressionService
+      // on the client-side. We will handle deduction strictly on the frontend for now.
 
       // Insert Clan
       _db.execute('''
@@ -313,8 +392,25 @@ class DatabaseService {
 
   void leaveClan(String userId) {
     _db.execute('DELETE FROM clan_members WHERE userId = ?', [userId]);
-    // Note: If the owner leaves, we'll need logic to transfer ownership or disband.
-    // For V1, we'll let owners leave, making it an abandoned clan, or we handle it in server.dart.
+  }
+
+  /// Owner kicks a specific member from their clan
+  void kickMember(String targetUserId) {
+    _db.execute('DELETE FROM clan_members WHERE userId = ?', [targetUserId]);
+  }
+
+  /// Delete the entire clan (owner only). Cascades to clan_members via FK.
+  void deleteClan(String clanId) {
+    _db.execute('DELETE FROM clan_messages WHERE clanId = ?', [clanId]);
+    _db.execute('DELETE FROM clan_members WHERE clanId = ?', [clanId]);
+    _db.execute('DELETE FROM clans WHERE id = ?', [clanId]);
+  }
+
+  /// Returns the clan owned by this user, or null if they don't own any clan.
+  Map<String, dynamic>? getClanByOwner(String userId) {
+    final res = _db.select('SELECT * FROM clans WHERE ownerId = ?', [userId]);
+    if (res.isEmpty) return null;
+    return Map<String, dynamic>.from(res.first);
   }
 
   Map<String, dynamic>? getClanDetails(String clanId) {
@@ -325,7 +421,7 @@ class DatabaseService {
     var clan = _rowToMap(clanRes.first);
 
     final ResultSet memberRes = _db.select('''
-      SELECT cm.userId, cm.role, cm.joinedAt, u.username, u.avatar, u.wins 
+      SELECT cm.userId, cm.role, cm.joinedAt, u.username, u.avatar, u.wins, u.games_played 
       FROM clan_members cm
       JOIN users u ON cm.userId = u.id
       WHERE cm.clanId = ?
@@ -339,7 +435,7 @@ class DatabaseService {
     final ResultSet results = _db.select('''
       SELECT c.*, (SELECT COUNT(*) FROM clan_members WHERE clanId = c.id) as memberCount 
       FROM clans c
-      ORDER BY totalScore DESC 
+      ORDER BY seasonScore DESC, trophies DESC, totalScore DESC 
       LIMIT 50
     ''');
     return results.map((r) => _rowToMap(r)).toList();
@@ -431,13 +527,44 @@ class DatabaseService {
     return results.map((row) => Map<String, dynamic>.from(row)).toList();
   }
 
+  // --- Clan Chat ---
+
+  void saveClanMessage(String clanId, String senderId, String senderName,
+      String? senderAvatar, String message) {
+    _db.execute('''
+      INSERT INTO clan_messages (clanId, senderId, senderName, senderAvatar, message, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?)
+    ''', [
+      clanId,
+      senderId,
+      senderName,
+      senderAvatar,
+      message,
+      DateTime.now().toIso8601String()
+    ]);
+  }
+
+  List<Map<String, dynamic>> getClanMessageHistory(String clanId,
+      {int limit = 50}) {
+    final ResultSet results = _db.select('''
+      SELECT senderId, senderName, senderAvatar, message, timestamp
+      FROM clan_messages
+      WHERE clanId = ?
+      ORDER BY timestamp DESC
+      LIMIT ?
+    ''', [clanId, limit]);
+    // Reverse so oldest is first
+    return results
+        .map((r) => {...Map<String, dynamic>.from(r), 'clanId': clanId})
+        .toList()
+        .reversed
+        .toList();
+  }
+
   // --- Helpers ---
 
   Map<String, dynamic> _rowToMap(Row row) {
     final map = Map<String, dynamic>.from(row);
-    // In our JSON structure, friends was a list within the user object.
-    // For compatibility with existing server logic, we might need to fetch friends.
-    // But let's see if we can refactor server.dart to use getFriends(userId) separately.
     return map;
   }
 

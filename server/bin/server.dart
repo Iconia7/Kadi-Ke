@@ -442,6 +442,7 @@ class MultiGameServer {
           'password': _hashPassword(password),
           'email': email,
           'wins': 0,
+          'games_played': 0,
           'coins': 0,
           'created_at': DateTime.now().toIso8601String()
         });
@@ -450,6 +451,11 @@ class MultiGameServer {
             jsonEncode({
               'status': 'success',
               'userId': id,
+              'coins': 0,
+              'wins': 0,
+              'gamesPlayed': 0,
+              'winRate': 0.0,
+              'avatar': null, // No avatar on register
               'token': _generateJwt(id, username)
             }),
             headers: _corsHeaders);
@@ -491,10 +497,20 @@ class MultiGameServer {
 
         _log("Login successful: $username");
         final userId = user['id'];
+        final int wins = user['wins'] ?? 0;
+        final int gamesPlayed = user['games_played'] ?? 0;
+        final int coins = user['coins'] ?? 0;
+        final double winRate = gamesPlayed > 0 ? (wins / gamesPlayed) : 0.0;
+
         return Response.ok(
             jsonEncode({
               'status': 'success',
               'userId': userId,
+              'coins': coins,
+              'wins': wins,
+              'gamesPlayed': gamesPlayed,
+              'winRate': winRate,
+              'avatar': user['avatar'],
               'token': _generateJwt(userId, username)
             }),
             headers: _corsHeaders);
@@ -557,6 +573,7 @@ class MultiGameServer {
             'email': email,
             'password': 'google_auth_no_password',
             'wins': 0,
+            'games_played': 0,
             'coins': 0,
             'created_at': DateTime.now().toIso8601String()
           });
@@ -570,11 +587,21 @@ class MultiGameServer {
       }
 
       final user = _dbService.getUserByUsername(username!);
+      final int wins = user!['wins'] ?? 0;
+      final int gamesPlayed = user['games_played'] ?? 0;
+      final int coins = user['coins'] ?? 0;
+      final double winRate = gamesPlayed > 0 ? (wins / gamesPlayed) : 0.0;
+
       return Response.ok(
           jsonEncode({
             'status': 'success',
-            'userId': user!['id'],
+            'userId': user['id'],
             'username': username,
+            'coins': coins,
+            'wins': wins,
+            'gamesPlayed': gamesPlayed,
+            'winRate': winRate,
+            'avatar': user['avatar'],
             'token': _generateJwt(
                 user['id'], username!) // Issue real JWT for google login too
           }),
@@ -778,6 +805,7 @@ class MultiGameServer {
           'username': entry.key,
           'wins': int.tryParse(entry.value['wins'].toString()) ?? 0,
           'userId': entry.value['id'],
+          'avatar': entry.value['avatar'],
         };
       }).toList();
 
@@ -853,9 +881,10 @@ class MultiGameServer {
       final data = jsonDecode(payload);
       final username = data['username'];
       final winsToAdd = int.tryParse(data['wins']?.toString() ?? "1") ?? 1;
+      final isLan = data['isLan'] == true;
 
       _log(
-          "Update Stats Request: $username increment by $winsToAdd (Authenticated)");
+          "Update Stats Request: $username increment by $winsToAdd (Authenticated, LAN/Online: $isLan)");
 
       final user = _dbService.getUserByUsername(username);
       if (user != null) {
@@ -868,12 +897,39 @@ class MultiGameServer {
               headers: _corsHeaders);
         }
 
+        // Increment Games Played
+        _dbService.incrementGamesPlayed(user['id']);
+
         int currentWins = int.tryParse(user['wins']?.toString() ?? "0") ?? 0;
         int newWins = currentWins + winsToAdd;
-        _dbService.updateUser(user['id'], {'wins': newWins});
+        
+        int coinsEarned = winsToAdd > 0 ? 100 : 25;
+        // NOTE: If game had an entryFee, the client could pass it here to allocate the whole pot,
+        // but for now, we just enforce the base offline rewards.
 
-        _log("Wins updated for $username: $newWins");
-        return Response.ok(jsonEncode({'status': 'success', 'wins': newWins}),
+        _dbService.updateUser(user['id'], {'wins': newWins});
+        _dbService.incrementCoins(user['id'], coinsEarned);
+
+        if (isLan && winsToAdd > 0) {
+          _dbService.addClanPoints(user['id'], 3 * winsToAdd);
+        }
+
+        // Re-fetch to get accurate gamesPlayed/coins
+        final updatedUser = _dbService.getUserById(user['id']);
+        final int gamesPlayed = updatedUser?['games_played'] ?? 0;
+        final int updatedCoins = updatedUser?['coins'] ?? 0;
+        final double winRate = gamesPlayed > 0 ? (newWins / gamesPlayed) : 0.0;
+
+        _log("Stats updated for $username: wins=$newWins, gamesPlayed=$gamesPlayed, coins=$updatedCoins");
+        return Response.ok(
+            jsonEncode({
+              'status': 'success',
+              'wins': newWins,
+              'gamesPlayed': gamesPlayed,
+              'winRate': winRate,
+              'coins': updatedCoins,
+              'coinsEarned': coinsEarned
+            }),
             headers: _corsHeaders);
       } else {
         _log("Update Stats Fail: User $username not found", level: 'WARNING');
@@ -885,6 +941,45 @@ class MultiGameServer {
       return Response.internalServerError(
           body: jsonEncode({'error': "Update Stats Error: $e"}),
           headers: _corsHeaders);
+    }
+  }
+
+  Future<Response> _handleSyncWallet(Request request) async {
+    try {
+      final authHeader = request.headers['authorization'];
+      final token = authHeader?.split(' ').last;
+      final userIdFromToken = _verifyJwt(token);
+
+      if (userIdFromToken == null) {
+        return Response.forbidden(
+            jsonEncode({'error': 'Invalid or missing authentication token'}),
+            headers: _corsHeaders);
+      }
+
+      final user = _dbService.getUserById(userIdFromToken);
+      if (user != null) {
+        final int wins = user['wins'] ?? 0;
+        final int gamesPlayed = user['games_played'] ?? 0;
+        final int coins = user['coins'] ?? 0;
+        final double winRate = gamesPlayed > 0 ? (wins / gamesPlayed) : 0.0;
+
+        return Response.ok(
+            jsonEncode({
+              'status': 'success',
+              'coins': coins,
+              'wins': wins,
+              'gamesPlayed': gamesPlayed,
+              'winRate': winRate,
+            }),
+            headers: _corsHeaders);
+      } else {
+        return Response.ok(jsonEncode({'error': 'User not found'}),
+            headers: _corsHeaders);
+      }
+    } catch (e) {
+      _log("Sync Wallet Error: $e", level: 'ERROR');
+      return Response.internalServerError(
+          body: jsonEncode({'error': "Server Error"}), headers: _corsHeaders);
     }
   }
 
@@ -1167,7 +1262,7 @@ class MultiGameServer {
       final result = _dbService.createClan(clanId, name, tag, desc, userId);
 
       return Response.ok(jsonEncode(result), headers: _corsHeaders);
-    } catch (e) {
+    } catch (e, stack) {
       if (e.toString().contains('UNIQUE constraint failed: clans.name'))
         return Response.badRequest(
             body: jsonEncode({'error': 'Clan name already taken'}),
@@ -1176,6 +1271,12 @@ class MultiGameServer {
         return Response.badRequest(
             body: jsonEncode({'error': 'Clan tag already taken'}),
             headers: _corsHeaders);
+      if (e.toString().contains('Insufficient coins'))
+        return Response.badRequest(
+            body: jsonEncode({'error': 'Insufficient coins (500 required)'}),
+            headers: _corsHeaders);
+            
+      _log("Clan Creation Error: $e\n$stack", level: 'ERROR');
       return Response.internalServerError(
           body:
               jsonEncode({'error': e.toString().replaceAll("Exception: ", "")}),
@@ -1369,7 +1470,28 @@ class MultiGameServer {
   //              WEBSOCKET HANDLER
   // ==========================================
 
+  DateTime? _lastWeeklyReset;
+
+  void _startWeeklyResetTimer() {
+    // Check every hour
+    Timer.periodic(const Duration(hours: 1), (timer) {
+      final now = DateTime.now();
+      // Run once on Monday at midnight (00:00 - 00:59)
+      if (now.weekday == DateTime.monday && now.hour == 0) {
+        if (_lastWeeklyReset == null || now.difference(_lastWeeklyReset!).inDays > 5) {
+          _lastWeeklyReset = now;
+          _log("Automated Weekly Clan War Reset Triggered!");
+          final winner = _dbService.resetClanWars();
+          if (winner != null) {
+            _broadcastGlobalTicker("🏆 Clan ${winner['name']} won the Weekly Clan War!");
+          }
+        }
+      }
+    });
+  }
+
   Future<void> _start() async {
+    _startWeeklyResetTimer();
     _dbService.initialize();
     _migrateIfNecessary();
     _loadConfig();
@@ -1781,8 +1903,10 @@ class MultiGameServer {
             // --- CLAN ACTIONS ---
             else if (type == 'CLAN_CHAT') {
               if (playerId == null) return;
-              String? clanId = data['clanId'];
-              String messageBody = data['message'];
+              // The client nests clanId and message inside a 'data' sub-key
+              final chatData = data['data'] as Map<String, dynamic>? ?? data;
+              String? clanId = chatData['clanId'];
+              String messageBody = chatData['message'] ?? '';
               String senderName = _onlineUsers[playerId!] ?? "Unknown";
 
               if (clanId == null || messageBody.isEmpty) return;
@@ -1793,11 +1917,20 @@ class MultiGameServer {
               if (clanDetails != null && clanDetails['members'] != null) {
                 List<dynamic> members = clanDetails['members'];
 
+                final senderData = _dbService.getUserById(playerId!);
+                final senderAvatar = senderData?['avatar'];
+
+                // Persist message to DB for history
+                _dbService.saveClanMessage(
+                    clanId, playerId!, senderName, senderAvatar, messageBody);
+
                 final chatPayload = jsonEncode({
                   'type': 'CLAN_CHAT_MESSAGE',
                   'data': {
+                    'clanId': clanId,
                     'senderId': playerId,
                     'senderName': senderName,
+                    'senderAvatar': senderAvatar,
                     'message': messageBody,
                     'timestamp': DateTime.now().toIso8601String()
                   }
@@ -1896,6 +2029,9 @@ class MultiGameServer {
       if (path == 'update_stats') {
         return _handleUpdateStats(request);
       }
+      if (path == 'sync_wallet') {
+        return _handleSyncWallet(request);
+      }
       if (path == 'active_rooms') {
         return _handleActiveRooms(request);
       }
@@ -1932,6 +2068,73 @@ class MultiGameServer {
       if (path == 'api/clans/leave') return _handleLeaveClan(request);
       if (path == 'api/clans/search') return _handleSearchClans(request);
       if (path == 'api/clans/details') return _handleClanDetails(request);
+      if (path.startsWith('api/clans/chat_history')) {
+        final token = request.headers['authorization']?.replaceFirst('Bearer ', '');
+        final userId = _verifyJwt(token);
+        if (userId == null) return Response.forbidden(jsonEncode({'error': 'Unauthorized'}), headers: _corsHeaders);
+        final clanId = request.url.queryParameters['clanId'];
+        if (clanId == null || clanId.isEmpty) {
+          return Response.badRequest(body: jsonEncode({'error': 'clanId required'}), headers: _corsHeaders);
+        }
+        final messages = _dbService.getClanMessageHistory(clanId);
+        return Response.ok(jsonEncode({'messages': messages}), headers: _corsHeaders);
+      }
+      if (path == 'api/clans/kick') {
+        final token = request.headers['authorization']?.replaceFirst('Bearer ', '');
+        final userId = _verifyJwt(token);
+        if (userId == null) return Response.forbidden(jsonEncode({'error': 'Unauthorized'}), headers: _corsHeaders);
+        try {
+          final body = jsonDecode(await request.readAsString());
+          final targetUserId = body['targetUserId'] as String?;
+          if (targetUserId == null) return Response.badRequest(body: jsonEncode({'error': 'targetUserId required'}), headers: _corsHeaders);
+          // Verify requester is the clan owner
+          final clan = _dbService.getClanByOwner(userId);
+          if (clan == null) return Response.forbidden(jsonEncode({'error': 'You are not a clan owner'}), headers: _corsHeaders);
+          // Cannot kick yourself
+          if (targetUserId == userId) return Response.badRequest(body: jsonEncode({'error': 'Cannot kick yourself'}), headers: _corsHeaders);
+          _dbService.kickMember(targetUserId);
+          _log('Owner $userId kicked member $targetUserId from clan ${clan['id']}');
+          return Response.ok(jsonEncode({'success': true}), headers: _corsHeaders);
+        } catch (e) {
+          return Response.internalServerError(body: jsonEncode({'error': e.toString()}), headers: _corsHeaders);
+        }
+      }
+      if (path == 'api/clans/delete') {
+        final token = request.headers['authorization']?.replaceFirst('Bearer ', '');
+        final userId = _verifyJwt(token);
+        if (userId == null) return Response.forbidden(jsonEncode({'error': 'Unauthorized'}), headers: _corsHeaders);
+        try {
+          final clan = _dbService.getClanByOwner(userId);
+          if (clan == null) return Response.forbidden(jsonEncode({'error': 'You are not a clan owner'}), headers: _corsHeaders);
+          _dbService.deleteClan(clan['id'] as String);
+          // Clear in-memory chat cache for this clan
+          _log('Owner $userId deleted clan ${clan['id']}');
+          return Response.ok(jsonEncode({'success': true}), headers: _corsHeaders);
+        } catch (e) {
+          return Response.internalServerError(body: jsonEncode({'error': e.toString()}), headers: _corsHeaders);
+        }
+      }
+      if (path == 'api/admin/reset_clan_wars') {
+        if (request.method != 'POST') return Response(405, headers: _corsHeaders);
+        try {
+          final payload = await request.readAsString();
+          final data = jsonDecode(payload);
+          final providedKey = data['adminKey'];
+          final expectedKey = Platform.environment['ADMIN_API_KEY'];
+
+          if (expectedKey == null || providedKey != expectedKey) {
+            return Response.forbidden(jsonEncode({'error': 'Invalid adminKey'}), headers: _corsHeaders);
+          }
+
+          final winner = _dbService.resetClanWars();
+          if (winner != null) {
+            _broadcastGlobalTicker("🏆 Clan ${winner['name']} won the Weekly Clan War!");
+          }
+          return Response.ok(jsonEncode({'success': true, 'winner': winner}), headers: _corsHeaders);
+        } catch (e) {
+          return Response.internalServerError(body: jsonEncode({'error': e.toString()}), headers: _corsHeaders);
+        }
+      }
       if (path == 'api/admin/push') {
         if (request.method != 'POST')
           return Response(405, headers: _corsHeaders);
@@ -2741,6 +2944,7 @@ class MultiGameServer {
   void _handleWin(GameRoom room, Player winner) {
     // 1. Update DB
     _dbService.incrementWins(winner.id);
+    _dbService.addClanPoints(winner.id, 3);
 
     int coins = 100;
     // Pot Logic

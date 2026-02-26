@@ -41,7 +41,8 @@ void main() async {
   // 2. Initialize Custom Auth Service
   try {
     await CustomAuthService().initialize();
-    print("✅ Auth Service Initialized");
+    await CustomAuthService().fetchCloudWallet(); // Background sync of coins/wins
+    print("✅ Auth Service Initialized & Wallet Synced");
   } catch (e) {
     print("❌ Auth Init Error: $e");
   }

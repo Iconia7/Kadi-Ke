@@ -3,7 +3,9 @@ import 'package:http/http.dart' as http;
 import 'dart:io';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+
 import 'app_config.dart';
+import 'progression_service.dart';
 
 class CustomAuthService {
   static final CustomAuthService _instance = CustomAuthService._internal();
@@ -60,6 +62,12 @@ class CustomAuthService {
         _token = data['token']; 
         _avatar = data['avatar'];
 
+        await ProgressionService().syncFromCloud(
+          data['coins'] ?? 0,
+          data['wins'] ?? 0,
+          data['gamesPlayed'] ?? 0,
+        );
+
         await _saveCredentials();
       } else {
         throw Exception('Registration failed: ${response.statusCode}');
@@ -92,6 +100,12 @@ class CustomAuthService {
         _username = username;
         _avatar = data['avatar'];
         
+        await ProgressionService().syncFromCloud(
+          data['coins'] ?? 0,
+          data['wins'] ?? 0,
+          data['gamesPlayed'] ?? 0,
+        );
+
         await _saveCredentials();
       } else {
         throw Exception('Login failed: ${response.statusCode}');
@@ -172,12 +186,44 @@ class CustomAuthService {
         _token = data['token'];
         _username = data['username'] ?? googleUser.displayName;
 
+        await ProgressionService().syncFromCloud(
+          data['coins'] ?? 0,
+          data['wins'] ?? 0,
+          data['gamesPlayed'] ?? 0,
+        );
+
         await _saveCredentials();
       } else {
         throw Exception('Google login failed: ${response.statusCode}');
       }
     } catch (e) {
       throw Exception('Google Sign-In error: $e');
+    }
+  }
+
+  Future<void> fetchCloudWallet() async {
+    if (_token == null || _userId == null) return;
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/sync_wallet'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $_token',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['status'] == 'success') {
+          await ProgressionService().syncFromCloud(
+            data['coins'] ?? 0,
+            data['wins'] ?? 0,
+            data['gamesPlayed'] ?? 0,
+          );
+        }
+      }
+    } catch (_) {
+      // Silent pass for background sync
     }
   }
 

@@ -238,11 +238,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
               ],
             ),
             borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-            border: Border(
-              top: BorderSide(color: color, width: 2),
-              left: BorderSide(color: color.withOpacity(0.5), width: 1),
-              right: BorderSide(color: color.withOpacity(0.5), width: 1),
-            )
+            border: Border.all(color: color.withOpacity(0.5), width: 1.5),
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,

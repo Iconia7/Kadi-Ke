@@ -53,6 +53,13 @@ class ProgressionService {
   // Helper to generate user-specific keys
   String _getKey(String key) => "$_userIdPrefix$key";
 
+  // --- CLOUD WALLET SYNC ---
+  Future<void> syncFromCloud(int coins, int wins, int gamesPlayed) async {
+    await _prefs.setInt(_getKey(_coinsKey), coins);
+    await _prefs.setInt(_getKey(_totalWinsKey), wins);
+    await _prefs.setInt(_getKey(_totalGamesKey), gamesPlayed);
+  }
+
   // --- COINS & STATS ---
   int getCoins() => _prefs.getInt(_getKey(_coinsKey)) ?? 0;
   Future<void> addCoins(int amount) async => await _prefs.setInt(_getKey(_coinsKey), getCoins() + amount);

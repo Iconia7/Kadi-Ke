@@ -156,6 +156,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   // Getters
   bool get _isOffline => widget.hostAddress == 'offline';
   bool get _isOnline => widget.hostAddress == 'online';
+  bool get _isLan => widget.hostAddress != 'offline' && widget.hostAddress != 'online';
   bool get _isGoFish => widget.gameType == 'gofish';
 
   @override
@@ -1480,7 +1481,7 @@ Future<void> _handleGameOver(dynamic data) async {
       // Update leaderboard stats for ALL game modes (solo, LAN, online)
       // FIX: Only update here for offline. Online is handled by server.
       if (!_isOnline) {
-         await VPSGameService().updateStats(wins: 1);
+         await VPSGameService().updateStats(wins: 1, isLan: _isLan);
       }
       
       if (_isOnline && _entryFee > 0) {

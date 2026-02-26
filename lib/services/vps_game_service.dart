@@ -27,6 +27,16 @@ class VPSGameService {
   final StreamController<Map<String, dynamic>> _clanChatStreamController = StreamController<Map<String, dynamic>>.broadcast();
   Stream<Map<String, dynamic>> get clanChatStream => _clanChatStreamController.stream;
   
+  // In-memory cache of clan chat messages, keyed by clanId.
+  // Persists across screen navigations within the same app session.
+  final Map<String, List<Map<String, dynamic>>> _clanChatCache = {};
+  static const int _maxCachedMessages = 100;
+
+  /// Returns cached messages for a clan (call before listening to stream)
+  List<Map<String, dynamic>> getCachedMessages(String clanId) {
+    return List.unmodifiable(_clanChatCache[clanId] ?? []);
+  }
+  
   String? _currentGameCode;
   int _reconnectDelay = 1000; // Start with 1s
   static const int _maxReconnectDelay = 30000; // Max 30s
@@ -46,17 +56,14 @@ class VPSGameService {
     try {
       _channel = WebSocketChannel.connect(Uri.parse(wsUrl));
       
-      // Wait for a small moment to verify connection
-      // WebSocketChannel.connect is lazy, it doesn't wait for the handshake.
+      // Mark connected immediately — the handshake is lazy but the socket is
+      // open. onDone/onError below will flip it back to false if it fails.
+      _isConnected = true;
+      _reconnectDelay = 1000;
+      print('WebSocket channel opened.');
       
       _channel!.stream.listen(
         (message) {
-          if (!_isConnected) {
-            _isConnected = true;
-            _reconnectDelay = 1000; // Reset delay on successful message
-            print('Connected to VPS successfully.');
-          }
-          
           try {
             final data = jsonDecode(message);
             
@@ -72,7 +79,15 @@ class VPSGameService {
             }
 
             if (data['type'] == 'CLAN_CHAT_MESSAGE') {
-              _clanChatStreamController.add(data['data']);
+              final chatData = Map<String, dynamic>.from(data['data']);
+              // Cache the message
+              final clanId = chatData['clanId'] as String? ?? '__default__';
+              _clanChatCache.putIfAbsent(clanId, () => []);
+              _clanChatCache[clanId]!.add(chatData);
+              if (_clanChatCache[clanId]!.length > _maxCachedMessages) {
+                _clanChatCache[clanId]!.removeAt(0);
+              }
+              _clanChatStreamController.add(chatData);
               return;
             }
 
@@ -111,6 +126,7 @@ class VPSGameService {
     final token = CustomAuthService().token;
     final username = CustomAuthService().username;
     final userId = CustomAuthService().userId;
+    print("VPSGameService _authenticate: token=${token != null}, user=$username, id=$userId");
 
     if (token != null && username != null) {
       String? fcmToken = await NotificationService().getFCMToken();
@@ -122,6 +138,8 @@ class VPSGameService {
         'userId': userId,
         'fcmToken': fcmToken,
       }));
+    } else {
+      print("VPSGameService _authenticate: Skipped - token or username is null.");
     }
   }
 
@@ -173,18 +191,62 @@ class VPSGameService {
 
   /// Send a clan chat message
   void sendClanChat(String clanId, String message) {
-    if (_isConnected && _channel != null) {
-      _channel!.sink.add(jsonEncode({
-        'type': 'CLAN_CHAT',
-        'data': {
-          'clanId': clanId,
-          'message': message,
+    print("sendClanChat: isConnected=$_isConnected, clanId=$clanId");
+    if (!_isConnected || _channel == null) {
+      print("sendClanChat: Not connected — attempting reconnect before send.");
+      connect().then((_) {
+        // Short delay to let the JOIN handshake complete
+        Future.delayed(const Duration(milliseconds: 600), () {
+          if (_isConnected && _channel != null) {
+            _channel!.sink.add(jsonEncode({
+              'type': 'CLAN_CHAT',
+              'data': {'clanId': clanId, 'message': message},
+            }));
+          }
+        });
+      });
+      return;
+    }
+    _channel!.sink.add(jsonEncode({
+      'type': 'CLAN_CHAT',
+      'data': {'clanId': clanId, 'message': message},
+    }));
+  }
+
+  /// Fetch clan chat history from the server (last 50 messages).
+  /// Merges with the in-memory cache so duplicates are avoided.
+  Future<void> fetchClanChatHistory(String clanId) async {
+    try {
+      final token = CustomAuthService().token;
+      final response = await http.get(
+        Uri.parse('$httpUrl/api/clans/chat_history?clanId=$clanId'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final List<dynamic> msgs = data['messages'] ?? [];
+        final existingIds = (_clanChatCache[clanId] ?? [])
+            .map((m) => '${m['senderId']}${m['timestamp']}')
+            .toSet();
+        for (final m in msgs) {
+          final msg = Map<String, dynamic>.from(m);
+          final key = '${msg['senderId']}${msg['timestamp']}';
+          if (!existingIds.contains(key)) {
+            _clanChatCache.putIfAbsent(clanId, () => []).add(msg);
+          }
         }
-      }));
+        // Sort by timestamp ascending
+        _clanChatCache[clanId]?.sort((a, b) =>
+            (a['timestamp'] as String).compareTo(b['timestamp'] as String));
+      }
+    } catch (e) {
+      print('fetchClanChatHistory error: $e');
     }
   }
 
-  /// Join an existing game room
   Future<void> joinGame(String roomCode, String playerName) async {
     await connect();
     _currentGameCode = roomCode;
@@ -418,7 +480,7 @@ class VPSGameService {
   }
 
   /// Update user stats (wins) on VPS
-  Future<void> updateStats({int wins = 1}) async {
+  Future<void> updateStats({int wins = 1, bool isLan = false}) async {
     try {
       final username = CustomAuthService().username;
       if (username == null) {
@@ -436,6 +498,7 @@ class VPSGameService {
         body: jsonEncode({
           'username': username,
           'wins': wins,
+          'isLan': isLan,
         }),
       );
 
