@@ -66,7 +66,22 @@ class FCMService {
         'notification': {
           'title': title,
           'body': body,
-          if (imageUrl != null) 'image': imageUrl,
+          if (imageUrl != null && imageUrl.isNotEmpty) 'image': imageUrl,
+        },
+        'android': {
+          'notification': {
+            if (imageUrl != null && imageUrl.isNotEmpty) 'image': imageUrl,
+          }
+        },
+        'apns': {
+          'payload': {
+            'aps': {
+              'mutable-content': 1
+            }
+          },
+          'fcm_options': {
+            if (imageUrl != null && imageUrl.isNotEmpty) 'image': imageUrl,
+          }
         },
         if (finalData.isNotEmpty) 'data': finalData,
       }

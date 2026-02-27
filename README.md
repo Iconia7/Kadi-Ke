@@ -192,6 +192,22 @@ flutter build appbundle --release
 flutter build ios --release
 ```
 
+### Shorebird OTA Updates (Recommended)
+Shorebird allows you to push Dart code changes directly to users' devices instantly without going through the Play Store review process.
+
+**1. Create a New Release (Play Store Upload)**
+Run this to build your aab file that you should upload to the Play Store console:
+```bash
+shorebird release android
+```
+
+**2. Push an Instant Patch (OTA Bug Fix)**
+Made a quick bug fix? Run this to push the update instantly to all users on the current release:
+```bash
+shorebird patch android
+```
+*Note: Shorebird patches only apply to Dart code. If you add new native dependencies or assets, you must create a new Release.*
+
 ---
 
 ## 📱 Server Configuration

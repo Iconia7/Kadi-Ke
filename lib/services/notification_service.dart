@@ -88,7 +88,12 @@ class NotificationService {
     // Listen to Firebase foreground messages
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       if (message.notification != null) {
-        String? imageUrl = message.notification?.android?.imageUrl ?? message.notification?.apple?.imageUrl;
+        // FCM v1 often puts the image in the data payload if it's sent via custom backend
+        // We check notification object first, then data payload
+        String? imageUrl = message.notification?.android?.imageUrl ?? 
+                           message.notification?.apple?.imageUrl ?? 
+                           message.data['image'] ??
+                           message.data['imageUrl'];
         
         List<NotificationActionButton>? actionButtons;
         if (message.data.containsKey('actions')) {

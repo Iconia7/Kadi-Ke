@@ -629,6 +629,9 @@ class _ClanHubScreenState extends State<ClanHubScreen>
   // ─── Stats Row ───────────────────────────────────────────────────
 
   Widget _buildStatsRow() {
+    int rankIndex = _topClans.indexWhere((c) => c.id == _myClan!.id);
+    String rankText = rankIndex != -1 ? "#${rankIndex + 1}" : "Unranked";
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Row(
@@ -641,7 +644,7 @@ class _ClanHubScreenState extends State<ClanHubScreen>
               "Members", Colors.lightBlueAccent),
           const SizedBox(width: 10),
           _statChip(Icons.military_tech_rounded,
-              "#1", "Rank", Colors.purpleAccent),
+              rankText, "Rank", Colors.purpleAccent),
         ],
       ),
     );
@@ -1125,7 +1128,7 @@ class _ClanHubScreenState extends State<ClanHubScreen>
             ),
             onPressed: _showCreateClanDialog,
             icon: const Icon(Icons.add, size: 18),
-            label: const Text("Create a Clan (500 Coins)",
+            label: const Text("Create a Clan (2000 Coins)",
                 style:
                     TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
           ),

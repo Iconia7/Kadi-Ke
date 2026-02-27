@@ -84,6 +84,7 @@ flutter:
     - assets/cards/
     - assets/audio/
     - assets/
+    - shorebird.yaml
   #   - images/a_dot_ham.jpeg
 
 flutter_icons:
