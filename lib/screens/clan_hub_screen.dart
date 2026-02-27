@@ -112,84 +112,125 @@ class _ClanHubScreenState extends State<ClanHubScreen>
     final nameCtrl = TextEditingController();
     final tagCtrl  = TextEditingController();
     final descCtrl = TextEditingController();
+    double _entryFee = 0;
 
     showDialog(
       context: context,
-      builder: (c) => Dialog(
-        backgroundColor: Colors.transparent,
-        child: Container(
-          padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            color: _surface,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: _amberDim, width: 1.5),
-            boxShadow: [BoxShadow(color: _glow.withOpacity(0.2), blurRadius: 24)],
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(children: [
-                Icon(Icons.shield, color: _amber, size: 22),
-                const SizedBox(width: 8),
-                const Text("Create a Clan",
-                    style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-              ]),
-              const SizedBox(height: 4),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                    color: _amberDim, borderRadius: BorderRadius.circular(8)),
-                child: const Text("Cost: 500 Coins",
-                    style: TextStyle(color: _amber, fontWeight: FontWeight.bold, fontSize: 12)),
-              ),
-              const SizedBox(height: 16),
+      builder: (c) => StatefulBuilder(
+        builder: (context, setDialogState) => Dialog(
+          backgroundColor: Colors.transparent,
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: _surface,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: _amberDim, width: 1.5),
+              boxShadow: [BoxShadow(color: _glow.withOpacity(0.2), blurRadius: 24)],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  Icon(Icons.shield, color: _amber, size: 22),
+                  const SizedBox(width: 8),
+                  const Text("Create a Clan",
+                      style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                ]),
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                      color: _amberDim, borderRadius: BorderRadius.circular(8)),
+                  child: const Text("Cost: 2000 Coins",
+                      style: TextStyle(color: _amber, fontWeight: FontWeight.bold, fontSize: 12)),
+                ),
+                const SizedBox(height: 16),
               _dialogField(nameCtrl, "Clan Name (3–20 chars)", Icons.group),
               const SizedBox(height: 10),
               _dialogField(tagCtrl, "Clan Tag (4 letters)", Icons.tag,
                   caps: TextCapitalization.characters, maxLen: 4),
               const SizedBox(height: 10),
               _dialogField(descCtrl, "Description", Icons.info_outline),
-              const SizedBox(height: 20),
-              Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-                TextButton(
-                    onPressed: () => Navigator.pop(c),
-                    child: const Text("Cancel", style: TextStyle(color: Colors.white54))),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                      backgroundColor: _amber,
-                      foregroundColor: Colors.black,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
-                  onPressed: () async {
-                    if (nameCtrl.text.trim().length < 3) {
-                      CustomToast.show(context, "Name must be at least 3 chars", isError: true); return;
-                    }
-                    if (tagCtrl.text.trim().length != 4) {
-                      CustomToast.show(context, "Tag must be exactly 4 chars", isError: true); return;
-                    }
-                    if (ProgressionService().getCoins() < 500) {
-                      CustomToast.show(context, "Insufficient Coins! 500 required.", isError: true); return;
-                    }
-                    try {
-                      Navigator.pop(c);
-                      setState(() => _isLoading = true);
-                      await ClanService().createClan(
-                          nameCtrl.text.trim(),
-                          tagCtrl.text.toUpperCase().trim(),
-                          descCtrl.text.trim());
-                      await ProgressionService().addCoins(-500);
-                      CustomToast.show(context, "Clan Created! ⚔️");
-                      await _loadData();
-                    } catch (e) {
-                      setState(() => _isLoading = false);
-                      CustomToast.show(context, e.toString().replaceAll("Exception: ", ""), isError: true);
-                    }
-                  },
-                  child: const Text("Create"),
+                const SizedBox(height: 16),
+                const Text("Entry Fee (Coins)",
+                    style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600)),
+                Row(
+                  children: [
+                    Text("0", style: TextStyle(color: Colors.white38, fontSize: 12)),
+                    Expanded(
+                      child: SliderTheme(
+                        data: SliderTheme.of(context).copyWith(
+                          activeTrackColor: _amber,
+                          inactiveTrackColor: _amberDim.withOpacity(0.2),
+                          thumbColor: _amber,
+                          overlayColor: _amber.withOpacity(0.2),
+                          trackHeight: 4,
+                        ),
+                        child: Slider(
+                          value: _entryFee,
+                          min: 0,
+                          max: 1000,
+                          divisions: 20,
+                          label: "${_entryFee.toInt()}",
+                          onChanged: (val) {
+                            setDialogState(() => _entryFee = val);
+                          },
+                        ),
+                      ),
+                    ),
+                    Text("1000", style: TextStyle(color: Colors.white38, fontSize: 12)),
+                  ],
                 ),
-              ]),
-            ],
+                Center(
+                  child: Text("${_entryFee.toInt()} Coins",
+                      style: const TextStyle(color: _amber, fontWeight: FontWeight.bold)),
+                ),
+                const SizedBox(height: 20),
+                Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(c),
+                      child: const Text("Cancel", style: TextStyle(color: Colors.white54))),
+                  const SizedBox(width: 8),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: _amber,
+                        foregroundColor: Colors.black,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                    onPressed: () async {
+                      if (nameCtrl.text.trim().length < 3) {
+                        CustomToast.show(context, "Name must be at least 3 chars", isError: true); 
+                        return;
+                      }
+                      if (tagCtrl.text.trim().length != 4) {
+                        CustomToast.show(context, "Tag must be exactly 4 chars", isError: true); 
+                        return;
+                      }
+                      if (ProgressionService().getCoins() < 2000) {
+                        CustomToast.show(context, "Insufficient Coins! 2000 required.", isError: true); 
+                        return;
+                      }
+                      try {
+                        Navigator.pop(c);
+                        setState(() => _isLoading = true);
+                        await ClanService().createClan(
+                            nameCtrl.text.trim(),
+                            tagCtrl.text.toUpperCase().trim(),
+                            descCtrl.text.trim(),
+                            _entryFee.toInt());
+                        await ProgressionService().addCoins(-2000);
+                        CustomToast.show(context, "Clan Created! ⚔️");
+                        await _loadData();
+                      } catch (e) {
+                        setState(() => _isLoading = false);
+                        CustomToast.show(context, e.toString().replaceAll("Exception: ", ""), isError: true);
+                      }
+                    },
+                    child: const Text("Create"),
+                  ),
+                ]),
+              ],
+            ),
           ),
         ),
       ),
@@ -385,9 +426,14 @@ class _ClanHubScreenState extends State<ClanHubScreen>
         ],
         body: _isLoading
             ? const Center(child: CircularProgressIndicator(color: _amber))
-            : TabBarView(
-                controller: _tabController,
-                children: [_buildMyClanTab(), _buildBrowseTab()],
+            : RefreshIndicator(
+                color: _amber,
+                backgroundColor: _surface,
+                onRefresh: _loadData,
+                child: TabBarView(
+                  controller: _tabController,
+                  children: [_buildMyClanTab(), _buildBrowseTab()],
+                ),
               ),
       ),
     );
@@ -1107,7 +1153,7 @@ class _ClanHubScreenState extends State<ClanHubScreen>
                     backgroundColor: _amber, foregroundColor: Colors.black),
                 onPressed: _showCreateClanDialog,
                 icon: const Icon(Icons.add),
-                label: const Text("Create First Clan (500 Coins)"),
+                label: const Text("Create First Clan (2000 Coins)"),
               ),
           ],
         ),
@@ -1134,7 +1180,7 @@ class _ClanHubScreenState extends State<ClanHubScreen>
                     ),
                     onPressed: _showCreateClanDialog,
                     icon: const Icon(Icons.add, size: 18),
-                    label: const Text("Create a New Clan (500 Coins)"),
+                    label: const Text("Create a New Clan (2000 Coins)"),
                   )
                 : const SizedBox.shrink(),
           );
@@ -1230,8 +1276,17 @@ class _ClanHubScreenState extends State<ClanHubScreen>
                           const SizedBox(height: 4),
                           Row(
                             children: [
-                              const Icon(Icons.people,
-                                  size: 12, color: Colors.white38),
+                              if (clan.entryFee > 0)
+                                Row(
+                                  children: [
+                                    const Icon(Icons.monetization_on, color: _amber, size: 14),
+                                    const SizedBox(width: 4),
+                                    Text("${clan.entryFee}", style: const TextStyle(color: _amber, fontSize: 13, fontWeight: FontWeight.bold)),
+                                    const SizedBox(width: 12),
+                                  ],
+                                ),
+                              const Icon(Icons.people_alt_outlined,
+                                  color: Colors.white24, size: 14),
                               const SizedBox(width: 4),
                               Text(
                                   "${clan.memberCount}/${clan.capacity}",

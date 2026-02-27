@@ -1498,6 +1498,12 @@ Future<void> _handleGameOver(dynamic data) async {
       coinsEarned = 25; // Consolation reward
       xpEarned = 10;
       await ProgressionService().recordGameResult(false);
+      
+      // Update stats for offline/LAN loss
+      if (!_isOnline) {
+         await VPSGameService().updateStats(wins: 0, isLan: _isLan);
+      }
+      
       await ProgressionService().addCoins(coinsEarned);
       await ProgressionService().addXP(xpEarned);
     }

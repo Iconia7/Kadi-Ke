@@ -37,7 +37,9 @@ class FCMService {
   }
 
   Future<bool> sendPushNotification(String fcmToken, String title, String body,
-      {Map<String, dynamic>? data}) async {
+      {String? imageUrl,
+      List<Map<String, dynamic>>? actions,
+      Map<String, dynamic>? data}) async {
     if (!_initialized || _client == null || _projectId == null) {
       print('FCM Error: Service not initialized. Cannot send push.');
       return false;
@@ -46,14 +48,27 @@ class FCMService {
     final url = Uri.parse(
         'https://fcm.googleapis.com/v1/projects/$_projectId/messages:send');
 
+    // Build Data Payload
+    Map<String, dynamic> finalData = {};
+    if (data != null) {
+      finalData.addAll(data..removeWhere((key, value) => value == null));
+    }
+    if (actions != null && actions.isNotEmpty) {
+      finalData['actions'] = jsonEncode(actions);
+    }
+    
+    // Convert all values in data to strings (FCM requirement)
+    finalData = finalData.map((key, value) => MapEntry(key, value.toString()));
+
     final message = {
       'message': {
         'token': fcmToken,
         'notification': {
           'title': title,
           'body': body,
+          if (imageUrl != null) 'image': imageUrl,
         },
-        if (data != null) 'data': data,
+        if (finalData.isNotEmpty) 'data': finalData,
       }
     };
 

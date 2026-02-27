@@ -58,6 +58,7 @@ class Clan {
   final int seasonScore;
   final int trophies;
   final int capacity;
+  final int entryFee;
   final int memberCount; // Useful for search list
   final String createdAt;
   final List<ClanMember> members;
@@ -72,6 +73,7 @@ class Clan {
     this.seasonScore = 0,
     this.trophies = 0,
     required this.capacity,
+    this.entryFee = 0,
     this.memberCount = 0,
     required this.createdAt,
     this.members = const [],
@@ -92,6 +94,7 @@ class Clan {
       seasonScore: json['seasonScore'] ?? 0,
       trophies: json['trophies'] ?? 0,
       capacity: json['capacity'] ?? 50,
+      entryFee: json['entryFee'] ?? 0,
       memberCount: json['memberCount'] ?? parsedMembers.length,
       createdAt: json['createdAt'] ?? '',
       members: parsedMembers,

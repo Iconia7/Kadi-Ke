@@ -19,8 +19,8 @@ class ClanService {
     };
   }
 
-  /// Create a new clan (costs 500 coins)
-  Future<Map<String, dynamic>> createClan(String name, String tag, String description) async {
+  /// Create a new clan (costs 2000 coins)
+  Future<Map<String, dynamic>> createClan(String name, String tag, String description, int entryFee) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/api/clans/create'),
@@ -29,6 +29,7 @@ class ClanService {
           'name': name,
           'tag': tag,
           'description': description,
+          'entryFee': entryFee,
         }),
       );
 
@@ -57,7 +58,8 @@ class ClanService {
         throw Exception(data['error'] ?? 'Failed to join clan');
       }
     } catch (e) {
-      throw Exception('Join clan error: $e');
+      if (e is FormatException) throw Exception('Network error');
+      throw Exception(e.toString().replaceAll("Exception: ", ""));
     }
   }
 

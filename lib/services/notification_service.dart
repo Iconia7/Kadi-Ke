@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:awesome_notifications/awesome_notifications.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -87,14 +88,34 @@ class NotificationService {
     // Listen to Firebase foreground messages
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       if (message.notification != null) {
+        String? imageUrl = message.notification?.android?.imageUrl ?? message.notification?.apple?.imageUrl;
+        
+        List<NotificationActionButton>? actionButtons;
+        if (message.data.containsKey('actions')) {
+           try {
+              List<dynamic> actionsList = jsonDecode(message.data['actions']);
+              actionButtons = actionsList.map((a) => NotificationActionButton(
+                 key: a['key'],
+                 label: a['label'],
+                 actionType: ActionType.Default,
+                 autoDismissible: true,
+              )).toList();
+           } catch (e) {
+              print("Failed to parse FCM actions: $e");
+           }
+        }
+
         AwesomeNotifications().createNotification(
           content: NotificationContent(
             id: DateTime.now().millisecondsSinceEpoch.remainder(100000),
             channelKey: 'basic_channel',
             title: message.notification?.title,
             body: message.notification?.body,
-            notificationLayout: NotificationLayout.Default,
-          )
+            notificationLayout: imageUrl != null ? NotificationLayout.BigPicture : NotificationLayout.Default,
+            bigPicture: imageUrl,
+            payload: message.data.map((k, v) => MapEntry(k, v.toString())),
+          ),
+          actionButtons: actionButtons,
         );
       }
     });
@@ -257,6 +278,45 @@ class NotificationService {
         NotificationActionButton(
           key: 'JOIN',
           label: 'Join Game',
+          actionType: ActionType.Default,
+          autoDismissible: true,
+        ),
+        NotificationActionButton(
+          key: 'DECLINE',
+          label: 'Decline',
+          actionType: ActionType.DismissAction,
+          autoDismissible: true,
+        ),
+      ],
+    );
+  }
+
+  /// Tournament Invite Notification
+  Future<void> showTournamentInviteNotification(
+    String friendName, 
+    String roomCode, {
+    String gameType = 'kadi',
+  }) async {
+    if (!await _isNotificationEnabled('notif_pref_tournaments')) return;
+
+    await AwesomeNotifications().createNotification(
+      content: NotificationContent(
+        id: 19,
+        channelKey: 'events_channel',
+        title: '🏆 Tournament Invite!',
+        body: '$friendName invited you to a $gameType Tournament!',
+        notificationLayout: NotificationLayout.Default,
+        payload: {
+          'type': 'tournament_invite',
+          'roomCode': roomCode,
+          'friendName': friendName,
+          'gameType': gameType,
+        },
+      ),
+      actionButtons: [
+        NotificationActionButton(
+          key: 'JOIN_TOURNAMENT',
+          label: 'Enter Lobby',
           actionType: ActionType.Default,
           autoDismissible: true,
         ),

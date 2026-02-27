@@ -87,6 +87,7 @@ class DatabaseService {
         seasonScore INTEGER DEFAULT 0,
         trophies INTEGER DEFAULT 0,
         capacity INTEGER DEFAULT 50,
+        entryFee INTEGER DEFAULT 0,
         createdAt TEXT NOT NULL
       )
     ''');
@@ -124,6 +125,7 @@ class DatabaseService {
     try { _db.execute('ALTER TABLE clans ADD COLUMN trophies INTEGER DEFAULT 0'); } catch (_) {}
     try { _db.execute('ALTER TABLE clan_members ADD COLUMN seasonPoints INTEGER DEFAULT 0'); } catch (_) {}
     try { _db.execute('ALTER TABLE clan_members ADD COLUMN totalPoints INTEGER DEFAULT 0'); } catch (_) {}
+    try { _db.execute('ALTER TABLE clans ADD COLUMN entryFee INTEGER DEFAULT 0'); } catch (_) {}
   }
 
   // --- Migration ---
@@ -323,7 +325,7 @@ class DatabaseService {
   // --- Clan System Operations ---
 
   Map<String, dynamic>? createClan(String clanId, String name, String tag,
-      String description, String ownerId) {
+      String description, String ownerId, int entryFee) {
     try {
       _db.execute('BEGIN TRANSACTION');
 
@@ -332,14 +334,15 @@ class DatabaseService {
 
       // Insert Clan
       _db.execute('''
-        INSERT INTO clans (id, name, tag, description, ownerId, createdAt)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO clans (id, name, tag, description, ownerId, entryFee, createdAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
       ''', [
         clanId,
         name,
         tag,
         description,
         ownerId,
+        entryFee,
         DateTime.now().toIso8601String()
       ]);
 
@@ -421,7 +424,7 @@ class DatabaseService {
     var clan = _rowToMap(clanRes.first);
 
     final ResultSet memberRes = _db.select('''
-      SELECT cm.userId, cm.role, cm.joinedAt, u.username, u.avatar, u.wins, u.games_played 
+      SELECT cm.userId, cm.role, cm.joinedAt, cm.seasonPoints, cm.totalPoints, u.username, u.avatar, u.wins, u.games_played 
       FROM clan_members cm
       JOIN users u ON cm.userId = u.id
       WHERE cm.clanId = ?

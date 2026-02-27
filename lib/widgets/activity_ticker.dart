@@ -50,7 +50,7 @@ class _ActivityTickerState extends State<ActivityTicker> {
   }
 
   void _startScrolling() {
-    _timer = Timer.periodic(const Duration(milliseconds: 50), (timer) {
+    _timer = Timer.periodic(const Duration(milliseconds: 25), (timer) {
       if (_scrollController.hasClients) {
         double maxScroll = _scrollController.position.maxScrollExtent;
         double currentScroll = _scrollController.offset;
@@ -61,7 +61,7 @@ class _ActivityTickerState extends State<ActivityTicker> {
         } else {
           _scrollController.animateTo(
             currentScroll + 1,
-            duration: const Duration(milliseconds: 50),
+            duration: const Duration(milliseconds: 25),
             curve: Curves.linear,
           );
         }

@@ -1245,6 +1245,7 @@ class MultiGameServer {
       final String name = payload['name']?.toString().trim() ?? '';
       final String tag = payload['tag']?.toString().toUpperCase().trim() ?? '';
       final String desc = payload['description']?.toString().trim() ?? '';
+      final int entryFee = int.tryParse(payload['entryFee']?.toString() ?? '0') ?? 0;
 
       if (name.length < 3 || name.length > 20)
         return Response.badRequest(
@@ -1259,7 +1260,18 @@ class MultiGameServer {
 
       final clanId =
           _generateRoomCode() + _generateRoomCode(); // generate an 12-char ID
-      final result = _dbService.createClan(clanId, name, tag, desc, userId);
+      
+      // Enforce 2000 Coin Cost
+      final user = _dbService.getUserById(userId);
+      if (user == null || (user['coins'] ?? 0) < 2000) {
+        return Response.badRequest(
+            body: jsonEncode({'error': 'Insufficient coins (2000 required)'}),
+            headers: _corsHeaders);
+      }
+      
+      _dbService.incrementCoins(userId, -2000); // Deduct creation cost
+      
+      final result = _dbService.createClan(clanId, name, tag, desc, userId, entryFee);
 
       return Response.ok(jsonEncode(result), headers: _corsHeaders);
     } catch (e, stack) {
@@ -1294,6 +1306,25 @@ class MultiGameServer {
 
       final payload = jsonDecode(await request.readAsString());
       final String clanId = payload['clanId'] ?? '';
+
+      final clanDetails = _dbService.getClanDetails(clanId);
+      if (clanDetails == null) {
+        return Response.badRequest(
+            body: jsonEncode({'error': 'Clan not found'}),
+            headers: _corsHeaders);
+      }
+
+      int entryFee = clanDetails['entryFee'] ?? 0;
+      
+      if (entryFee > 0) {
+        final user = _dbService.getUserById(userId);
+        if (user == null || (user['coins'] ?? 0) < entryFee) {
+          return Response.badRequest(
+              body: jsonEncode({'error': 'Insufficient coins (requires $entryFee)'}),
+              headers: _corsHeaders);
+        }
+        _dbService.incrementCoins(userId, -entryFee);
+      }
 
       _dbService.joinClan(userId, clanId);
       return Response.ok(jsonEncode({'success': true}), headers: _corsHeaders);
@@ -1671,6 +1702,9 @@ class MultiGameServer {
                 "type": "TOURNAMENT_CREATED",
                 "data": _tournaments[tournamentId]!.toJson()
               }));
+              
+              _broadcastTournamentOpen(tournamentId, playerName, data['gameType'] ?? 'kadi');
+              
               _log("Tournament Created: $tournamentId by $playerName.");
             } else if (type == 'JOIN_TOURNAMENT') {
               String tId = data['tournamentId'].toString().toUpperCase();
@@ -1883,8 +1917,9 @@ class MultiGameServer {
               String gameType = data['gameType'] ?? 'kadi';
 
               if (_userSockets.containsKey(targetUserId)) {
+                bool isTournament = gameType.toLowerCase() == 'tournament';
                 _userSockets[targetUserId]!.add(jsonEncode({
-                  'type': 'GAME_INVITE',
+                  'type': isTournament ? 'TOURNAMENT_INVITE' : 'GAME_INVITE',
                   'data': {
                     'friendName': senderName,
                     'roomCode': roomCode,
@@ -2146,6 +2181,9 @@ class MultiGameServer {
           final targetUsername = data['username'];
           final title = data['title'];
           final body = data['body'];
+          final String? imageUrl = data['imageUrl'];
+          final List<dynamic>? actionsRaw = data['actions'];
+          List<Map<String, dynamic>>? actions = actionsRaw?.map((e) => Map<String, dynamic>.from(e)).toList();
 
           final expectedAdminKey = _env['ADMIN_SECRET_KEY'];
           if (expectedAdminKey == null ||
@@ -2167,7 +2205,7 @@ class MultiGameServer {
           if (targetUsername == 'all') {
             final allFcmTokens = _dbService.getAllFCMTokens();
             for (var token in allFcmTokens) {
-              await fcmService.sendPushNotification(token, title, body);
+              await fcmService.sendPushNotification(token, title, body, imageUrl: imageUrl, actions: actions);
             }
             return Response.ok(
                 jsonEncode({
@@ -2195,7 +2233,7 @@ class MultiGameServer {
                   headers: _corsHeaders);
             }
 
-            await fcmService.sendPushNotification(userFcmToken, title, body);
+            await fcmService.sendPushNotification(userFcmToken, title, body, imageUrl: imageUrl, actions: actions);
             return Response.ok(
                 jsonEncode({
                   'status': 'success',
@@ -2896,6 +2934,24 @@ class MultiGameServer {
     }
   }
 
+  void _broadcastTournamentOpen(String tournamentId, String hostName, String gameMode) {
+    String payload = jsonEncode({
+      "type": "TOURNAMENT_OPEN",
+      "data": {
+         "tournamentId": tournamentId,
+         "hostName": hostName,
+         "gameMode": gameMode,
+      }
+    });
+    for (var ws in _userSockets.values) {
+      try {
+        ws.add(payload);
+      } catch (e) {
+        // ignore dead sockets
+      }
+    }
+  }
+
   String _generateRoomCode() {
     const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
     var random = Random();
@@ -2943,6 +2999,12 @@ class MultiGameServer {
 
   void _handleWin(GameRoom room, Player winner) {
     // 1. Update DB
+    for (var p in room.players) {
+      if (!p.id.startsWith("bot_")) { // Ignore bots
+        _dbService.incrementGamesPlayed(p.id);
+      }
+    }
+
     _dbService.incrementWins(winner.id);
     _dbService.addClanPoints(winner.id, 3);
 

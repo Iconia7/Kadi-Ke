@@ -153,6 +153,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               gameType: data['gameType'] ?? 'kadi',
            );
            break;
+        case 'TOURNAMENT_INVITE':
+           NotificationService().showTournamentInviteNotification(
+              data['friendName'], 
+              data['roomCode'],
+              gameType: data['gameType'] ?? 'kadi',
+           );
+           break;
         case 'FRIEND_ONLINE':
            NotificationService().showFriendOnlineNotification(
               data['friendName'], 
@@ -172,6 +179,28 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
            break;
         case 'FRIEND_OFFLINE':
            // Optional: Handle offline status if needed
+           break;
+        case 'TOURNAMENT_OPEN':
+           if (data['hostName'] != CustomAuthService().username) {
+             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: Text("🏆 ${data['hostName']} started a ${data['gameMode'].toString().toUpperCase()} Tournament!"),
+                backgroundColor: Colors.amber,
+                duration: const Duration(seconds: 10),
+                action: SnackBarAction(
+                   label: "JOIN", 
+                   textColor: Colors.black, 
+                   onPressed: () {
+                     Navigator.push(context, MaterialPageRoute(builder: (context) => 
+                       TournamentScreen(
+                         isHost: false, 
+                         tournamentId: data['tournamentId'],
+                         gameType: data['gameMode'], 
+                       )
+                     ));
+                   }
+                ),
+             ));
+           }
            break;
      }
   }

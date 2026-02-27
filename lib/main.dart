@@ -120,6 +120,35 @@ class _MyAppState extends State<MyApp> {
       return;
     }
 
+    // 1. Handle Custom Action Buttons first
+    final buttonKey = action.buttonKeyPressed;
+    if (buttonKey.isNotEmpty) {
+       print("🔘 FCM Action Button Tapped: $buttonKey");
+       
+       if (buttonKey == 'DECLINE' || buttonKey == 'DISMISS') {
+         // Awesome Notifications autoDismissible handles removing the push UI
+         return; 
+       }
+       
+       if (buttonKey == 'OPEN_LEADERBOARD') {
+           Navigator.of(context).pushAndRemoveUntil(
+             MaterialPageRoute(builder: (_) => HomeScreen()),
+             (route) => false,
+           );
+           return;
+       }
+       
+       if (buttonKey == 'OPEN_CLAN_HUB') {
+           // We route to home first, and let the user open the clan tab manually, or if you have a deep link router, use it.
+           Navigator.of(context).pushAndRemoveUntil(
+             MaterialPageRoute(builder: (_) => HomeScreen()),
+             (route) => false,
+           );
+           return;
+       }
+    }
+
+    // 2. Handle standard payloads
     switch (type) {
       case 'game_invite':
         // Navigate to home and show join dialog
@@ -137,6 +166,21 @@ class _MyAppState extends State<MyApp> {
         // Show join game dialog
         await Future.delayed(const Duration(milliseconds: 500));
         _showJoinGameDialog(context, roomCode, friendName, gameType);
+        break;
+        
+      case 'tournament_invite':
+        final tRoomCode = payload['roomCode'];
+        final tFriendName = payload['friendName'];
+        final tGameType = payload['gameType'] ?? 'kadi';
+        print("📬 Tournament invite from $tFriendName: $tRoomCode ($tGameType)");
+        
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => HomeScreen()),
+          (route) => false,
+        );
+        
+        await Future.delayed(const Duration(milliseconds: 500));
+        _showJoinTournamentDialog(context, tRoomCode, tFriendName, tGameType);
         break;
         
       case 'friend_online':
@@ -179,6 +223,51 @@ class _MyAppState extends State<MyApp> {
         );
         break;
     }
+  }
+
+  static void _showJoinTournamentDialog(BuildContext context, String? roomCode, String? friendName, [String gameType = 'kadi']) {
+    if (roomCode == null) return;
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E293B),
+        title: Text(
+          friendName != null ? 'Tournament Invite from $friendName' : 'Tournament Invite',
+          style: const TextStyle(color: Colors.white),
+        ),
+        content: Text(
+          'Tournament ID: $roomCode\nGame Mode: ${gameType.toUpperCase()}\n\nEnter the Tournament Lobby?',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Later'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              print("Auto-join: Navigating to TOURNAMENT lobby $roomCode");
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => TournamentScreen(
+                    isHost: false,
+                    tournamentId: roomCode,
+                    gameType: gameType, 
+                  ),
+                ),
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.amber,
+              foregroundColor: Colors.black,
+            ),
+            child: const Text('Enter Lobby'),
+          ),
+        ],
+      ),
+    );
   }
 
   static void _showJoinGameDialog(BuildContext context, String? roomCode, String? friendName, [String gameType = 'kadi']) {
