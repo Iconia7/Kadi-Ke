@@ -24,6 +24,7 @@ import '../services/deck_service.dart';
 import '../services/sound_service.dart';
 import '../services/local_game_engine.dart';
 import '../services/go_fish_engine.dart';
+import '../services/ad_service.dart';
 import '../widgets/flying_emoji.dart'; // Add Import
 import '../widgets/particle_overlay.dart';
 
@@ -1607,23 +1608,64 @@ Future<void> _handleGameOver(dynamic data) async {
                       )
                    ),
                    
-                   if (didIWin) ...[
-                      SizedBox(height: 20),
-                      OutlinedButton.icon(
-                        onPressed: () {
-                           // Simple share functionality
-                           // In a real app we'd use 'share_plus' package
-                           CustomToast.show(context, "Link Copied to Clipboard! 🔗");
-                        },
-                        icon: Icon(Icons.share, size: 16),
-                        label: Text("SHARE VICTORY", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                        style: OutlinedButton.styleFrom(
-                           foregroundColor: Colors.blueAccent,
-                           side: BorderSide(color: Colors.blueAccent.withOpacity(0.5)),
-                           shape: StadiumBorder()
-                        ),
+                    if (didIWin) ...[
+                      SizedBox(height: 16),
+                      StatefulBuilder(
+                        builder: (context, setDialogState) {
+                          bool rewarded = false;
+                          return Column(
+                            children: [
+                              if (!rewarded)
+                                Container(
+                                  width: double.infinity,
+                                  child: ElevatedButton.icon(
+                                    onPressed: () {
+                                      AdService().showRewardedAd(
+                                        onRewarded: () async {
+                                          await ProgressionService().addCoins(coinsEarned);
+                                          await ProgressionService().addXP(xpEarned);
+                                          if (mounted) {
+                                            CustomToast.show(context, "💎 Rewards Doubled!");
+                                            setDialogState(() { rewarded = true; });
+                                          }
+                                        },
+                                        onFailed: () {
+                                          CustomToast.show(context, "Ad not ready. Try again later.");
+                                        },
+                                      );
+                                    },
+                                    icon: Icon(Icons.play_circle_fill, color: Colors.amber),
+                                    label: Text("DOUBLE REWARDS", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1)),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.amber.withOpacity(0.15),
+                                      foregroundColor: Colors.amber,
+                                      side: BorderSide(color: Colors.amber.withOpacity(0.5)),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                      padding: EdgeInsets.symmetric(vertical: 12),
+                                    ),
+                                  ),
+                                ),
+                              if (rewarded)
+                                Text("✅ REWARDS DOUBLED!", style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 12)),
+                              
+                              SizedBox(height: 12),
+                              OutlinedButton.icon(
+                                onPressed: () {
+                                  CustomToast.show(context, "Link Copied to Clipboard! 🔗");
+                                },
+                                icon: Icon(Icons.share, size: 16),
+                                label: Text("SHARE VICTORY", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: Colors.blueAccent,
+                                  side: BorderSide(color: Colors.blueAccent.withOpacity(0.5)),
+                                  shape: StadiumBorder()
+                                ),
+                              ),
+                            ],
+                          );
+                        }
                       ),
-                   ],
+                    ],
 
                    Spacer(),
                    
@@ -2298,6 +2340,12 @@ class ChatBubble extends StatelessWidget {
   final bool isMe;
   final bool pointsUp;
 
+  // Midnight Elite palette
+  static const _amber    = Color(0xFFFFB300);
+  static const _amberDim = Color(0x55FFB300);
+  static const _card     = Color(0xFF1E2540);
+  static const _cardBorder = Color(0x22FFFFFF);
+
   const ChatBubble({
     Key? key, 
     required this.message, 
@@ -2307,31 +2355,39 @@ class ChatBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Color bubbleColor = isMe ? Colors.teal.shade700 : Colors.grey.shade800;
+    final bubbleColor = isMe ? _amberDim : _card;
+    final borderColor = isMe ? _amber.withOpacity(0.6) : _cardBorder;
+    final textColor   = isMe ? _amber : Colors.white;
+    final tailColor   = isMe ? _amberDim : _card;
+    final glowColor   = isMe ? _amber.withOpacity(0.2) : Colors.black45;
     
     final List<Widget> children = [
-      // The Triangle Tail
+      // Triangle Tail
       CustomPaint(
-        size: const Size(12, 10),
-        painter: TrianglePainter(
-          color: bubbleColor,
-          isUp: pointsUp,
-        ),
+        size: const Size(12, 8),
+        painter: TrianglePainter(color: tailColor, borderColor: borderColor, isUp: pointsUp),
       ),
-      // The Bubble Body
+      // Bubble Body
       Container(
         constraints: const BoxConstraints(maxWidth: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
           color: bubbleColor,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: const [
-            BoxShadow(color: Colors.black45, blurRadius: 10, offset: Offset(0, 4))
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: borderColor, width: 1),
+          boxShadow: [
+            BoxShadow(color: glowColor, blurRadius: 10, offset: const Offset(0, 3)),
           ],
         ),
         child: Text(
           message,
-          style: const TextStyle(color: Colors.white, fontSize: 13, height: 1.3),
+          style: TextStyle(
+            color: textColor,
+            fontSize: 12,
+            fontWeight: isMe ? FontWeight.bold : FontWeight.w500,
+            height: 1.3,
+            letterSpacing: 0.2,
+          ),
           textAlign: TextAlign.center,
         ),
       ),
@@ -2347,13 +2403,19 @@ class ChatBubble extends StatelessWidget {
 
 class TrianglePainter extends CustomPainter {
   final Color color;
+  final Color borderColor;
   final bool isUp;
 
-  TrianglePainter({required this.color, required this.isUp});
+  TrianglePainter({required this.color, this.borderColor = const Color(0x22FFFFFF), required this.isUp});
 
   @override
   void paint(Canvas canvas, Size size) {
-    var paint = Paint()..color = color;
+    final fillPaint = Paint()..color = color;
+    final strokePaint = Paint()
+      ..color = borderColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
+
     var path = Path();
     if (isUp) {
       path.moveTo(size.width / 2, 0);
@@ -2365,7 +2427,8 @@ class TrianglePainter extends CustomPainter {
       path.lineTo(size.width / 2, size.height);
     }
     path.close();
-    canvas.drawPath(path, paint);
+    canvas.drawPath(path, fillPaint);
+    canvas.drawPath(path, strokePaint);
   }
 
   @override

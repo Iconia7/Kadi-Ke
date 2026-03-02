@@ -66,6 +66,7 @@ class CustomAuthService {
           data['coins'] ?? 0,
           data['wins'] ?? 0,
           data['gamesPlayed'] ?? 0,
+          xp: data['xp'] ?? 0,
         );
 
         await _saveCredentials();
@@ -104,6 +105,7 @@ class CustomAuthService {
           data['coins'] ?? 0,
           data['wins'] ?? 0,
           data['gamesPlayed'] ?? 0,
+          xp: data['xp'] ?? 0,
         );
 
         await _saveCredentials();
@@ -190,6 +192,7 @@ class CustomAuthService {
           data['coins'] ?? 0,
           data['wins'] ?? 0,
           data['gamesPlayed'] ?? 0,
+          xp: data['xp'] ?? 0,
         );
 
         await _saveCredentials();
@@ -219,6 +222,7 @@ class CustomAuthService {
             data['coins'] ?? 0,
             data['wins'] ?? 0,
             data['gamesPlayed'] ?? 0,
+            xp: data['xp'] ?? 0,
           );
         }
       }

@@ -14,6 +14,8 @@ import 'package:mailer/smtp_server.dart';
 import 'package:dbcrypt/dbcrypt.dart';
 import 'package:dart_jsonwebtoken/dart_jsonwebtoken.dart';
 import 'package:dotenv/dotenv.dart';
+import 'package:googleapis/androidpublisher/v3.dart' as androidpublisher;
+import 'package:googleapis_auth/auth_io.dart' as auth;
 import 'database_service.dart';
 import 'fcm_service.dart';
 
@@ -278,8 +280,8 @@ class MultiGameServer {
   String _jwtSecret = "kadi_ke_jwt_secret_2026_pepper_your_salt";
 
   final DotEnv _env = DotEnv(includePlatformEnvironment: true)..load();
-
   final FCMService fcmService = FCMService();
+  androidpublisher.AndroidPublisherApi? _googlePlayApi;
 
   // Rate Limiting States
   final Map<String, List<DateTime>> _authRateLimits = {};
@@ -961,6 +963,7 @@ class MultiGameServer {
         final int wins = user['wins'] ?? 0;
         final int gamesPlayed = user['games_played'] ?? 0;
         final int coins = user['coins'] ?? 0;
+        final int xp = user['xp'] ?? 0;
         final double winRate = gamesPlayed > 0 ? (wins / gamesPlayed) : 0.0;
 
         return Response.ok(
@@ -970,6 +973,7 @@ class MultiGameServer {
               'wins': wins,
               'gamesPlayed': gamesPlayed,
               'winRate': winRate,
+              'xp': xp,
             }),
             headers: _corsHeaders);
       } else {
@@ -980,6 +984,166 @@ class MultiGameServer {
       _log("Sync Wallet Error: $e", level: 'ERROR');
       return Response.internalServerError(
           body: jsonEncode({'error': "Server Error"}), headers: _corsHeaders);
+    }
+  }
+
+  /// Accepts the client's current XP and merges it server-side.
+  /// Always keeps the highest value to prevent rollbacks from stale caches.
+  Future<Response> _handleUpdateXP(Request request) async {
+    try {
+      final token = request.headers['authorization']?.split(' ').last;
+      final userId = _verifyJwt(token);
+      if (userId == null)
+        return Response.forbidden(jsonEncode({'error': 'Unauthorized'}),
+            headers: _corsHeaders);
+
+      final payload = jsonDecode(await request.readAsString());
+      final int clientXP = (payload['xp'] as num?)?.toInt() ?? 0;
+
+      final user = _dbService.getUserById(userId);
+      if (user == null)
+        return Response.badRequest(
+            body: jsonEncode({'error': 'User not found'}),
+            headers: _corsHeaders);
+
+      final int serverXP = (user['xp'] as num?)?.toInt() ?? 0;
+      // Always take the higher of the two to avoid regressions
+      final int mergedXP = clientXP > serverXP ? clientXP : serverXP;
+
+      _dbService.setXP(userId, mergedXP);
+
+      return Response.ok(jsonEncode({'status': 'success', 'xp': mergedXP}),
+          headers: _corsHeaders);
+    } catch (e) {
+      _log("Update XP Error: $e", level: 'ERROR');
+      return Response.internalServerError(
+          body: jsonEncode({'error': 'Server Error'}), headers: _corsHeaders);
+    }
+  }
+
+  /// Accepts the client's current COINS and merges it server-side.
+  /// Always keeps the highest value to prevent rollbacks from stale caches.
+  Future<Response> _handleUpdateCoins(Request request) async {
+    try {
+      final token = request.headers['authorization']?.split(' ').last;
+      final userId = _verifyJwt(token);
+      if (userId == null)
+        return Response.forbidden(jsonEncode({'error': 'Unauthorized'}),
+            headers: _corsHeaders);
+
+      final payload = jsonDecode(await request.readAsString());
+      final int clientCoins = (payload['coins'] as num?)?.toInt() ?? 0;
+
+      final user = _dbService.getUserById(userId);
+      if (user == null)
+        return Response.badRequest(
+            body: jsonEncode({'error': 'User not found'}),
+            headers: _corsHeaders);
+
+      final int serverCoins = (user['coins'] as num?)?.toInt() ?? 0;
+      // Always take the higher to avoid regressions
+      final int mergedCoins = clientCoins > serverCoins ? clientCoins : serverCoins;
+
+      _dbService.setCoins(userId, mergedCoins);
+
+      return Response.ok(jsonEncode({'status': 'success', 'coins': mergedCoins}),
+          headers: _corsHeaders);
+    } catch (e) {
+      _log("Update Coins Error: $e", level: 'ERROR');
+      return Response.internalServerError(
+          body: jsonEncode({'error': 'Server Error'}), headers: _corsHeaders);
+    }
+  }
+
+  /// Maps product IDs to coin amounts — defined server-side only, never trust the client
+  static const Map<String, int> _productCoins = {
+    'kadi_coins_500':  500,
+    'kadi_coins_1000': 1000,
+    'kadi_coins_2500': 2500,
+    'kadi_coins_5000': 5000,
+  };
+
+  Future<Response> _handleIAPVerify(Request request) async {
+    try {
+      final token = request.headers['authorization']?.split(' ').last;
+      final userId = _verifyJwt(token);
+      if (userId == null) {
+        return Response.forbidden(jsonEncode({'error': 'Unauthorized'}),
+            headers: _corsHeaders);
+      }
+
+      final payload = jsonDecode(await request.readAsString());
+      final String? productId    = payload['productId'];
+      final String? purchaseToken = payload['purchaseToken'];
+      final String packageName = "com.nexora.kadi_ke"; 
+
+      if (productId == null || purchaseToken == null) {
+        return Response.badRequest(
+            body: jsonEncode({'error': 'Missing productId or purchaseToken'}),
+            headers: _corsHeaders);
+      }
+
+      // 1. Look up coin amount server-side (never trust the client)
+      final int? coins = _productCoins[productId];
+      if (coins == null) {
+        return Response.badRequest(
+            body: jsonEncode({'error': 'Unknown product'}),
+            headers: _corsHeaders);
+      }
+
+      // 2. Idempotency check — reject already-credited tokens
+      final existing = _dbService.db.select(
+          'SELECT token FROM purchase_tokens WHERE token = ?', [purchaseToken]);
+      if (existing.isNotEmpty) {
+        return Response.ok(
+            jsonEncode({'status': 'already_credited', 'coins': coins}),
+            headers: _corsHeaders);
+      }
+
+      // 3. SECURE VERIFICATION: Call Google Play Developer API
+      if (_googlePlayApi == null) {
+        _log("Google Play API not initialized. Falling back to trust mode (WARNING).", level: 'WARNING');
+      } else {
+        try {
+          final result = await _googlePlayApi!.purchases.products.get(packageName, productId, purchaseToken);
+          
+          _log("Google Play Verification for $productId: state=${result.purchaseState}");
+          
+          // purchaseState 0 = purchased, 1 = cancelled, 2 = pending
+          if (result.purchaseState != 0) {
+            _log("Purchase REJECTED: State is ${result.purchaseState}", level: 'WARNING');
+            return Response.forbidden(
+              jsonEncode({'error': 'Purchase not valid (State: ${result.purchaseState})'}),
+              headers: _corsHeaders
+            );
+          }
+        } catch (e) {
+          _log("Google Play API call failed: $e", level: 'ERROR');
+          return Response.internalServerError(
+            body: jsonEncode({'error': 'Verification service temporarily unavailable'}),
+            headers: _corsHeaders
+          );
+        }
+      }
+
+      // 4. Credit coins to user
+      _dbService.incrementCoins(userId, coins);
+
+      // 5. Record token so it can't be reused
+      _dbService.db.execute(
+        'INSERT INTO purchase_tokens (token, userId, productId, coinsAwarded, creditedAt) VALUES (?, ?, ?, ?, ?)',
+        [purchaseToken, userId, productId, coins, DateTime.now().toIso8601String()],
+      );
+
+      _log('IAP: Credited $coins coins to user $userId for product $productId');
+
+      return Response.ok(
+          jsonEncode({'status': 'success', 'coins': coins}),
+          headers: _corsHeaders);
+    } catch (e, stack) {
+      _log('IAP Verify Error: $e\n$stack', level: 'ERROR');
+      return Response.internalServerError(
+          body: jsonEncode({'error': 'Server Error'}), headers: _corsHeaders);
     }
   }
 
@@ -1285,7 +1449,7 @@ class MultiGameServer {
             headers: _corsHeaders);
       if (e.toString().contains('Insufficient coins'))
         return Response.badRequest(
-            body: jsonEncode({'error': 'Insufficient coins (500 required)'}),
+            body: jsonEncode({'error': 'Insufficient coins (2000 required)'}),
             headers: _corsHeaders);
             
       _log("Clan Creation Error: $e\n$stack", level: 'ERROR');
@@ -1521,12 +1685,32 @@ class MultiGameServer {
     });
   }
 
+  Future<void> _initGooglePlayApi() async {
+    try {
+      final jsonPath = 'service-account.json';
+      final file = File(jsonPath);
+      if (!await file.exists()) {
+        _log("Service account JSON not found at $jsonPath. Secure IAP verification DISABLED.", level: 'WARNING');
+        return;
+      }
+
+      final jsonContent = await file.readAsString();
+      final credentials = auth.ServiceAccountCredentials.fromJson(jsonContent);
+      final client = await auth.clientViaServiceAccount(credentials, [androidpublisher.AndroidPublisherApi.androidpublisherScope]);
+      _googlePlayApi = androidpublisher.AndroidPublisherApi(client);
+      _log("Google Play API initialized successfully.");
+    } catch (e) {
+      _log("Failed to initialize Google Play API: $e", level: 'ERROR');
+    }
+  }
+
   Future<void> _start() async {
     _startWeeklyResetTimer();
     _dbService.initialize();
     _migrateIfNecessary();
     _loadConfig();
     await fcmService.initialize();
+    await _initGooglePlayApi();
 
     // WebSocket Handler
     var wsHandler = webSocketHandler(
@@ -2039,6 +2223,13 @@ class MultiGameServer {
       final path = request.url.path;
 
       // Static Files
+      if (path == 'app-ads.txt') {
+        return Response.ok(
+          'google.com, pub-2572570007063815, DIRECT, f08c47fec0942fa0',
+          headers: {'content-type': 'text/plain'},
+        );
+      }
+
       if (path.startsWith('uploads/')) {
         return staticHandler(request.change(path: 'uploads/'));
       }
@@ -2049,7 +2240,7 @@ class MultiGameServer {
               'status': 'ok',
               'rooms': _rooms.length,
               'online_users': _onlineUsers.length,
-              'version': '13.1.0+43',
+              'version': '13.2.0-iap-fixed',
               'uptime': DateTime.now().millisecondsSinceEpoch,
             }),
             headers: {'content-type': 'application/json'});
@@ -2075,6 +2266,12 @@ class MultiGameServer {
       }
       if (path == 'update_profile') {
         return _handleUpdateProfile(request);
+      }
+      if (path == 'update_xp') {
+        return _handleUpdateXP(request);
+      }
+      if (path == 'update_coins') {
+        return _handleUpdateCoins(request);
       }
       if (path == 'submit_feedback') {
         return _handleFeedback(request);
@@ -2103,6 +2300,9 @@ class MultiGameServer {
       if (path == 'api/clans/leave') return _handleLeaveClan(request);
       if (path == 'api/clans/search') return _handleSearchClans(request);
       if (path == 'api/clans/details') return _handleClanDetails(request);
+
+      // IAP Endpoint
+      if (path == 'api/iap/verify') return _handleIAPVerify(request);
       if (path.startsWith('api/clans/chat_history')) {
         final token = request.headers['authorization']?.replaceFirst('Bearer ', '');
         final userId = _verifyJwt(token);

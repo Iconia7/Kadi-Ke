@@ -1,116 +1,346 @@
-import 'package:flutter/material.dart' hide ThemeData;
+import 'package:flutter/material.dart';
 import 'dart:ui';
 import '../services/progression_service.dart';
 import '../services/theme_service.dart';
 import '../services/sound_service.dart';
 import '../services/custom_auth_service.dart';
-import '../widgets/playing_card_widget.dart'; 
+import '../services/iap_service.dart';
+import '../services/ad_service.dart';
+import '../widgets/playing_card_widget.dart';
 
 class ShopScreen extends StatefulWidget {
   @override
   _ShopScreenState createState() => _ShopScreenState();
 }
 
-class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateMixin {
+class _ShopScreenState extends State<ShopScreen>
+    with SingleTickerProviderStateMixin {
   final ProgressionService _progressionService = ProgressionService();
   late TabController _tabController;
+
   int _coins = 0;
+  int _playerLevel = 1;
   List<String> _unlockedSkins = [];
   List<String> _unlockedThemes = [];
   String _selectedSkin = '';
   String _selectedTheme = '';
+
+  // Palette
+  static const _bg      = Color(0xFF0F111A);
+  static const _surface = Color(0xFF1A1F38);
+  static const _card    = Color(0xFF1E2540);
+  static const _amber   = Color(0xFFFFB300);
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     _loadData();
+
+    // Wire IAP purchase result to show UI feedback
+    IAPService().onPurchaseResult = (message, success) {
+      if (mounted) {
+        _showResult(success,
+          title: success ? 'Purchase Complete!' : 'Purchase Failed',
+          message: message,
+          icon: success ? Icons.check_circle_rounded : Icons.error_rounded,
+        );
+        if (success) _loadData(); // Refresh coin balance
+      }
+    };
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadData() async {
-    // 1. Get User ID from CustomAuthService
-    // CustomAuthService should already be initialized in main.dart
-    String userId = CustomAuthService().userId ?? "offline";
-
-    // 2. Initialize Progression with User ID
+    final userId = CustomAuthService().userId ?? 'offline';
     await _progressionService.initialize(userId: userId);
-    
     if (mounted) {
       setState(() {
-        _coins = _progressionService.getCoins();
+        _coins         = _progressionService.getCoins();
+        _playerLevel   = _progressionService.getLevel()['level'] as int;
         _unlockedSkins = _progressionService.getUnlockedSkins();
-        _unlockedThemes = _progressionService.getUnlockedThemes();
-        _selectedSkin = _progressionService.getSelectedSkin();
+        _unlockedThemes= _progressionService.getUnlockedThemes();
+        _selectedSkin  = _progressionService.getSelectedSkin();
         _selectedTheme = _progressionService.getSelectedTheme();
       });
     }
   }
 
   Future<void> _purchaseItem(ShopItem item) async {
-    if (_coins >= item.price) {
-      bool success = await _progressionService.spendCoins(item.price);
-      if (success) {
-        if (item.type == ShopItemType.cardSkin) {
-          await _progressionService.unlockSkin(item.id);
-          await _progressionService.selectSkin(item.id);
-        } else {
-          await _progressionService.unlockTheme(item.id);
-          await _progressionService.selectTheme(item.id);
-        }
-        
-        SoundService.play('win');
-        await _loadData();
-        _showPurchaseDialog("Purchase Successful", "Item equipped!", true);
-      }
-    } else {
+    final isSkin = item.type == ShopItemType.cardSkin;
+
+    // Level check
+    if (item.levelRequired > _playerLevel) {
+      _showResult(false,
+        title: 'Level Required',
+        message: 'Reach Level ${item.levelRequired} to unlock this item.',
+        icon: Icons.lock_rounded,
+      );
+      return;
+    }
+
+    if (_coins < item.price) {
       SoundService.play('error');
-      _showPurchaseDialog("Insufficient Funds", "You need ${item.price - _coins} more coins.", false);
+      _showResult(false,
+        title: 'Insufficient Coins',
+        message: 'You need ${item.price - _coins} more coins.',
+        icon: Icons.monetization_on_rounded,
+      );
+      return;
+    }
+
+    final success = await _progressionService.spendCoins(item.price);
+    if (success) {
+      if (isSkin) {
+        await _progressionService.unlockSkin(item.id);
+        await _progressionService.selectSkin(item.id);
+      } else {
+        await _progressionService.unlockTheme(item.id);
+        await _progressionService.selectTheme(item.id);
+      }
+      SoundService.play('win');
+      await _loadData();
+      _showResult(true,
+        title: '${item.name} Unlocked!',
+        message: 'Auto-equipped. Enjoy the new look! ✨',
+        icon: Icons.check_circle_rounded,
+        rarity: item.rarity,
+      );
     }
   }
 
   Future<void> _selectItem(String id, bool isSkin) async {
     if (isSkin) await _progressionService.selectSkin(id);
     else await _progressionService.selectTheme(id);
-    
     SoundService.play('place');
     await _loadData();
   }
 
-  void _showPurchaseDialog(String title, String msg, bool success) {
+  void _showResult(bool success, {
+    required String title,
+    required String message,
+    required IconData icon,
+    ShopRarity? rarity,
+  }) {
+    final rarityColor = _rarityColor(rarity ?? ShopRarity.common);
     showDialog(
       context: context,
-      builder: (context) => Dialog(
+      builder: (ctx) => Dialog(
         backgroundColor: Colors.transparent,
         child: Container(
-          padding: EdgeInsets.all(24),
+          padding: const EdgeInsets.all(28),
           decoration: BoxDecoration(
-            color: Color(0xFF1E293B),
+            color: _surface,
             borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: success ? Colors.cyanAccent : Colors.redAccent, width: 1),
-            boxShadow: [BoxShadow(color: Colors.black54, blurRadius: 20)],
+            border: Border.all(
+              color: success ? rarityColor : Colors.redAccent,
+              width: 1.5,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: (success ? rarityColor : Colors.redAccent).withOpacity(0.25),
+                blurRadius: 24,
+              ),
+            ],
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(success ? Icons.check_circle_outline : Icons.error_outline, 
-                   color: success ? Colors.cyanAccent : Colors.redAccent, size: 50),
-              SizedBox(height: 16),
-              Text(title, style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
-              SizedBox(height: 8),
-              Text(msg, textAlign: TextAlign.center, style: TextStyle(color: Colors.white70)),
-              SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(context),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: success ? Colors.cyanAccent.withOpacity(0.2) : Colors.redAccent.withOpacity(0.2),
-                  foregroundColor: Colors.white,
-                  side: BorderSide(color: success ? Colors.cyanAccent : Colors.redAccent),
-                  shape: StadiumBorder()
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: (success ? rarityColor : Colors.redAccent).withOpacity(0.15),
+                  border: Border.all(
+                    color: (success ? rarityColor : Colors.redAccent).withOpacity(0.4),
+                  ),
                 ),
-                child: Text("OK"),
-              )
+                child: Icon(icon,
+                    color: success ? rarityColor : Colors.redAccent, size: 40),
+              ),
+              const SizedBox(height: 16),
+              Text(title,
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text(message,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white70, height: 1.4)),
+              const SizedBox(height: 24),
+              GestureDetector(
+                onTap: () => Navigator.pop(ctx),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: (success ? rarityColor : Colors.redAccent).withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(30),
+                    border: Border.all(
+                        color: success ? rarityColor : Colors.redAccent,
+                        width: 1),
+                  ),
+                  child: Text('OK',
+                      style: TextStyle(
+                          color: success ? rarityColor : Colors.redAccent,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16)),
+                ),
+              ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  void _showCoinBundles() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => ClipRRect(
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+            decoration: BoxDecoration(
+              color: _surface.withOpacity(0.95),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+              border: Border.all(color: _amber.withOpacity(0.2)),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 40, height: 4,
+                  decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.circular(2)),
+                ),
+                const SizedBox(height: 20),
+                Row(children: [
+                  const Icon(Icons.monetization_on_rounded, color: _amber, size: 20),
+                  const SizedBox(width: 8),
+                  const Text('GET COINS',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 3,
+                          fontSize: 14)),
+                ]),
+                const SizedBox(height: 20),
+                // Free coins via rewarded ad
+                _coinBundle(
+                  amount: 500,
+                  price: 'FREE',
+                  label: 'Watch an ad',
+                  icon: Icons.play_circle_fill_rounded,
+                  color: Colors.greenAccent,
+                  isFree: true,
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    AdService().showRewardedAd(
+                      onRewarded: () async {
+                        await _progressionService.addCoins(500);
+                        await _loadData();
+                        if (mounted) _showResult(true,
+                          title: '+500 Coins!',
+                          message: 'Thanks for watching! Coins added.',
+                          icon: Icons.monetization_on_rounded,
+                        );
+                      },
+                      onFailed: () {
+                        if (mounted) _showResult(false,
+                          title: 'Ad Not Ready',
+                          message: 'No ad available right now. Try again later.',
+                          icon: Icons.videocam_off_rounded,
+                        );
+                      },
+                    );
+                  },
+                ),
+                const SizedBox(height: 10),
+                _coinBundle(
+                  amount: 1000, price: 'KES 150', label: 'Best Starter',
+                  icon: Icons.bolt_rounded, color: Colors.lightBlueAccent,
+                  onTap: () { Navigator.pop(ctx); IAPService().purchaseCoins('kadi_coins_1000'); },
+                ),
+                const SizedBox(height: 10),
+                _coinBundle(
+                  amount: 2500, price: 'KES 250', label: 'Popular ⚡',
+                  icon: Icons.star_rounded, color: _amber,
+                  onTap: () { Navigator.pop(ctx); IAPService().purchaseCoins('kadi_coins_2500'); },
+                ),
+                const SizedBox(height: 10),
+                _coinBundle(
+                  amount: 5000, price: 'KES 500', label: 'Best Value 👑',
+                  icon: Icons.workspace_premium_rounded, color: Colors.purpleAccent,
+                  onTap: () { Navigator.pop(ctx); IAPService().purchaseCoins('kadi_coins_5000'); },
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  IAPService().available
+                      ? 'Secure payment via Google Play'
+                      : 'Google Play billing not available',
+                  style: const TextStyle(color: Colors.white30, fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _coinBundle({
+    required int amount,
+    required String price,
+    required String label,
+    required IconData icon,
+    required Color color,
+    bool isFree = false,
+    VoidCallback? onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.07),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: color.withOpacity(0.25)),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: color, size: 22),
+            const SizedBox(width: 12),
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('$amount Coins',
+                  style: TextStyle(
+                      color: color, fontWeight: FontWeight.bold, fontSize: 15)),
+              Text(label, style: const TextStyle(color: Colors.white38, fontSize: 11)),
+            ]),
+            const Spacer(),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: isFree ? Colors.greenAccent.withOpacity(0.2) : color.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: color.withOpacity(0.5)),
+              ),
+              child: Text(price,
+                  style: TextStyle(
+                      color: isFree ? Colors.greenAccent : color,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13)),
+            ),
+          ],
         ),
       ),
     );
@@ -118,167 +348,391 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
 
   @override
   Widget build(BuildContext context) {
-    // Access the current theme for background
-    final currentTheme = TableThemes.getTheme(_selectedTheme);
-    
+    final featured = ShopCatalog.featured;
+
     return Scaffold(
+      backgroundColor: _bg,
       extendBodyBehindAppBar: true,
       appBar: AppBar(
-        title: Text("MARKETPLACE", style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 2, fontSize: 18)),
+        title: const Text('MARKETPLACE',
+            style: TextStyle(
+                fontWeight: FontWeight.w900,
+                letterSpacing: 2.5,
+                fontSize: 16,
+                color: Colors.white)),
         centerTitle: true,
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
           icon: Container(
-            padding: EdgeInsets.all(8),
-            decoration: BoxDecoration(color: Colors.white10, shape: BoxShape.circle),
-            child: Icon(Icons.arrow_back, size: 18),
-          ), 
-          onPressed: () => Navigator.pop(context)
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.07),
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white12)),
+            child: const Icon(Icons.arrow_back_ios_new, size: 16, color: Colors.white),
+          ),
+          onPressed: () => Navigator.pop(context),
         ),
         actions: [
-          Container(
-            margin: EdgeInsets.only(right: 16, top: 10, bottom: 10),
-            padding: EdgeInsets.symmetric(horizontal: 16),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(colors: [Colors.amber[700]!, Colors.amber[500]!]),
-              borderRadius: BorderRadius.circular(20),
-              boxShadow: [BoxShadow(color: Colors.amber.withOpacity(0.3), blurRadius: 8)],
+          // Coin display
+          GestureDetector(
+            onTap: _showCoinBundles,
+            child: Container(
+              margin: const EdgeInsets.only(right: 6, top: 10, bottom: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                    colors: [Color(0xFFFFB300), Color(0xFFFF8F00)]),
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                      color: _amber.withOpacity(0.35), blurRadius: 8)
+                ],
+              ),
+              child: Row(children: [
+                const Icon(Icons.monetization_on, color: Colors.black, size: 15),
+                const SizedBox(width: 5),
+                Text('$_coins',
+                    style: const TextStyle(
+                        color: Colors.black,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 13)),
+              ]),
             ),
-            child: Row(
-              children: [
-                Icon(Icons.monetization_on, color: Colors.white, size: 16),
-                SizedBox(width: 6),
-                Text("$_coins", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
-              ],
+          ),
+          // + Get coins
+          GestureDetector(
+            onTap: _showCoinBundles,
+            child: Container(
+              margin: const EdgeInsets.only(right: 14, top: 10, bottom: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              decoration: BoxDecoration(
+                color: _amber.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: _amber.withOpacity(0.4)),
+              ),
+              child: const Icon(Icons.add, color: _amber, size: 18),
             ),
-          )
+          ),
         ],
       ),
-      body: Container(
+      body: Column(
+        children: [
+          // ── Featured Banner ──────────────────────────────
+          _buildFeaturedBanner(featured),
+
+          // ── Tabs ────────────────────────────────────────
+          Container(
+            margin: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+            decoration: BoxDecoration(
+              color: _surface,
+              borderRadius: BorderRadius.circular(30),
+              border: Border.all(color: Colors.white10),
+            ),
+            child: TabBar(
+              controller: _tabController,
+              indicator: BoxDecoration(
+                borderRadius: BorderRadius.circular(30),
+                color: _amber.withOpacity(0.15),
+                border: Border.all(color: _amber.withOpacity(0.5)),
+              ),
+              labelColor: _amber,
+              unselectedLabelColor: Colors.white38,
+              labelStyle: const TextStyle(
+                  fontWeight: FontWeight.bold, letterSpacing: 1.2, fontSize: 12),
+              tabs: const [
+                Tab(text: 'CARD SKINS'),
+                Tab(text: 'TABLES'),
+              ],
+            ),
+          ),
+
+          // ── Grid ────────────────────────────────────────
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                _buildGrid(ShopCatalog.cardSkins, true),
+                _buildGrid(ShopCatalog.tableThemes, false),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Featured Banner ──────────────────────────────────────────
+
+  Widget _buildFeaturedBanner(ShopItem item) {
+    final skin = CardSkins.getSkin(item.id);
+    final isUnlocked = _unlockedSkins.contains(item.id);
+    return GestureDetector(
+      onTap: () => isUnlocked ? _selectItem(item.id, true) : _purchaseItem(item),
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(16, 96, 16, 12),
+        height: 120,
         decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(22),
           gradient: LinearGradient(
-            colors: currentTheme.gradientColors, 
-            begin: Alignment.topCenter, 
-            end: Alignment.bottomCenter
+            colors: [skin.backGradientStart.withOpacity(0.8), skin.backGradientEnd],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
+          border: Border.all(color: _amber.withOpacity(0.5), width: 1.5),
+          boxShadow: [
+            BoxShadow(color: _amber.withOpacity(0.2), blurRadius: 20),
+          ],
         ),
-        child: SafeArea(
-          child: Column(
-            children: [
-              Container(
-                margin: EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                decoration: BoxDecoration(
-                  color: Colors.black26,
-                  borderRadius: BorderRadius.circular(30),
-                  border: Border.all(color: Colors.white10),
-                ),
-                child: TabBar(
-                  controller: _tabController,
-                  indicator: BoxDecoration(
-                    borderRadius: BorderRadius.circular(30),
-                    color: currentTheme.accentColor.withOpacity(0.2),
-                    border: Border.all(color: currentTheme.accentColor.withOpacity(0.5)),
+        child: Row(
+          children: [
+            const SizedBox(width: 20),
+            // Fanned card preview
+            SizedBox(
+              width: 80,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  Transform.rotate(angle: -0.18,
+                    child: _miniCard(skin, 50, 72)),
+                  Transform.translate(offset: const Offset(10, 3),
+                    child: Transform.rotate(angle: 0.08,
+                      child: _miniCard(skin, 50, 72))),
+                ],
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: _amber.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: _amber.withOpacity(0.5)),
+                    ),
+                    child: const Text('⭐ FEATURED',
+                        style: TextStyle(
+                            color: _amber,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 1.5)),
                   ),
-                  labelColor: currentTheme.accentColor,
-                  unselectedLabelColor: Colors.white38,
-                  labelStyle: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1),
-                  tabs: [
-                    Tab(text: "CARD SKINS"),
-                    Tab(text: "TABLES"),
-                  ],
-                ),
+                  const SizedBox(height: 6),
+                  Text(item.name,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold)),
+                  Text(item.description,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.white60, fontSize: 11, height: 1.3)),
+                ],
               ),
-              Expanded(
-                child: TabBarView(
-                  controller: _tabController,
-                  children: [
-                    _buildGrid(ShopCatalog.cardSkins, true, currentTheme),
-                    _buildGrid(ShopCatalog.tableThemes, false, currentTheme),
-                  ],
-                ),
-              ),
-            ],
-          ),
+            ),
+            const SizedBox(width: 12),
+            Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (!isUnlocked) ...[
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: _amber,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [BoxShadow(color: _amber.withOpacity(0.4), blurRadius: 8)],
+                    ),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Text('${item.price}',
+                          style: const TextStyle(
+                              color: Colors.black, fontWeight: FontWeight.w900, fontSize: 13)),
+                      const SizedBox(width: 4),
+                      const Icon(Icons.monetization_on, size: 13, color: Colors.black),
+                    ]),
+                  ),
+                ] else ...[
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.greenAccent.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.greenAccent.withOpacity(0.5)),
+                    ),
+                    child: const Text('OWNED',
+                        style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.w900, fontSize: 12)),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(width: 16),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildGrid(List<ShopItem> items, bool isSkin, ThemeModel theme) {
+  Widget _miniCard(CardSkinModel skin, double w, double h) {
+    return Container(
+      width: w, height: h,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(7),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [skin.backGradientStart, skin.backGradientEnd],
+        ),
+        border: Border.all(color: Colors.white30, width: 1.5),
+        boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 6)],
+      ),
+      child: const Center(
+        child: Icon(Icons.star, color: Colors.white24, size: 16),
+      ),
+    );
+  }
+
+  // ── Item Grid ────────────────────────────────────────────────
+
+  Widget _buildGrid(List<ShopItem> items, bool isSkin) {
     return GridView.builder(
-      padding: EdgeInsets.symmetric(horizontal: 20, vertical: 0),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
-        childAspectRatio: 0.75,
-        crossAxisSpacing: 16,
-        mainAxisSpacing: 16,
+        childAspectRatio: 0.72,
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 12,
       ),
       itemCount: items.length,
       itemBuilder: (context, index) {
         final item = items[index];
-        final isUnlocked = isSkin ? _unlockedSkins.contains(item.id) : _unlockedThemes.contains(item.id);
-        final isSelected = isSkin ? _selectedSkin == item.id : _selectedTheme == item.id;
-        
+        final isUnlocked = isSkin
+            ? _unlockedSkins.contains(item.id)
+            : _unlockedThemes.contains(item.id);
+        final isSelected = isSkin
+            ? _selectedSkin == item.id
+            : _selectedTheme == item.id;
+        final isLocked  = item.levelRequired > _playerLevel;
+        final rColor    = _rarityColor(item.rarity);
+
         return GestureDetector(
-          onTap: () => isUnlocked ? _selectItem(item.id, isSkin) : _purchaseItem(item),
+          onTap: () {
+            if (isLocked && !isUnlocked) {
+              _showResult(false,
+                title: '🔒 Locked',
+                message: 'Reach Level ${item.levelRequired} to unlock ${item.name}.',
+                icon: Icons.lock_rounded,
+              );
+              return;
+            }
+            isUnlocked ? _selectItem(item.id, isSkin) : _purchaseItem(item);
+          },
           child: AnimatedContainer(
-            duration: Duration(milliseconds: 300),
+            duration: const Duration(milliseconds: 250),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.05),
-              borderRadius: BorderRadius.circular(20),
+              color: _card,
+              borderRadius: BorderRadius.circular(18),
               border: Border.all(
-                color: isSelected ? theme.accentColor : Colors.white10, 
-                width: isSelected ? 2 : 1
+                color: isSelected ? rColor : rColor.withOpacity(0.2),
+                width: isSelected ? 2 : 1,
               ),
-              boxShadow: isSelected ? [BoxShadow(color: theme.accentColor.withOpacity(0.2), blurRadius: 15)] : [],
+              boxShadow: isSelected
+                  ? [BoxShadow(color: rColor.withOpacity(0.25), blurRadius: 14)]
+                  : [],
             ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
+            child: Stack(
               children: [
-                Expanded(
-                  child: Center(
-                    child: isSkin 
-                      ? _buildSkinPreview(item.id) 
-                      : _buildThemePreview(item.id),
+                // Card content
+                Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // Preview
+                    Expanded(
+                      child: Center(
+                        child: isSkin
+                            ? _buildSkinPreview(item.id)
+                            : _buildThemePreview(item.id),
+                      ),
+                    ),
+                    // Name + description
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(10, 0, 10, 4),
+                      child: Column(
+                        children: [
+                          Text(item.name,
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13),
+                              textAlign: TextAlign.center),
+                          const SizedBox(height: 3),
+                          Text(item.description,
+                              style: const TextStyle(
+                                  color: Colors.white38, fontSize: 10, height: 1.2),
+                              textAlign: TextAlign.center,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis),
+                        ],
+                      ),
+                    ),
+                    // Price / status button
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _buildItemButton(item, isUnlocked, isSelected, isLocked, rColor),
+                    ),
+                  ],
+                ),
+
+                // ── Rarity badge (top-left) ──
+                Positioned(
+                  top: 10, left: 10,
+                  child: _rarityBadge(item.rarity),
+                ),
+
+                // ── NEW badge (top-right) ──
+                if (item.isNew && !isUnlocked)
+                  Positioned(
+                    top: 10, right: 10,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.greenAccent[700],
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Text('NEW',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0.5)),
+                    ),
                   ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                  child: Text(item.name, style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14), textAlign: TextAlign.center),
-                ),
-                SizedBox(height: 12),
-                if (isUnlocked)
-                  Container(
-                    margin: EdgeInsets.only(bottom: 16),
-                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: isSelected ? theme.accentColor : Colors.green.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      isSelected ? "EQUIPPED" : "OWNED", 
-                      style: TextStyle(
-                        color: isSelected ? Colors.black : Colors.greenAccent, 
-                        fontSize: 10, fontWeight: FontWeight.bold
-                      )
-                    ),
-                  )
-                else
-                  Container(
-                    margin: EdgeInsets.only(bottom: 16),
-                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.amber, 
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [BoxShadow(color: Colors.amber.withOpacity(0.3), blurRadius: 8)]
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text("${item.price}", style: TextStyle(color: Colors.black, fontWeight: FontWeight.w900, fontSize: 14)),
-                        Icon(Icons.monetization_on, size: 14, color: Colors.black)
-                      ],
+
+                // ── Level-lock overlay ──
+                if (isLocked && !isUnlocked)
+                  Positioned.fill(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(18),
+                      child: Container(
+                        color: Colors.black.withOpacity(0.6),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.lock_rounded, color: Colors.white70, size: 28),
+                            const SizedBox(height: 6),
+                            Text('Level ${item.levelRequired}',
+                                style: const TextStyle(
+                                    color: Colors.white70,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13)),
+                            const Text('required',
+                                style: TextStyle(color: Colors.white38, fontSize: 10)),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
               ],
@@ -289,33 +743,83 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
     );
   }
 
+  Widget _buildItemButton(ShopItem item, bool isUnlocked, bool isSelected, bool isLocked, Color rColor) {
+    if (isUnlocked) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
+        decoration: BoxDecoration(
+          color: isSelected ? rColor : Colors.greenAccent.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+              color: isSelected ? rColor : Colors.greenAccent.withOpacity(0.4)),
+        ),
+        child: Text(
+          isSelected ? 'EQUIPPED' : 'EQUIP',
+          style: TextStyle(
+            color: isSelected ? Colors.black : Colors.greenAccent,
+            fontSize: 10,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 0.8,
+          ),
+        ),
+      );
+    }
+    if (item.price == 0) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
+        decoration: BoxDecoration(
+          color: Colors.greenAccent.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.greenAccent.withOpacity(0.4)),
+        ),
+        child: const Text('FREE',
+            style: TextStyle(
+                color: Colors.greenAccent,
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.8)),
+      );
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+      decoration: BoxDecoration(
+        color: rColor.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: rColor.withOpacity(0.5)),
+        boxShadow: [BoxShadow(color: rColor.withOpacity(0.2), blurRadius: 6)],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('${item.price}',
+              style: TextStyle(
+                  color: rColor,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 12)),
+          const SizedBox(width: 3),
+          Icon(Icons.monetization_on, size: 12, color: rColor),
+        ],
+      ),
+    );
+  }
+
+  // ── Previews ─────────────────────────────────────────────────
+
   Widget _buildSkinPreview(String skinId) {
-    final skinData = CardSkins.getSkin(skinId);
-    return Transform.scale(
-      scale: 0.8,
+    final skin = CardSkins.getSkin(skinId);
+    return SizedBox(
+      height: 90,
       child: Stack(
         clipBehavior: Clip.none,
         alignment: Alignment.center,
         children: [
-          Transform.rotate(
-            angle: -0.1,
-            child: PlayingCardWidget(suit: 'spades', rank: 'ace', width: 60, height: 90),
-          ),
+          Transform.rotate(angle: -0.18,
+            child: _miniCard(skin, 48, 70)),
+          _miniCard(skin, 48, 70),
           Transform.translate(
-            offset: Offset(15, 5),
-            child: Transform.rotate(
-              angle: 0.1,
-              child: Container(
-                width: 60, height: 90,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [skinData.backGradientStart, skinData.backGradientEnd]),
-                  border: Border.all(color: Colors.white, width: 2),
-                  boxShadow: [BoxShadow(color: Colors.black45, blurRadius: 5)],
-                ),
-                child: Center(child: Icon(Icons.star, color: Colors.white24, size: 20)),
-              ),
-            ),
+            offset: const Offset(16, 4),
+            child: Transform.rotate(angle: 0.18,
+              child: PlayingCardWidget(suit: 'hearts', rank: 'ace', width: 48, height: 70)),
           ),
         ],
       ),
@@ -323,15 +827,58 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
   }
 
   Widget _buildThemePreview(String themeId) {
-    final themeData = TableThemes.getTheme(themeId);
+    final t = TableThemes.getTheme(themeId);
     return Container(
-      width: 70, height: 70,
+      width: 72, height: 72,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        gradient: RadialGradient(colors: themeData.gradientColors),
-        border: Border.all(color: Colors.white24, width: 2),
-        boxShadow: [BoxShadow(color: Colors.black45, blurRadius: 8)],
+        gradient: RadialGradient(
+          colors: [t.gradientColors.first, t.gradientColors.last],
+          radius: 0.9,
+        ),
+        border: Border.all(color: t.accentColor.withOpacity(0.7), width: 2),
+        boxShadow: [BoxShadow(color: t.accentColor.withOpacity(0.3), blurRadius: 12)],
       ),
+      child: Center(
+        child: Container(
+          width: 30, height: 22,
+          decoration: BoxDecoration(
+            color: t.tableColor,
+            borderRadius: BorderRadius.circular(4),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Rarity helpers ────────────────────────────────────────────
+
+  Color _rarityColor(ShopRarity rarity) {
+    switch (rarity) {
+      case ShopRarity.free:      return Colors.white54;
+      case ShopRarity.common:    return Colors.lightBlueAccent;
+      case ShopRarity.rare:      return Colors.purpleAccent;
+      case ShopRarity.epic:      return Colors.orangeAccent;
+      case ShopRarity.legendary: return _amber;
+    }
+  }
+
+  Widget _rarityBadge(ShopRarity rarity) {
+    final label = rarity.name.toUpperCase();
+    final color = _rarityColor(rarity);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withOpacity(0.5)),
+      ),
+      child: Text(label,
+          style: TextStyle(
+              color: color,
+              fontSize: 8,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0.8)),
     );
   }
 }

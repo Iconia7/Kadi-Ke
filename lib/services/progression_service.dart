@@ -1,5 +1,7 @@
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:http/http.dart' as http;
 import '../models/challenge_model.dart';
+import 'app_config.dart';
 import 'dart:convert';
 import 'dart:math';
 
@@ -54,15 +56,42 @@ class ProgressionService {
   String _getKey(String key) => "$_userIdPrefix$key";
 
   // --- CLOUD WALLET SYNC ---
-  Future<void> syncFromCloud(int coins, int wins, int gamesPlayed) async {
+  Future<void> syncFromCloud(int coins, int wins, int gamesPlayed, {int xp = 0}) async {
     await _prefs.setInt(_getKey(_coinsKey), coins);
     await _prefs.setInt(_getKey(_totalWinsKey), wins);
     await _prefs.setInt(_getKey(_totalGamesKey), gamesPlayed);
+    // Only update XP from server if it's higher than local (server is source of truth)
+    final localXP = getXP();
+    if (xp > localXP) {
+      await _prefs.setInt(_getKey(_totalXpKey), xp);
+    }
   }
 
   // --- COINS & STATS ---
   int getCoins() => _prefs.getInt(_getKey(_coinsKey)) ?? 0;
-  Future<void> addCoins(int amount) async => await _prefs.setInt(_getKey(_coinsKey), getCoins() + amount);
+  Future<void> addCoins(int amount) async {
+    final newCoins = getCoins() + amount;
+    await _prefs.setInt(_getKey(_coinsKey), newCoins);
+    // Push to server in background
+    _pushCoinsToServer(newCoins);
+  }
+
+  Future<void> _pushCoinsToServer(int coins) async {
+    try {
+      final token = _prefs.getString('auth_token');
+      if (token == null || token.isEmpty) return;
+      await http.post(
+        Uri.parse('${AppConfig.baseUrl}/update_coins'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({'coins': coins}),
+      );
+    } catch (_) {
+      // Silent error
+    }
+  }
   
   Future<bool> spendCoins(int amount) async {
     int current = getCoins();
@@ -89,7 +118,29 @@ class ProgressionService {
 
   // --- XP & LEVEL SYSTEM ---
   int getXP() => _prefs.getInt(_getKey(_totalXpKey)) ?? 0;
-  Future<void> addXP(int amount) async => await _prefs.setInt(_getKey(_totalXpKey), getXP() + amount);
+  Future<void> addXP(int amount) async {
+    final newXP = getXP() + amount;
+    await _prefs.setInt(_getKey(_totalXpKey), newXP);
+    // Push to server in background (fire-and-forget — offline play still works)
+    _pushXPToServer(newXP);
+  }
+
+  Future<void> _pushXPToServer(int xp) async {
+    try {
+      final token = _prefs.getString('auth_token');
+      if (token == null || token.isEmpty) return;
+      await http.post(
+        Uri.parse('${AppConfig.baseUrl}/update_xp'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({'xp': xp}),
+      );
+    } catch (_) {
+      // Silent — offline or server down should not break local play
+    }
+  }
 
   static const List<Map<String, dynamic>> _levelTiers = [
     {'level': 1, 'title': 'Rookie',       'xp': 0,     'color': 0xFF9E9E9E},
@@ -396,28 +447,176 @@ class ProgressionService {
 class ShopItem {
   final String id;
   final String name;
+  final String description;
   final int price;
   final ShopItemType type;
-  ShopItem({required this.id, required this.name, required this.price, required this.type});
+  final ShopRarity rarity;
+  final int levelRequired; // 0 = no requirement
+  final bool isNew;
+
+  ShopItem({
+    required this.id,
+    required this.name,
+    required this.description,
+    required this.price,
+    required this.type,
+    this.rarity = ShopRarity.common,
+    this.levelRequired = 0,
+    this.isNew = false,
+  });
 }
 
 enum ShopItemType { cardSkin, tableTheme }
+enum ShopRarity { free, common, rare, epic, legendary }
 
 class ShopCatalog {
   static final List<ShopItem> cardSkins = [
-    ShopItem(id: 'classic', name: 'Classic Blue', price: 0, type: ShopItemType.cardSkin),
-    ShopItem(id: 'neon_geometric', name: 'Neon Geometric', price: 0, type: ShopItemType.cardSkin),
-    ShopItem(id: 'cyberpunk', name: 'Cyberpunk Purple', price: 250, type: ShopItemType.cardSkin),
-    ShopItem(id: 'royal_gold', name: 'Royal Gold', price: 300, type: ShopItemType.cardSkin),
-    ShopItem(id: 'matrix', name: 'Matrix Digital', price: 200, type: ShopItemType.cardSkin),
-    ShopItem(id: 'midnight', name: 'Dark Matter', price: 350, type: ShopItemType.cardSkin),
-    ShopItem(id: 'rainbow', name: 'Prism', price: 400, type: ShopItemType.cardSkin),
+    ShopItem(
+      id: 'classic',
+      name: 'Classic Blue',
+      description: 'The OG. Clean, timeless, and always in style.',
+      price: 0,
+      type: ShopItemType.cardSkin,
+      rarity: ShopRarity.free,
+    ),
+    ShopItem(
+      id: 'neon_geometric',
+      name: 'Neon Geometric',
+      description: 'Bold neon angles that pop on any table.',
+      price: 0,
+      type: ShopItemType.cardSkin,
+      rarity: ShopRarity.free,
+    ),
+    ShopItem(
+      id: 'matrix',
+      name: 'Matrix Digital',
+      description: 'Green-on-black digital rain. Hack the game.',
+      price: 800,
+      type: ShopItemType.cardSkin,
+      rarity: ShopRarity.common,
+    ),
+    ShopItem(
+      id: 'cyberpunk',
+      name: 'Cyberpunk Purple',
+      description: 'Neon purple vibes from a dystopian future.',
+      price: 1200,
+      type: ShopItemType.cardSkin,
+      rarity: ShopRarity.rare,
+    ),
+    ShopItem(
+      id: 'royal_gold',
+      name: 'Royal Gold',
+      description: 'For those who play like royalty.',
+      price: 1500,
+      type: ShopItemType.cardSkin,
+      rarity: ShopRarity.rare,
+    ),
+    ShopItem(
+      id: 'midnight',
+      name: 'Dark Matter',
+      description: 'Shadow-forged cards from the void.',
+      price: 2000,
+      type: ShopItemType.cardSkin,
+      rarity: ShopRarity.epic,
+    ),
+    ShopItem(
+      id: 'rainbow',
+      name: 'Prism',
+      description: 'All the colors of victory in one deck.',
+      price: 2500,
+      type: ShopItemType.cardSkin,
+      rarity: ShopRarity.epic,
+    ),
+    ShopItem(
+      id: 'volcanic',
+      name: 'Volcanic Red',
+      description: 'Every card burns with the heat of a thousand games.',
+      price: 3000,
+      type: ShopItemType.cardSkin,
+      rarity: ShopRarity.epic,
+      isNew: true,
+      levelRequired: 3,
+    ),
+    ShopItem(
+      id: 'arctic',
+      name: 'Arctic Ice',
+      description: 'Icy cool precision. Stay frosty under pressure.',
+      price: 3000,
+      type: ShopItemType.cardSkin,
+      rarity: ShopRarity.epic,
+      isNew: true,
+      levelRequired: 3,
+    ),
+    ShopItem(
+      id: 'golden_kadi',
+      name: 'Golden Kadi',
+      description: 'Reserved for legends. The pinnacle of card mastery.',
+      price: 5000,
+      type: ShopItemType.cardSkin,
+      rarity: ShopRarity.legendary,
+      isNew: true,
+      levelRequired: 5,
+    ),
   ];
 
   static final List<ShopItem> tableThemes = [
-    ShopItem(id: 'midnight_elite', name: 'Midnight Elite', price: 0, type: ShopItemType.tableTheme),
-    ShopItem(id: 'green_table', name: 'Vegas Green', price: 100, type: ShopItemType.tableTheme),
-    ShopItem(id: 'ocean_blue', name: 'Oceanic', price: 150, type: ShopItemType.tableTheme),
-    ShopItem(id: 'sunset', name: 'Sunset Blvd', price: 200, type: ShopItemType.tableTheme),
+    ShopItem(
+      id: 'midnight_elite',
+      name: 'Midnight Elite',
+      description: 'The default. Dark, sleek and premium.',
+      price: 0,
+      type: ShopItemType.tableTheme,
+      rarity: ShopRarity.free,
+    ),
+    ShopItem(
+      id: 'green_table',
+      name: 'Vegas Green',
+      description: 'Straight from the casino floor.',
+      price: 600,
+      type: ShopItemType.tableTheme,
+      rarity: ShopRarity.common,
+    ),
+    ShopItem(
+      id: 'ocean_blue',
+      name: 'Oceanic',
+      description: 'Deep-sea calm. Play like you\'re above it all.',
+      price: 1000,
+      type: ShopItemType.tableTheme,
+      rarity: ShopRarity.rare,
+    ),
+    ShopItem(
+      id: 'sunset',
+      name: 'Sunset Blvd',
+      description: 'Purple skies and golden hour vibes.',
+      price: 1500,
+      type: ShopItemType.tableTheme,
+      rarity: ShopRarity.rare,
+    ),
+    ShopItem(
+      id: 'blood_moon',
+      name: 'Blood Moon',
+      description: 'When the moon turns red, legends are born.',
+      price: 3500,
+      type: ShopItemType.tableTheme,
+      rarity: ShopRarity.epic,
+      isNew: true,
+      levelRequired: 4,
+    ),
+    ShopItem(
+      id: 'galaxy',
+      name: 'Galaxy',
+      description: 'Play among the stars. The universe is your table.',
+      price: 5000,
+      type: ShopItemType.tableTheme,
+      rarity: ShopRarity.legendary,
+      isNew: true,
+      levelRequired: 5,
+    ),
   ];
+
+  /// All items combined for featured / search views
+  static List<ShopItem> get all => [...cardSkins, ...tableThemes];
+
+  /// Flagship item to feature prominently at the top
+  static ShopItem get featured => cardSkins.firstWhere((i) => i.id == 'golden_kadi');
 }

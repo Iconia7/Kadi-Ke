@@ -7,11 +7,11 @@ import 'screens/home_screen.dart';
 import 'services/custom_auth_service.dart';
 import 'services/notification_service.dart';
 import 'services/progression_service.dart';
-import 'services/vps_game_service.dart';
-import 'services/vps_game_service.dart';
 import 'services/feedback_service.dart';
 import 'screens/game_screen.dart';
 import 'screens/tournament_screen.dart';
+import 'services/iap_service.dart';
+import 'services/ad_service.dart';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -28,9 +28,9 @@ void main() async {
   try {
     await Firebase.initializeApp();
     FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
-    print("✅ Firebase Initialized");
+    debugPrint("✅ Firebase Initialized");
   } catch (e) {
-    print("❌ Firebase Init Error: $e");
+    debugPrint("❌ Firebase Init Error: $e");
   }
 
   // 1. Lock Orientation
@@ -42,9 +42,9 @@ void main() async {
   try {
     await CustomAuthService().initialize();
     await CustomAuthService().fetchCloudWallet(); // Background sync of coins/wins
-    print("✅ Auth Service Initialized & Wallet Synced");
+    debugPrint("✅ Auth Service Initialized & Wallet Synced");
   } catch (e) {
-    print("❌ Auth Init Error: $e");
+    debugPrint("❌ Auth Init Error: $e");
   }
 
   // 3. Initialize Notifications
@@ -52,25 +52,41 @@ void main() async {
     await NotificationService().initialize();
     await NotificationService().scheduleDailyRewardReminder(const TimeOfDay(hour: 10, minute: 0));
     await NotificationService().scheduleDailyChallengeReminder(); // Schedule at 8 PM
-    print("✅ Notifications Initialized");
+    debugPrint("✅ Notifications Initialized");
   } catch (e) {
-    print("❌ Notification Error: $e");
+    debugPrint("❌ Notification Error: $e");
   }
 
   // 4. Initialize Progression & Challenges
   try {
     await ProgressionService().initialize();
     await ProgressionService().checkAndResetChallenges();
-    print("✅ Progression & Challenges Initialized");
+    debugPrint("✅ Progression & Challenges Initialized");
   } catch (e) {
-    print("❌ Progression Error: $e");
+    debugPrint("❌ Progression Error: $e");
   }
 
   // 5. Sync Feedback
   try {
     FeedbackService().syncCachedFeedback();
   } catch (e) {
-    print("❌ Feedback Sync Error: $e");
+    debugPrint("❌ Feedback Sync Error: $e");
+  }
+
+  // 6. Initialize IAP (In-App Purchases)
+  try {
+    await IAPService().initialize();
+    debugPrint("✅ IAP Service Initialized");
+  } catch (e) {
+    debugPrint("❌ IAP Init Error: $e");
+  }
+
+  // 7. Initialize Ads
+  try {
+    await AdService.initialize();
+    debugPrint("✅ Ad Service Initialized");
+  } catch (e) {
+    debugPrint("❌ Ad Init Error: $e");
   }
 
   runApp(const MyApp());
@@ -158,6 +174,7 @@ class _MyAppState extends State<MyApp> {
         print("📬 Game invite from $friendName: $roomCode ($gameType)");
         
         // Navigate to home screen
+        if (!context.mounted) return;
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => HomeScreen()),
           (route) => false,
@@ -165,30 +182,36 @@ class _MyAppState extends State<MyApp> {
         
         // Show join game dialog
         await Future.delayed(const Duration(milliseconds: 500));
-        _showJoinGameDialog(context, roomCode, friendName, gameType);
+        if (context.mounted) {
+          _showJoinGameDialog(context, roomCode, friendName, gameType);
+        }
         break;
         
       case 'tournament_invite':
         final tRoomCode = payload['roomCode'];
         final tFriendName = payload['friendName'];
         final tGameType = payload['gameType'] ?? 'kadi';
-        print("📬 Tournament invite from $tFriendName: $tRoomCode ($tGameType)");
+        debugPrint("📬 Tournament invite from $tFriendName: $tRoomCode ($tGameType)");
         
+        if (!context.mounted) return;
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => HomeScreen()),
           (route) => false,
         );
         
         await Future.delayed(const Duration(milliseconds: 500));
-        _showJoinTournamentDialog(context, tRoomCode, tFriendName, tGameType);
+        if (context.mounted) {
+           _showJoinTournamentDialog(context, tRoomCode, tFriendName, tGameType);
+        }
         break;
         
       case 'friend_online':
         // Navigate to friends screen
         final friendName = payload['friendName'];
-        print("👥 Navigating to friends (friend online: $friendName)");
+        debugPrint("👥 Navigating to friends (friend online: $friendName)");
         
         // Navigate directly to Friends Screen
+        if (!context.mounted) return;
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const FriendsScreen()),
           (route) => false,

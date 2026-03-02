@@ -218,7 +218,8 @@ class _ClanHubScreenState extends State<ClanHubScreen>
                             tagCtrl.text.toUpperCase().trim(),
                             descCtrl.text.trim(),
                             _entryFee.toInt());
-                        await ProgressionService().addCoins(-2000);
+                        // Server deducts coins — sync wallet to keep local cache accurate
+                        await CustomAuthService().fetchCloudWallet();
                         CustomToast.show(context, "Clan Created! ⚔️");
                         await _loadData();
                       } catch (e) {

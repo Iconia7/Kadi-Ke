@@ -84,7 +84,28 @@ class TableThemes {
     fxColor: Colors.orangeAccent.withOpacity(0.3),
   );
 
-  // Added missing getter
+  static final ThemeModel bloodMoon = ThemeModel(
+    id: 'blood_moon',
+    name: 'Blood Moon',
+    gradientColors: [Color(0xFF3E0000), Color(0xFF1A0000)],
+    tableColor: Color(0xFF5C0000).withOpacity(0.7),
+    accentColor: Color(0xFFFF3D00),
+    cardBackColor: Color(0xFFB71C1C),
+    bgmPath: 'midnight_loops',
+    fxColor: Color(0xFFFF3D00).withOpacity(0.35),
+  );
+
+  static final ThemeModel galaxy = ThemeModel(
+    id: 'galaxy',
+    name: 'Galaxy',
+    gradientColors: [Color(0xFF0D0221), Color(0xFF110133)],
+    tableColor: Color(0xFF1A0240).withOpacity(0.7),
+    accentColor: Color(0xFFE040FB),
+    cardBackColor: Color(0xFF4A148C),
+    bgmPath: 'midnight_loops',
+    fxColor: Color(0xFFE040FB).withOpacity(0.3),
+  );
+
   static ThemeModel get defaultTheme => midnightElite;
 
   static ThemeModel getTheme(String id) {
@@ -92,6 +113,8 @@ class TableThemes {
       case 'green_table': return greenTable;
       case 'ocean_blue': return oceanBlue;
       case 'sunset': return sunset;
+      case 'blood_moon': return bloodMoon;
+      case 'galaxy': return galaxy;
       case 'midnight_elite':
       default: return midnightElite;
     }
@@ -113,6 +136,12 @@ class CardSkins {
         return CardSkinModel(id: 'midnight', backGradientStart: Color(0xFF212121), backGradientEnd: Color(0xFF424242));
       case 'rainbow':
         return CardSkinModel(id: 'rainbow', backGradientStart: Colors.red, backGradientEnd: Colors.blue);
+      case 'volcanic':
+        return CardSkinModel(id: 'volcanic', backGradientStart: Color(0xFFB71C1C), backGradientEnd: Color(0xFFFF6D00));
+      case 'arctic':
+        return CardSkinModel(id: 'arctic', backGradientStart: Color(0xFF80DEEA), backGradientEnd: Color(0xFF0D47A1));
+      case 'golden_kadi':
+        return CardSkinModel(id: 'golden_kadi', backGradientStart: Color(0xFFFFD700), backGradientEnd: Color(0xFFFF6F00));
       case 'neon_geometric':
       default:
         return CardSkinModel(id: 'neon_geometric', backGradientStart: Color(0xFF2E3192), backGradientEnd: Color(0xFF1BFFFF));

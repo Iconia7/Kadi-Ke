@@ -18,6 +18,9 @@ class DatabaseService {
     print('SQLite Database initialized.');
   }
 
+  /// Exposes the raw database for queries not covered by helper methods
+  Database get db => _db;
+
   void _createTables() {
     _db.execute('''
       CREATE TABLE IF NOT EXISTS users (
@@ -38,6 +41,12 @@ class DatabaseService {
 
     try {
       _db.execute('ALTER TABLE users ADD COLUMN games_played INTEGER DEFAULT 0');
+    } catch (_) {
+      // Column might already exist
+    }
+
+    try {
+      _db.execute('ALTER TABLE users ADD COLUMN xp INTEGER DEFAULT 0');
     } catch (_) {
       // Column might already exist
     }
@@ -72,6 +81,17 @@ class DatabaseService {
         userId TEXT PRIMARY KEY,
         token TEXT NOT NULL,
         lastUpdated TEXT NOT NULL
+      )
+    ''');
+
+    // Stores consumed IAP purchase tokens to prevent double-crediting
+    _db.execute('''
+      CREATE TABLE IF NOT EXISTS purchase_tokens (
+        token TEXT PRIMARY KEY,
+        userId TEXT NOT NULL,
+        productId TEXT NOT NULL,
+        coinsAwarded INTEGER NOT NULL,
+        creditedAt TEXT NOT NULL
       )
     ''');
 
@@ -229,6 +249,26 @@ class DatabaseService {
         [newUsername, oldUsername]);
   }
 
+  // --- Wallet & Progression ---
+
+  void incrementCoins(String userId, int amount) {
+    _db.execute('UPDATE users SET coins = COALESCE(coins, 0) + ? WHERE id = ?',
+        [amount, userId]);
+  }
+
+  void setCoins(String userId, int totalCoins) {
+    _db.execute('UPDATE users SET coins = ? WHERE id = ?', [totalCoins, userId]);
+  }
+
+  void incrementXP(String userId, int amount) {
+    _db.execute('UPDATE users SET xp = COALESCE(xp, 0) + ? WHERE id = ?',
+        [amount, userId]);
+  }
+
+  void setXP(String userId, int totalXP) {
+    _db.execute('UPDATE users SET xp = ? WHERE id = ?', [totalXP, userId]);
+  }
+
   Map<String, Map<String, dynamic>> getAllUsers() {
     final ResultSet results = _db.select('SELECT * FROM users');
     final Map<String, Map<String, dynamic>> users = {};
@@ -246,12 +286,6 @@ class DatabaseService {
   void incrementGamesPlayed(String userId) {
     _db.execute('UPDATE users SET games_played = games_played + 1 WHERE id = ?', [userId]);
   }
-
-  void incrementCoins(String userId, int amount) {
-    _db.execute(
-        'UPDATE users SET coins = coins + ? WHERE id = ?', [amount, userId]);
-  }
-
   /// Adds points to a user's clan contributions and the clan's overall score
   void addClanPoints(String userId, int points) {
     final rs = _db.select('SELECT clanId FROM clan_members WHERE userId = ?', [userId]);
