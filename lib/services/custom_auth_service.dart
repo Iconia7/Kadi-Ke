@@ -67,6 +67,9 @@ class CustomAuthService {
           data['wins'] ?? 0,
           data['gamesPlayed'] ?? 0,
           xp: data['xp'] ?? 0,
+          isPremium: data['isPremium'] ?? false,
+          isUltra: data['isUltra'] ?? false,
+          frameId: data['frameId'],
         );
 
         await _saveCredentials();
@@ -99,13 +102,13 @@ class CustomAuthService {
         _userId = data['userId'];
         _token = data['token'];
         _username = username;
-        _avatar = data['avatar'];
-        
         await ProgressionService().syncFromCloud(
           data['coins'] ?? 0,
           data['wins'] ?? 0,
           data['gamesPlayed'] ?? 0,
           xp: data['xp'] ?? 0,
+          isPremium: data['isPremium'] ?? false,
+          isUltra: data['isUltra'] ?? false,
         );
 
         await _saveCredentials();
@@ -186,13 +189,13 @@ class CustomAuthService {
 
         _userId = data['userId'];
         _token = data['token'];
-        _username = data['username'] ?? googleUser.displayName;
-
         await ProgressionService().syncFromCloud(
           data['coins'] ?? 0,
           data['wins'] ?? 0,
           data['gamesPlayed'] ?? 0,
           xp: data['xp'] ?? 0,
+          isPremium: data['isPremium'] ?? false,
+          isUltra: data['isUltra'] ?? false,
         );
 
         await _saveCredentials();
@@ -223,6 +226,9 @@ class CustomAuthService {
             data['wins'] ?? 0,
             data['gamesPlayed'] ?? 0,
             xp: data['xp'] ?? 0,
+            isPremium: data['isPremium'] ?? false,
+            isUltra: data['isUltra'] ?? false,
+            frameId: data['frameId'],
           );
         }
       }

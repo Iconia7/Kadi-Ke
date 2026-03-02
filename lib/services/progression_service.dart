@@ -2,6 +2,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import '../models/challenge_model.dart';
 import 'app_config.dart';
+import 'battle_pass_service.dart';
 import 'dart:convert';
 import 'dart:math';
 
@@ -17,6 +18,14 @@ class ProgressionService {
   static const String _challengesKey = 'daily_challenges';
   static const String _lastChallengeResetKey = 'last_challenge_reset';
   static const String _notificationsEnabledKey = 'notifications_enabled';
+  static const String _mmrKey = 'player_mmr';
+  static const String _rankTierKey = 'player_rank_tier';
+  static const String _isPremiumKey = 'is_pass_premium';
+  static const String _isUltraKey = 'is_pass_ultra';
+  static const String _unlockedEmotesKey = 'unlocked_emotes';
+  static const String _unlockedTitlesKey = 'unlocked_titles';
+  static const String _unlockedFramesKey = 'unlocked_frames';
+  static const String _selectedFrameKey = 'selected_avatar_frame';
   
 
   static final ProgressionService _instance = ProgressionService._internal();
@@ -49,6 +58,14 @@ class ProgressionService {
       await _prefs.setInt(_getKey(_totalWinsKey), 0);
       await _prefs.setInt(_getKey(_totalGamesKey), 0);
       await _prefs.setInt(_getKey(_totalXpKey), 0);
+      await _prefs.setInt(_getKey(_mmrKey), 1000);
+      await _prefs.setString(_getKey(_rankTierKey), 'Bronze I');
+      await _prefs.setBool(_getKey(_isPremiumKey), false);
+      await _prefs.setBool(_getKey(_isUltraKey), false);
+      await _prefs.setStringList(_getKey(_unlockedEmotesKey), ['neutral']);
+      await _prefs.setStringList(_getKey(_unlockedTitlesKey), ['Rookie']);
+      await _prefs.setStringList(_getKey(_unlockedFramesKey), ['default']);
+      await _prefs.setString(_getKey(_selectedFrameKey), 'default');
     }
   }
 
@@ -56,10 +73,24 @@ class ProgressionService {
   String _getKey(String key) => "$_userIdPrefix$key";
 
   // --- CLOUD WALLET SYNC ---
-  Future<void> syncFromCloud(int coins, int wins, int gamesPlayed, {int xp = 0}) async {
+  Future<void> syncFromCloud(int coins, int wins, int gamesPlayed, {int xp = 0, int mmr = 1000, String rankTier = 'Bronze I', bool isPremium = false, bool isUltra = false, String? frameId}) async {
     await _prefs.setInt(_getKey(_coinsKey), coins);
     await _prefs.setInt(_getKey(_totalWinsKey), wins);
     await _prefs.setInt(_getKey(_totalGamesKey), gamesPlayed);
+    await _prefs.setInt(_getKey(_mmrKey), mmr);
+    await _prefs.setString(_getKey(_rankTierKey), rankTier);
+    await _prefs.setBool(_getKey(_isPremiumKey), isPremium);
+    await _prefs.setBool(_getKey(_isUltraKey), isUltra);
+
+    if (frameId != null) {
+      await _prefs.setString(_getKey(_selectedFrameKey), frameId);
+    }
+    
+    // Notify Battle Pass Service
+    if (isPremium) {
+       BattlePassService().setPremiumUnlocked(true, ultra: isUltra);
+    }
+    
     // Only update XP from server if it's higher than local (server is source of truth)
     final localXP = getXP();
     if (xp > localXP) {
@@ -116,11 +147,26 @@ class ProgressionService {
     if (won) await _prefs.setInt(_getKey(_totalWinsKey), getTotalWins() + 1);
   }
 
+  int getMMR() => _prefs.getInt(_getKey(_mmrKey)) ?? 1000;
+  String getRankTier() => _prefs.getString(_getKey(_rankTierKey)) ?? 'Bronze I';
+
+  Future<void> updateMMRLocal(int newMMR, String newTier) async {
+    await _prefs.setInt(_getKey(_mmrKey), newMMR);
+    await _prefs.setString(_getKey(_rankTierKey), newTier);
+  }
+
+  bool isPremium() => _prefs.getBool(_getKey(_isPremiumKey)) ?? false;
+  bool isUltra() => _prefs.getBool(_getKey(_isUltraKey)) ?? false;
+
   // --- XP & LEVEL SYSTEM ---
   int getXP() => _prefs.getInt(_getKey(_totalXpKey)) ?? 0;
   Future<void> addXP(int amount) async {
     final newXP = getXP() + amount;
     await _prefs.setInt(_getKey(_totalXpKey), newXP);
+    
+    // SYNC WITH BATTLE PASS (NEW)
+    BattlePassService().addXP(amount);
+
     // Push to server in background (fire-and-forget — offline play still works)
     _pushXPToServer(newXP);
   }
@@ -184,6 +230,10 @@ class ProgressionService {
   // --- UNLOCKABLES ---
   List<String> getUnlockedSkins() => _prefs.getStringList(_getKey(_unlockedSkinsKey)) ?? ['classic'];
   List<String> getUnlockedThemes() => _prefs.getStringList(_getKey(_unlockedThemesKey)) ?? ['midnight_elite'];
+  List<String> getUnlockedEmotes() => _prefs.getStringList(_getKey(_unlockedEmotesKey)) ?? ['neutral'];
+  List<String> getUnlockedTitles() => _prefs.getStringList(_getKey(_unlockedTitlesKey)) ?? ['Rookie'];
+  List<String> getUnlockedFrames() => _prefs.getStringList(_getKey(_unlockedFramesKey)) ?? ['default'];
+  String getSelectedFrame() => _prefs.getString(_getKey(_selectedFrameKey)) ?? 'default';
 
   Future<void> unlockSkin(String skinId) async {
     List<String> unlocked = getUnlockedSkins();
@@ -198,6 +248,58 @@ class ProgressionService {
     if (!unlocked.contains(themeId)) {
       unlocked.add(themeId);
       await _prefs.setStringList(_getKey(_unlockedThemesKey), unlocked);
+    }
+  }
+
+  Future<void> unlockEmote(String emoteId) async {
+    List<String> unlocked = getUnlockedEmotes();
+    if (!unlocked.contains(emoteId)) {
+      unlocked.add(emoteId);
+      await _prefs.setStringList(_getKey(_unlockedEmotesKey), unlocked);
+    }
+  }
+
+  Future<void> unlockTitle(String title) async {
+    List<String> unlocked = getUnlockedTitles();
+    if (!unlocked.contains(title)) {
+      unlocked.add(title);
+      await _prefs.setStringList(_getKey(_unlockedTitlesKey), unlocked);
+    }
+  }
+
+  Future<void> unlockFrame(String frameId) async {
+    List<String> unlocked = getUnlockedFrames();
+    if (!unlocked.contains(frameId)) {
+      unlocked.add(frameId);
+      await _prefs.setStringList(_getKey(_unlockedFramesKey), unlocked);
+    }
+  }
+
+  Future<void> selectFrame(String frameId) async {
+    await _prefs.setString(_getKey(_selectedFrameKey), frameId);
+    _pushProfileUpdateToServer(selectedFrame: frameId);
+  }
+
+  Future<void> _pushProfileUpdateToServer({String? newUsername, String? selectedFrame}) async {
+    try {
+      final token = _prefs.getString('auth_token');
+      final username = _prefs.getString('username');
+      if (token == null || token.isEmpty || username == null) return;
+      
+      await http.post(
+        Uri.parse('${AppConfig.baseUrl}/update_profile'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({
+          'oldUsername': username,
+          'newUsername': newUsername ?? username,
+          'selectedFrame': selectedFrame,
+        }),
+      );
+    } catch (_) {
+      // Silent error
     }
   }
 

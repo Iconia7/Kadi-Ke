@@ -27,10 +27,12 @@ import '../widgets/daily_reward_dialog.dart';
 import '../widgets/daily_challenge_card.dart';
 import '../models/tournament_model.dart';
 import '../widgets/custom_toast.dart';
+import '../widgets/custom_avatar.dart';
 import '../widgets/challenge_dialog.dart';
 import '../widgets/friend_invite_bottom_sheet.dart';
 import '../widgets/activity_ticker.dart';
 import 'clan_hub_screen.dart';
+import 'battle_pass_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   @override
@@ -1217,9 +1219,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                             Navigator.push(context, MaterialPageRoute(builder: (_) => ShopScreen())).then((_) => _refreshCoins());
                           }),
                           SizedBox(width: 40),
-                          _buildIconButton("Profile", Icons.account_circle, Colors.greenAccent, () {
+                          _buildIconButton("Profile", null, Colors.greenAccent, () {
                             Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen())).then((_) => _refreshCoins());
-                          }),
+                          }, customWidget: CustomAvatar(size: 32, showGlow: false)),
                         ],
                       ),
                     ],
@@ -1243,36 +1245,26 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                  // Challenges Button
+                  // Header Actions (Challenges & Pass)
                   Flexible(
-                    child: GestureDetector(
-                      onTap: () => showDialog(context: context, builder: (c) => const ChallengeDialog()),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                          decoration: BoxDecoration(
-                            color: Colors.amber.withOpacity(0.15),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(color: Colors.amber.withOpacity(0.3)),
-                            boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 8)],
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.military_tech, color: Colors.amber, size: 16),
-                              SizedBox(width: 4),
-                              Flexible(
-                                child: Text("CHALLENGES", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10, letterSpacing: 0.5), overflow: TextOverflow.ellipsis),
-                              ),
-                              if (ProgressionService().hasUnclaimedChallenges()) ...[
-                                 SizedBox(width: 6),
-                                 Container(
-                                    width: 8, height: 8,
-                                    decoration: BoxDecoration(color: Colors.redAccent, shape: BoxShape.circle),
-                                 )
-                              ]
-                            ],
-                          ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _buildTopAction(
+                          "CHALLENGES", 
+                          Icons.military_tech, 
+                          Colors.amber, 
+                          () => showDialog(context: context, builder: (c) => const ChallengeDialog()),
+                          showDot: ProgressionService().hasUnclaimedChallenges(),
                         ),
+                        const SizedBox(width: 8),
+                        _buildTopAction(
+                          "KADI PASS", 
+                          Icons.flash_on, 
+                          Colors.purpleAccent, 
+                          () => Navigator.push(context, MaterialPageRoute(builder: (_) => BattlePassScreen())),
+                        ),
+                      ],
                     ),
                   ),
 
@@ -1470,6 +1462,39 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
+  Widget _buildTopAction(String label, IconData icon, Color color, VoidCallback onTap, {bool showDot = false}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: color.withOpacity(0.3)),
+          boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 8)],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: color, size: 16),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10, letterSpacing: 0.5),
+            ),
+            if (showDot) ...[
+              const SizedBox(width: 6),
+              Container(
+                width: 8, height: 8,
+                decoration: const BoxDecoration(color: Colors.redAccent, shape: BoxShape.circle),
+              )
+            ]
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildModernMenuCard(String label, IconData icon, Color color, VoidCallback onTap) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(24),
@@ -1534,7 +1559,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       }
   }
 
-  Widget _buildIconButton(String label, IconData icon, Color color, VoidCallback onTap) {
+  Widget _buildIconButton(String label, IconData? icon, Color color, VoidCallback onTap, {Widget? customWidget}) {
     return Column(
       children: [
         Container(
@@ -1553,7 +1578,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               customBorder: CircleBorder(),
               splashColor: color.withOpacity(0.3),
               child: Center(
-                child: Icon(icon, color: color, size: 30),
+                child: customWidget ?? Icon(icon, color: color, size: 30),
               ),
             ),
           ),

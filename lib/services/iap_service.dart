@@ -29,6 +29,9 @@ class IAPService {
     CoinBundle(productId: 'kadi_coins_5000', coins: 5000, label: 'KES 500'),
   ];
 
+  static const String kadiPassProductId = 'kadi_pass_premium';
+  static const String kadiPassUltraProductId = 'kadi_pass_ultra';
+
   final InAppPurchase _iap = InAppPurchase.instance;
   StreamSubscription<List<PurchaseDetails>>? _subscription;
 
@@ -59,6 +62,8 @@ class IAPService {
   Future<void> _loadProducts() async {
     _loading = true;
     final ids = bundles.map((b) => b.productId).toSet();
+    ids.add(kadiPassProductId);
+    ids.add(kadiPassUltraProductId); // Added Ultra Pass ID
     final response = await _iap.queryProductDetails(ids);
 
     if (response.error != null) {
@@ -84,6 +89,27 @@ class IAPService {
 
     final purchaseParam = PurchaseParam(productDetails: matches.first);
     await _iap.buyConsumable(purchaseParam: purchaseParam, autoConsume: false);
+  }
+
+  Future<void> purchasePass({bool ultra = false}) async {
+    if (!_available) {
+      onPurchaseResult?.call('Google Play not available.', false);
+      return;
+    }
+
+    final id = ultra ? kadiPassUltraProductId : kadiPassProductId;
+    final matches = _products.where((p) => p.id == id).toList();
+    if (matches.isEmpty) {
+      onPurchaseResult?.call('Battle Pass not found in store.', false);
+      return;
+    }
+
+    final purchaseParam = PurchaseParam(productDetails: matches.first);
+    if (ultra) {
+      await _iap.buyNonConsumable(purchaseParam: purchaseParam);
+    } else {
+      await _iap.buyNonConsumable(purchaseParam: purchaseParam);
+    }
   }
 
   Future<void> _onPurchaseUpdate(List<PurchaseDetails> purchases) async {

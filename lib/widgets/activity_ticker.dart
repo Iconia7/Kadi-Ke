@@ -19,10 +19,10 @@ class ActivityTicker extends StatefulWidget {
 
 class _ActivityTickerState extends State<ActivityTicker> {
   final List<String> _messages = [
-    "Welcome to Kadi Ke Online! 🃏",
-    "Join a tournament to win big prizes! 🏆",
-    "Join a clan today and win coins and points for your clan! 🏆",
-    "Customize your table in the Shop menu. 🎨",
+    "Welcome to Kadi KE Online! 🃏",
+    "Join a Tournament to Win Big Prizes! 🏆",
+    "Join a Clan today and Win Coins and Points for your Clan! 🏆",
+    "Customize your Table in the Shop Menu. 🎨",
   ];
   late ScrollController _scrollController;
   late Timer _timer;

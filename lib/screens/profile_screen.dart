@@ -11,6 +11,7 @@ import '../services/achievement_service.dart';
 import '../services/feedback_service.dart';
 import 'package:in_app_review/in_app_review.dart';
 import '../widgets/custom_toast.dart';
+import '../widgets/custom_avatar.dart';
 
 class ProfileScreen extends StatefulWidget {
   @override
@@ -25,6 +26,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   double _winRate = 0.0;
   String _currentThemeId = 'midnight_elite';
   Map<String, dynamic> _levelInfo = {'level': 1, 'title': 'Rookie', 'color': 0xFF9E9E9E, 'xp': 0, 'xpForNext': 200, 'progress': 0.0, 'isMaxLevel': false};
+  int _mmr = 1000;
+  String _rankTier = 'Bronze I';
 
   @override
   void initState() {
@@ -49,6 +52,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _winRate = _progressionService.getWinRate();
         _currentThemeId = _progressionService.getSelectedTheme();
         _levelInfo = _progressionService.getLevel();
+        _mmr = _progressionService.getMMR();
+        _rankTier = _progressionService.getRankTier();
       });
     }
   }
@@ -94,61 +99,35 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   // Avatar Section
                   GestureDetector(
                     onTap: _pickImage,
-                    child: Container(
-                      width: 100, height: 100,
-                      padding: EdgeInsets.all(4),
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(color: theme.accentColor.withOpacity(0.5), width: 2),
-                      ),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Colors.black26, 
-                          image: CustomAuthService().avatar != null 
-                             ? DecorationImage(
-                                 image: NetworkImage("${CustomAuthService().baseUrl}${CustomAuthService().avatar}"),
-                                 fit: BoxFit.cover
-                               ) 
-                             : null,
-                          gradient: CustomAuthService().avatar == null ? LinearGradient(
-                            colors: [theme.accentColor, theme.accentColor.withOpacity(0.6)],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ) : null,
-                          boxShadow: [
-                            BoxShadow(color: theme.accentColor.withOpacity(0.3), blurRadius: 20, spreadRadius: 5)
-                          ],
-                        ),
-                        child: CustomAuthService().avatar == null 
-                           ? Icon(Icons.person, size: 64, color: Colors.black)
-                           : null,
-                      ),
-                    ),
+                    child: CustomAvatar(size: 100),
                   ),
                   if (CustomAuthService().userId == "offline")
                      Padding(
                        padding: const EdgeInsets.only(top: 8.0),
                        child: Text("Login to upload avatar", style: TextStyle(color: Colors.white38, fontSize: 10)),
-                     ),
-                  SizedBox(height: 20),
-                  Text(CustomAuthService().username ?? "Player One", style: TextStyle(color: Colors.white, fontSize: 25, fontWeight: FontWeight.w900, letterSpacing: 1)),
+                      ),
+                  
+                  // Rank Tier Badge (NEW)
                   Container(
-                    margin: EdgeInsets.only(top: 8),
-                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                    margin: EdgeInsets.only(top: 12),
+                    padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
                     decoration: BoxDecoration(
-                      color: Color(_levelInfo['color'] as int).withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: Color(_levelInfo['color'] as int).withOpacity(0.4)),
+                      gradient: LinearGradient(
+                        colors: [Colors.blueAccent, Colors.blueAccent.withOpacity(0.6)],
+                      ),
+                      borderRadius: BorderRadius.circular(25),
+                      boxShadow: [
+                        BoxShadow(color: Colors.blueAccent.withOpacity(0.3), blurRadius: 10, offset: Offset(0, 4))
+                      ],
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.shield, color: Color(_levelInfo['color'] as int), size: 14),
-                        SizedBox(width: 6),
+                        Icon(Icons.shield_rounded, color: Colors.white, size: 18),
+                        SizedBox(width: 8),
                         Text(
-                          "LV.${_levelInfo['level']} ${(_levelInfo['title'] as String).toUpperCase()}",
-                          style: TextStyle(color: Color(_levelInfo['color'] as int), fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 2)
+                          _rankTier.toUpperCase(),
+                          style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w900, letterSpacing: 1.5)
                         ),
                       ],
                     ),
@@ -188,8 +167,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       childAspectRatio: 1.1,
                       children: [
                         _buildModernStatCard("Total Coins", "$_coins", Icons.monetization_on, Colors.amber),
+                        _buildModernStatCard("Competitive MMR", "$_mmr", Icons.analytics_rounded, Colors.blueAccent),
                         _buildModernStatCard("Wins", "$_totalWins", Icons.emoji_events, Colors.greenAccent),
-                        _buildModernStatCard("Played", "$_totalGames", Icons.casino, Colors.blueAccent),
                         _buildModernStatCard("Win Rate", "${_winRate.toStringAsFixed(1)}%", Icons.pie_chart, Colors.purpleAccent),
                       ],
                     ),

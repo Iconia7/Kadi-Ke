@@ -32,8 +32,14 @@ class DatabaseService {
         wins INTEGER DEFAULT 0,
         games_played INTEGER DEFAULT 0,
         coins INTEGER DEFAULT 0,
+        xp INTEGER DEFAULT 0,
+        mmr INTEGER DEFAULT 1000,
+        rank_tier TEXT DEFAULT 'Bronze I',
+        is_premium INTEGER DEFAULT 0,
+        is_ultra INTEGER DEFAULT 0,
         created_at TEXT NOT NULL,
         avatar TEXT,
+        selected_frame TEXT,
         resetToken TEXT,
         resetTokenExpiry TEXT
       )
@@ -146,6 +152,11 @@ class DatabaseService {
     try { _db.execute('ALTER TABLE clan_members ADD COLUMN seasonPoints INTEGER DEFAULT 0'); } catch (_) {}
     try { _db.execute('ALTER TABLE clan_members ADD COLUMN totalPoints INTEGER DEFAULT 0'); } catch (_) {}
     try { _db.execute('ALTER TABLE clans ADD COLUMN entryFee INTEGER DEFAULT 0'); } catch (_) {}
+    try { _db.execute('ALTER TABLE users ADD COLUMN mmr INTEGER DEFAULT 1000'); } catch (_) {}
+    try { _db.execute('ALTER TABLE users ADD COLUMN rank_tier TEXT DEFAULT "Bronze I"'); } catch (_) {}
+    try { _db.execute('ALTER TABLE users ADD COLUMN is_premium INTEGER DEFAULT 0'); } catch (_) {}
+    try { _db.execute('ALTER TABLE users ADD COLUMN is_ultra INTEGER DEFAULT 0'); } catch (_) {}
+    try { _db.execute('ALTER TABLE users ADD COLUMN selected_frame TEXT'); } catch (_) {}
   }
 
   // --- Migration ---
@@ -155,8 +166,8 @@ class DatabaseService {
       usersData.forEach((username, data) {
         final id = data['id'];
         _db.execute('''
-          INSERT OR IGNORE INTO users (id, username, password, email, googleId, wins, games_played, coins, created_at, avatar, resetToken, resetTokenExpiry)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT OR IGNORE INTO users (id, username, password, email, googleId, wins, games_played, coins, created_at, avatar, selected_frame, resetToken, resetTokenExpiry)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', [
           id,
           username,
@@ -168,6 +179,7 @@ class DatabaseService {
           data['coins'] ?? 0,
           data['created_at'] ?? DateTime.now().toIso8601String(),
           data['avatar'],
+          data['selected_frame'],
           data['resetToken'],
           data['resetTokenExpiry']
         ]);
@@ -215,8 +227,8 @@ class DatabaseService {
 
   void saveUser(String username, Map<String, dynamic> userData) {
     _db.execute('''
-      INSERT OR REPLACE INTO users (id, username, password, email, googleId, wins, games_played, coins, created_at, avatar, resetToken, resetTokenExpiry)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT OR REPLACE INTO users (id, username, password, email, googleId, wins, games_played, coins, created_at, avatar, selected_frame, resetToken, resetTokenExpiry)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', [
       userData['id'],
       username,
@@ -228,6 +240,7 @@ class DatabaseService {
       userData['coins'],
       userData['created_at'],
       userData['avatar'],
+      userData['selected_frame'],
       userData['resetToken'],
       userData['resetTokenExpiry']
     ]);
@@ -247,6 +260,11 @@ class DatabaseService {
   void updateUsername(String oldUsername, String newUsername) {
     _db.execute('UPDATE users SET username = ? WHERE username = ?',
         [newUsername, oldUsername]);
+  }
+
+  void setPremiumStatus(String userId, bool isPremium, {bool isUltra = false}) {
+    _db.execute('UPDATE users SET is_premium = ?, is_ultra = ? WHERE id = ?', 
+        [isPremium ? 1 : 0, isUltra ? 1 : 0, userId]);
   }
 
   // --- Wallet & Progression ---
@@ -285,6 +303,10 @@ class DatabaseService {
 
   void incrementGamesPlayed(String userId) {
     _db.execute('UPDATE users SET games_played = games_played + 1 WHERE id = ?', [userId]);
+  }
+
+  void updateMMR(String userId, int mmrDelta, String newTier) {
+    _db.execute('UPDATE users SET mmr = mmr + ?, rank_tier = ? WHERE id = ?', [mmrDelta, newTier, userId]);
   }
   /// Adds points to a user's clan contributions and the clan's overall score
   void addClanPoints(String userId, int points) {

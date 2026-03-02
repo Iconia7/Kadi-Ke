@@ -47,25 +47,7 @@ class _ParticleOverlayState extends State<ParticleOverlay> with SingleTickerProv
 
   @override
   Widget build(BuildContext context) {
-    return IgnorePointer(
-      child: AnimatedBuilder(
-        animation: _controller,
-        builder: (context, child) {
-          final size = MediaQuery.of(context).size;
-          for (var p in _particles) {
-            p.y -= p.speedY; // Move up
-            if (p.y < -10) {
-              p.y = size.height + 10;
-              p.x = _random.nextDouble() * size.width;
-            }
-          }
-          return CustomPaint(
-            painter: ParticlePainter(particles: _particles, color: widget.color),
-            size: Size.infinite,
-          );
-        },
-      ),
-    );
+    return const SizedBox.shrink();
   }
 }
 

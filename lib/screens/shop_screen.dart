@@ -202,95 +202,162 @@ class _ShopScreenState extends State<ShopScreen>
   void _showCoinBundles() {
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => ClipRRect(
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
-            decoration: BoxDecoration(
-              color: _surface.withOpacity(0.95),
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-              border: Border.all(color: _amber.withOpacity(0.2)),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 40, height: 4,
-                  decoration: BoxDecoration(
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setModalState) => ClipRRect(
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(35)),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(24, 12, 24, 40),
+              decoration: BoxDecoration(
+                color: _bg.withOpacity(0.85),
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(35)),
+                border: Border.all(color: Colors.white.withOpacity(0.1), width: 1.5),
+                boxShadow: [
+                  BoxShadow(color: Colors.black.withOpacity(0.5), blurRadius: 40, spreadRadius: 10),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Handle
+                  Container(
+                    width: 50, height: 5,
+                    margin: const EdgeInsets.only(bottom: 25),
+                    decoration: BoxDecoration(
                       color: Colors.white24,
-                      borderRadius: BorderRadius.circular(2)),
-                ),
-                const SizedBox(height: 20),
-                Row(children: [
-                  const Icon(Icons.monetization_on_rounded, color: _amber, size: 20),
-                  const SizedBox(width: 8),
-                  const Text('GET COINS',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 3,
-                          fontSize: 14)),
-                ]),
-                const SizedBox(height: 20),
-                // Free coins via rewarded ad
-                _coinBundle(
-                  amount: 500,
-                  price: 'FREE',
-                  label: 'Watch an ad',
-                  icon: Icons.play_circle_fill_rounded,
-                  color: Colors.greenAccent,
-                  isFree: true,
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    AdService().showRewardedAd(
-                      onRewarded: () async {
-                        await _progressionService.addCoins(500);
-                        await _loadData();
-                        if (mounted) _showResult(true,
-                          title: '+500 Coins!',
-                          message: 'Thanks for watching! Coins added.',
-                          icon: Icons.monetization_on_rounded,
-                        );
-                      },
-                      onFailed: () {
-                        if (mounted) _showResult(false,
-                          title: 'Ad Not Ready',
-                          message: 'No ad available right now. Try again later.',
-                          icon: Icons.videocam_off_rounded,
-                        );
-                      },
-                    );
-                  },
-                ),
-                const SizedBox(height: 10),
-                _coinBundle(
-                  amount: 1000, price: 'KES 150', label: 'Best Starter',
-                  icon: Icons.bolt_rounded, color: Colors.lightBlueAccent,
-                  onTap: () { Navigator.pop(ctx); IAPService().purchaseCoins('kadi_coins_1000'); },
-                ),
-                const SizedBox(height: 10),
-                _coinBundle(
-                  amount: 2500, price: 'KES 250', label: 'Popular ⚡',
-                  icon: Icons.star_rounded, color: _amber,
-                  onTap: () { Navigator.pop(ctx); IAPService().purchaseCoins('kadi_coins_2500'); },
-                ),
-                const SizedBox(height: 10),
-                _coinBundle(
-                  amount: 5000, price: 'KES 500', label: 'Best Value 👑',
-                  icon: Icons.workspace_premium_rounded, color: Colors.purpleAccent,
-                  onTap: () { Navigator.pop(ctx); IAPService().purchaseCoins('kadi_coins_5000'); },
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  IAPService().available
-                      ? 'Secure payment via Google Play'
-                      : 'Google Play billing not available',
-                  style: const TextStyle(color: Colors.white30, fontSize: 11),
-                ),
-              ],
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  
+                  // Header
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: _amber.withOpacity(0.1),
+                          border: Border.all(color: _amber.withOpacity(0.3)),
+                        ),
+                        child: const Icon(Icons.stars_rounded, color: _amber, size: 28),
+                      ),
+                      const SizedBox(width: 15),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: const [
+                          Text('COIN MARKET',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 22,
+                                  letterSpacing: 1.2)),
+                          Text('Boost your balance instantly',
+                              style: TextStyle(color: Colors.white38, fontSize: 13)),
+                        ],
+                      ),
+                    ],
+                  ),
+                  
+                  const SizedBox(height: 30),
+
+                  // Free coins via rewarded ad
+                  _coinBundle(
+                    amount: 500,
+                    price: 'FREE',
+                    label: 'DAILY REWARD',
+                    icon: Icons.play_circle_outline_rounded,
+                    gradient: const [Color(0xFF00C853), Color(0xFF69F0AE)],
+                    isFree: true,
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      AdService().showRewardedAd(
+                        onRewarded: () async {
+                          await _progressionService.addCoins(500);
+                          await _loadData();
+                          if (mounted) _showResult(true,
+                            title: '+500 Coins!',
+                            message: 'Thanks for watching! Coins added.',
+                            icon: Icons.monetization_on_rounded,
+                          );
+                        },
+                        onFailed: () {
+                          if (mounted) _showResult(false,
+                            title: 'Ad Not Ready',
+                            message: 'No ad available right now. Try again later.',
+                            icon: Icons.videocam_off_rounded,
+                          );
+                        },
+                      );
+                    },
+                  ),
+                  
+                  const SizedBox(height: 15),
+                  
+                  _coinBundle(
+                    amount: 1000, 
+                    price: 'KES 200', 
+                    label: 'STARTER PACK',
+                    icon: Icons.offline_bolt_rounded, 
+                    gradient: const [Color(0xFF00B0FF), Color(0xFF00E5FF)],
+                    onTap: () { Navigator.pop(ctx); IAPService().purchaseCoins('kadi_coins_1000'); },
+                  ),
+                  
+                  const SizedBox(height: 15),
+                  
+                  _coinBundle(
+                    amount: 2500, 
+                    price: 'KES 300', 
+                    label: 'MOST POPULAR',
+                    icon: Icons.auto_awesome_rounded, 
+                    gradient: const [Color(0xFFFFB300), Color(0xFFFFD54F)],
+                    badge: "HOT DEAL 🔥",
+                    onTap: () { Navigator.pop(ctx); IAPService().purchaseCoins('kadi_coins_2500'); },
+                  ),
+                  
+                  const SizedBox(height: 15),
+                  
+                  _coinBundle(
+                    amount: 5000, 
+                    price: 'KES 600', 
+                    label: 'LEGEND BUNDLE',
+                    icon: Icons.workspace_premium_rounded, 
+                    gradient: const [Color(0xFFD500F9), Color(0xFFF50057)],
+                    badge: "BEST VALUE 👑",
+                    onTap: () { Navigator.pop(ctx); IAPService().purchaseCoins('kadi_coins_5000'); },
+                  ),
+                  
+                  const SizedBox(height: 25),
+                  
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(15),
+                      border: Border.all(color: Colors.white.withOpacity(0.05)),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          IAPService().available ? Icons.security_rounded : Icons.info_outline_rounded, 
+                          color: Colors.white30, size: 16
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          IAPService().available
+                              ? 'Secure encrypted Checkout via Google Play'
+                              : 'Service unavailable in your region',
+                          style: const TextStyle(color: Colors.white30, fontSize: 11, fontWeight: FontWeight.w500),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -303,42 +370,71 @@ class _ShopScreenState extends State<ShopScreen>
     required String price,
     required String label,
     required IconData icon,
-    required Color color,
+    required List<Color> gradient,
+    String? badge,
     bool isFree = false,
     VoidCallback? onTap,
   }) {
+    final primaryColor = gradient[0];
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
         decoration: BoxDecoration(
-          color: color.withOpacity(0.07),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: color.withOpacity(0.25)),
+          color: Colors.white.withOpacity(0.04),
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: Colors.white.withOpacity(0.08), width: 1),
         ),
         child: Row(
           children: [
-            Icon(icon, color: color, size: 22),
-            const SizedBox(width: 12),
-            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('$amount Coins',
-                  style: TextStyle(
-                      color: color, fontWeight: FontWeight.bold, fontSize: 15)),
-              Text(label, style: const TextStyle(color: Colors.white38, fontSize: 11)),
-            ]),
-            const Spacer(),
+            // Icon Container with gradient
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: isFree ? Colors.greenAccent.withOpacity(0.2) : color.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: color.withOpacity(0.5)),
+                gradient: LinearGradient(colors: [primaryColor.withOpacity(0.2), Colors.transparent]),
+                borderRadius: BorderRadius.circular(15),
+              ),
+              child: Icon(icon, color: primaryColor, size: 30),
+            ),
+            const SizedBox(width: 16),
+            
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (badge != null)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: primaryColor.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(5),
+                      ),
+                      child: Text(badge, style: TextStyle(color: primaryColor, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 0.5)),
+                    ),
+                  Text('$amount Coins',
+                      style: const TextStyle(
+                          color: Colors.white, fontWeight: FontWeight.w900, fontSize: 18)),
+                  Text(label, style: const TextStyle(color: Colors.white38, fontSize: 11, fontWeight: FontWeight.w600)),
+                ],
+              ),
+            ),
+            
+            // Purchase Button
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(colors: gradient),
+                borderRadius: BorderRadius.circular(15),
+                boxShadow: [
+                  BoxShadow(color: primaryColor.withOpacity(0.4), blurRadius: 10, offset: const Offset(0, 4)),
+                ],
               ),
               child: Text(price,
-                  style: TextStyle(
-                      color: isFree ? Colors.greenAccent : color,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13)),
+                  style: const TextStyle(
+                      color: Colors.black,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 14)),
             ),
           ],
         ),

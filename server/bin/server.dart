@@ -104,6 +104,7 @@ class Player {
   String? title;
   int xp = 0;
   String? clanTag;
+  String? frameId;
 
   // Game State
   bool hasSaidNikoKadi = false;
@@ -111,7 +112,7 @@ class Player {
   int books = 0;
 
   Player(this.id, this.name, this.avatar, this.socket,
-      {this.title, this.xp = 0, this.clanTag});
+      {this.title, this.xp = 0, this.clanTag, this.frameId});
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -120,6 +121,7 @@ class Player {
         'title': title,
         'xp': xp,
         'clanTag': clanTag,
+        'frameId': frameId,
         'cardCount': hand.length,
         'hasSaidKadi': hasSaidNikoKadi,
         'cardsPlayedThisTurn': cardsPlayedThisTurn,
@@ -457,7 +459,10 @@ class MultiGameServer {
               'wins': 0,
               'gamesPlayed': 0,
               'winRate': 0.0,
-              'avatar': null, // No avatar on register
+              'isPremium': false,
+              'isUltra': false,
+              'avatar': null,
+              'frameId': null,
               'token': _generateJwt(id, username)
             }),
             headers: _corsHeaders);
@@ -512,7 +517,10 @@ class MultiGameServer {
               'wins': wins,
               'gamesPlayed': gamesPlayed,
               'winRate': winRate,
+              'isPremium': (user['is_premium'] ?? 0) == 1,
+              'isUltra': (user['is_ultra'] ?? 0) == 1,
               'avatar': user['avatar'],
+              'frameId': user['selected_frame'],
               'token': _generateJwt(userId, username)
             }),
             headers: _corsHeaders);
@@ -806,14 +814,17 @@ class MultiGameServer {
         return {
           'username': entry.key,
           'wins': int.tryParse(entry.value['wins'].toString()) ?? 0,
+          'mmr': int.tryParse(entry.value['mmr'].toString()) ?? 1000,
+          'rankTier': entry.value['rank_tier'] ?? 'Bronze I',
           'userId': entry.value['id'],
           'avatar': entry.value['avatar'],
+          'frameId': entry.value['selected_frame'],
         };
       }).toList();
 
       userList.sort((a, b) => (b['wins'] as int).compareTo(a['wins'] as int));
 
-      var topUsers = userList.take(20).toList();
+      var topUsers = userList.take(100).toList();
       _log("Returning ${topUsers.length} users for leaderboard.");
 
       return Response.ok(jsonEncode({'leaderboard': topUsers}),
@@ -912,17 +923,27 @@ class MultiGameServer {
         _dbService.updateUser(user['id'], {'wins': newWins});
         _dbService.incrementCoins(user['id'], coinsEarned);
 
+        // --- MMR & Rank Logic ---
+        int currentMMR = int.tryParse(user['mmr']?.toString() ?? "1000") ?? 1000;
+        int mmrDelta = winsToAdd > 0 ? 25 : -15; // Base gain/loss
+        int newMMR = (currentMMR + mmrDelta).clamp(0, 9999);
+
+        String newTier = _calculateRankTier(newMMR);
+        _dbService.updateMMR(user['id'], mmrDelta, newTier);
+
         if (isLan && winsToAdd > 0) {
           _dbService.addClanPoints(user['id'], 3 * winsToAdd);
         }
 
-        // Re-fetch to get accurate gamesPlayed/coins
+        // Re-fetch to get accurate gamesPlayed/coins/mmr
         final updatedUser = _dbService.getUserById(user['id']);
         final int gamesPlayed = updatedUser?['games_played'] ?? 0;
         final int updatedCoins = updatedUser?['coins'] ?? 0;
+        final int updatedMMR = updatedUser?['mmr'] ?? 1000;
+        final String updatedTier = updatedUser?['rank_tier'] ?? 'Bronze I';
         final double winRate = gamesPlayed > 0 ? (newWins / gamesPlayed) : 0.0;
 
-        _log("Stats updated for $username: wins=$newWins, gamesPlayed=$gamesPlayed, coins=$updatedCoins");
+        _log("Stats updated for $username: wins=$newWins, mmr=$updatedMMR, tier=$updatedTier");
         return Response.ok(
             jsonEncode({
               'status': 'success',
@@ -930,7 +951,10 @@ class MultiGameServer {
               'gamesPlayed': gamesPlayed,
               'winRate': winRate,
               'coins': updatedCoins,
-              'coinsEarned': coinsEarned
+              'coinsEarned': coinsEarned,
+              'mmr': updatedMMR,
+              'rankTier': updatedTier,
+              'mmrDelta': mmrDelta,
             }),
             headers: _corsHeaders);
       } else {
@@ -964,6 +988,8 @@ class MultiGameServer {
         final int gamesPlayed = user['games_played'] ?? 0;
         final int coins = user['coins'] ?? 0;
         final int xp = user['xp'] ?? 0;
+        final int mmr = user['mmr'] ?? 1000;
+        final String rankTier = user['rank_tier'] ?? 'Bronze I';
         final double winRate = gamesPlayed > 0 ? (wins / gamesPlayed) : 0.0;
 
         return Response.ok(
@@ -974,6 +1000,11 @@ class MultiGameServer {
               'gamesPlayed': gamesPlayed,
               'winRate': winRate,
               'xp': xp,
+              'mmr': mmr,
+              'rankTier': rankTier,
+              'isPremium': (user['is_premium'] ?? 0) == 1,
+              'isUltra': (user['is_ultra'] ?? 0) == 1,
+              'frameId': user['selected_frame'],
             }),
             headers: _corsHeaders);
       } else {
@@ -1083,9 +1114,14 @@ class MultiGameServer {
             headers: _corsHeaders);
       }
 
-      // 1. Look up coin amount server-side (never trust the client)
-      final int? coins = _productCoins[productId];
-      if (coins == null) {
+      // 1. Look up coin amount or check if it's the pass
+      final bool isStandardPass = productId == 'kadi_pass_premium';
+      final bool isUltraPass = productId == 'kadi_pass_ultra';
+      final bool isPass = isStandardPass || isUltraPass;
+      
+      final int? coins = isPass ? 0 : _productCoins[productId];
+      
+      if (coins == null && !isPass) {
         return Response.badRequest(
             body: jsonEncode({'error': 'Unknown product'}),
             headers: _corsHeaders);
@@ -1096,7 +1132,7 @@ class MultiGameServer {
           'SELECT token FROM purchase_tokens WHERE token = ?', [purchaseToken]);
       if (existing.isNotEmpty) {
         return Response.ok(
-            jsonEncode({'status': 'already_credited', 'coins': coins}),
+            jsonEncode({'status': 'already_credited', 'coins': coins, 'isPass': isPass}),
             headers: _corsHeaders);
       }
 
@@ -1126,19 +1162,28 @@ class MultiGameServer {
         }
       }
 
-      // 4. Credit coins to user
-      _dbService.incrementCoins(userId, coins);
+      // 4. Grant entitlement: coins or premium pass
+      if (isPass) {
+        _dbService.setPremiumStatus(userId, true, isUltra: isUltraPass);
+        if (isUltraPass) {
+          _dbService.incrementXP(userId, 15000); // ~10 Levels jump
+          _log('IAP: Set ULTRA premium status + 15k XP for user $userId');
+        } else {
+          _log('IAP: Set premium status for user $userId (Battle Pass)');
+        }
+      } else {
+        _dbService.incrementCoins(userId, coins!);
+        _log('IAP: Credited $coins coins to user $userId');
+      }
 
       // 5. Record token so it can't be reused
       _dbService.db.execute(
         'INSERT INTO purchase_tokens (token, userId, productId, coinsAwarded, creditedAt) VALUES (?, ?, ?, ?, ?)',
-        [purchaseToken, userId, productId, coins, DateTime.now().toIso8601String()],
+        [purchaseToken, userId, productId, coins ?? 0, DateTime.now().toIso8601String()],
       );
 
-      _log('IAP: Credited $coins coins to user $userId for product $productId');
-
       return Response.ok(
-          jsonEncode({'status': 'success', 'coins': coins}),
+          jsonEncode({'status': 'success', 'coins': coins, 'isPass': isPass}),
           headers: _corsHeaders);
     } catch (e, stack) {
       _log('IAP Verify Error: $e\n$stack', level: 'ERROR');
@@ -1171,16 +1216,27 @@ class MultiGameServer {
             headers: _corsHeaders);
       }
 
-      if (_dbService.getUserByUsername(newUsername) != null) {
-        return Response.ok(jsonEncode({'error': 'Username already taken'}),
-            headers: _corsHeaders);
+      if (newUsername != null && newUsername != oldUsername) {
+        if (_dbService.getUserByUsername(newUsername) != null) {
+          return Response.ok(jsonEncode({'error': 'Username already taken'}),
+              headers: _corsHeaders);
+        }
+        _dbService.updateUsername(oldUsername, newUsername);
+        _log("Username updated successfully: $newUsername");
       }
 
-      _dbService.updateUsername(oldUsername, newUsername);
-      _log("Profile updated successfully: $newUsername");
+      final String? selectedFrame = data['selectedFrame'];
+      if (selectedFrame != null) {
+        _dbService.updateUser(userIdFromToken, {'selected_frame': selectedFrame});
+        _log("Selected frame updated for user $userIdFromToken: $selectedFrame");
+      }
 
       return Response.ok(
-          jsonEncode({'status': 'success', 'username': newUsername}),
+          jsonEncode({
+            'status': 'success',
+            'username': newUsername ?? oldUsername,
+            'selectedFrame': selectedFrame
+          }),
           headers: _corsHeaders);
     } catch (e, stack) {
       _log("Update Profile Error: $e\n$stack", level: 'ERROR');
@@ -1683,6 +1739,22 @@ class MultiGameServer {
         }
       }
     });
+  }
+
+  String _calculateRankTier(int mmr) {
+    if (mmr < 1100) return 'Bronze I';
+    if (mmr < 1200) return 'Bronze II';
+    if (mmr < 1300) return 'Bronze III';
+    if (mmr < 1400) return 'Silver I';
+    if (mmr < 1500) return 'Silver II';
+    if (mmr < 1600) return 'Silver III';
+    if (mmr < 1800) return 'Gold I';
+    if (mmr < 2000) return 'Gold II';
+    if (mmr < 2200) return 'Gold III';
+    if (mmr < 2500) return 'Diamond I';
+    if (mmr < 2800) return 'Diamond II';
+    if (mmr < 3200) return 'Diamond III';
+    return 'Legend 👑';
   }
 
   Future<void> _initGooglePlayApi() async {

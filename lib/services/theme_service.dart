@@ -24,6 +24,22 @@ class ThemeModel {
   });
 }
 
+class AvatarFrameModel {
+  final String id;
+  final String name;
+  final List<Color> gradientColors;
+  final Color glowColor;
+  final double borderWidth;
+
+  AvatarFrameModel({
+    required this.id,
+    required this.name,
+    required this.gradientColors,
+    required this.glowColor,
+    this.borderWidth = 3.0,
+  });
+}
+
 class CardSkinModel {
   final String id;
   final Color backGradientStart;
@@ -106,6 +122,29 @@ class TableThemes {
     fxColor: Color(0xFFE040FB).withOpacity(0.3),
   );
 
+  static final ThemeModel cyberTokyo = ThemeModel(
+    id: 'cyber_tokyo',
+    name: 'Cyber Tokyo',
+    gradientColors: [Color(0xFF001220), Color(0xFFF706CF).withOpacity(0.1)],
+    tableColor: Color(0xFF0F172A).withOpacity(0.8),
+    accentColor: Color(0xFF00F2FF),
+    cardBackColor: Color(0xFF1E293B),
+    bgmPath: 'synthwave_drive',
+    fxColor: Color(0xFFF706CF).withOpacity(0.4),
+  );
+
+  static final ThemeModel etherealPlane = ThemeModel(
+    id: 'ethereal_plane',
+    name: 'Ethereal Plane',
+    gradientColors: [Color(0xFFFFFFFF), Color(0xFFFFF176)],
+    tableColor: Color(0xFFFAFAFA).withOpacity(0.9),
+    accentColor: Colors.amber,
+    cardBackColor: Colors.white,
+    bgmPath: 'ocean_waves',
+    fxColor: Colors.amber.withOpacity(0.3),
+    textColor: Colors.blueGrey[900]!,
+  );
+
   static ThemeModel get defaultTheme => midnightElite;
 
   static ThemeModel getTheme(String id) {
@@ -115,8 +154,60 @@ class TableThemes {
       case 'sunset': return sunset;
       case 'blood_moon': return bloodMoon;
       case 'galaxy': return galaxy;
+      case 'cyber_tokyo': return cyberTokyo;
+      case 'ethereal_plane': return etherealPlane;
       case 'midnight_elite':
       default: return midnightElite;
+    }
+  }
+}
+
+class AvatarFrames {
+  static final AvatarFrameModel defaultFrame = AvatarFrameModel(
+    id: 'default',
+    name: 'Standard',
+    gradientColors: [Colors.white24, Colors.white12],
+    glowColor: Colors.transparent,
+    borderWidth: 1.0,
+  );
+
+  static final AvatarFrameModel neonFlare = AvatarFrameModel(
+    id: 'neon_flare',
+    name: 'Neon Flare',
+    gradientColors: [Color(0xFF00F2FF), Color(0xFFF706CF)],
+    glowColor: Color(0xFF00F2FF).withOpacity(0.5),
+  );
+
+  static final AvatarFrameModel royalGold = AvatarFrameModel(
+    id: 'royal_gold',
+    name: 'Royal Gold',
+    gradientColors: [Color(0xFFFFD700), Color(0xFFFFA000)],
+    glowColor: Color(0xFFFFD700).withOpacity(0.4),
+    borderWidth: 4.0,
+  );
+
+  static final AvatarFrameModel obsidianVoid = AvatarFrameModel(
+    id: 'obsidian_void',
+    name: 'Obsidian Void',
+    gradientColors: [Color(0xFF000000), Color(0xFF4A148C)],
+    glowColor: Color(0xFF4A148C).withOpacity(0.6),
+    borderWidth: 5.0,
+  );
+
+  static final AvatarFrameModel galaxyPulse = AvatarFrameModel(
+    id: 'galaxy_pulse',
+    name: 'Galaxy Pulse',
+    gradientColors: [Color(0xFF6A1B9A), Color(0xFF00E5FF)],
+    glowColor: Color(0xFF00E5FF).withOpacity(0.4),
+  );
+
+  static AvatarFrameModel getFrame(String id) {
+    switch (id) {
+      case 'neon_flare': return neonFlare;
+      case 'royal_gold': return royalGold;
+      case 'obsidian_void': return obsidianVoid;
+      case 'galaxy_pulse': return galaxyPulse;
+      default: return defaultFrame;
     }
   }
 }
@@ -142,6 +233,14 @@ class CardSkins {
         return CardSkinModel(id: 'arctic', backGradientStart: Color(0xFF80DEEA), backGradientEnd: Color(0xFF0D47A1));
       case 'golden_kadi':
         return CardSkinModel(id: 'golden_kadi', backGradientStart: Color(0xFFFFD700), backGradientEnd: Color(0xFFFF6F00));
+      case 'obsidian_shard':
+        return CardSkinModel(id: 'obsidian_shard', backGradientStart: Color(0xFF000000), backGradientEnd: Color(0xFF4A148C));
+      case 'holographic_chrome':
+        return CardSkinModel(id: 'holographic_chrome', backGradientStart: Color(0xFFE0E0E0), backGradientEnd: Color(0xFF00E5FF));
+      case 'inferno':
+        return CardSkinModel(id: 'inferno', backGradientStart: Color(0xFF3E0000), backGradientEnd: Color(0xFFFF3D00));
+      case 'nebula_swirl':
+        return CardSkinModel(id: 'nebula_swirl', backGradientStart: Color(0xFF000428), backGradientEnd: Color(0xFF004E92));
       case 'neon_geometric':
       default:
         return CardSkinModel(id: 'neon_geometric', backGradientStart: Color(0xFF2E3192), backGradientEnd: Color(0xFF1BFFFF));

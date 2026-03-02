@@ -27,6 +27,8 @@ import '../services/go_fish_engine.dart';
 import '../services/ad_service.dart';
 import '../widgets/flying_emoji.dart'; // Add Import
 import '../widgets/particle_overlay.dart';
+import '../widgets/vfx_overlay.dart';
+import '../widgets/custom_avatar.dart';
 
 class GameScreen extends StatefulWidget {
   final bool isHost;
@@ -63,6 +65,7 @@ class PlayerInfo {
   final String? title;
   final int xp;
   final String? clanTag;
+  final String? frameId;
 
   PlayerInfo({
     required this.id, 
@@ -72,6 +75,7 @@ class PlayerInfo {
     this.title, 
     this.xp = 0,
     this.clanTag,
+    this.frameId,
   });
 }
 
@@ -83,6 +87,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   StreamSubscription? _gameSubscription;
   StreamSubscription? _statusSubscription; // New subscription
   dynamic _localEngine;
+
+  final GlobalKey<VfxOverlayState> _vfxKey = GlobalKey<VfxOverlayState>();
   
   List<PlayerInfo> _players = [];
 
@@ -131,7 +137,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   // Game State
   final TextEditingController _chatController = TextEditingController();
   bool _hasUnreadMessages = false; 
-  Map<int, List<String>> _activeEmotes = {}; // Maps Player Index to list of active emoji strings 
+  List<Map<String, dynamic>> _risingEmotes = []; // Global emojis that rise through the screen
   Map<int, String> _activeChatBubbles = {}; // NEW: Chat Bubbles
   Timer? _chatBubbleTimer;
   String? _lastSystemMessage;
@@ -159,6 +165,22 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   bool get _isOnline => widget.hostAddress == 'online';
   bool get _isLan => widget.hostAddress != 'offline' && widget.hostAddress != 'online';
   bool get _isGoFish => widget.gameType == 'gofish';
+
+  String _calculateLocalTier(int mmr) {
+    if (mmr < 1100) return 'Bronze I';
+    if (mmr < 1200) return 'Bronze II';
+    if (mmr < 1300) return 'Bronze III';
+    if (mmr < 1400) return 'Silver I';
+    if (mmr < 1500) return 'Silver II';
+    if (mmr < 1600) return 'Silver III';
+    if (mmr < 1800) return 'Gold I';
+    if (mmr < 2000) return 'Gold II';
+    if (mmr < 2200) return 'Gold III';
+    if (mmr < 2500) return 'Diamond I';
+    if (mmr < 2800) return 'Diamond II';
+    if (mmr < 3200) return 'Diamond III';
+    return 'Legend 👑';
+  }
 
   @override
   void initState() {
@@ -593,8 +615,18 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       });
     } 
     else if (type == 'UPDATE_TABLE') {
-      setState(() => _topDiscardCard = CardModel.fromJson(data['data']));
+      final card = CardModel.fromJson(data['data']);
+      setState(() => _topDiscardCard = card);
       SoundService.play('place'); 
+
+      // TRIGGER VFX (NEW)
+      if (['2', '3', 'joker'].contains(card.rank)) {
+        _vfxKey.currentState?.playBombExplosion();
+        HapticFeedback.vibrate(); 
+      } else if (card.rank == 'ace') {
+        _vfxKey.currentState?.playLightningFlash();
+        HapticFeedback.mediumImpact();
+      }
     }
     else if (type == 'GO_FISH_STATE') {
       setState(() => _playerBooks = List<int>.from(data['data']['books']));
@@ -783,6 +815,15 @@ bool _validateLocalMove(CardModel card) {
 
     try {
       await _cardThrowController.forward();
+      
+      // TRIGGER VFX (Local feedback)
+      if (['2', '3', 'joker'].contains(card.rank)) {
+        _vfxKey.currentState?.playBombExplosion();
+        HapticFeedback.vibrate(); 
+      } else if (card.rank == 'ace') {
+        _vfxKey.currentState?.playLightningFlash();
+        HapticFeedback.mediumImpact();
+      }
     } catch (e) {
       print("Animation error: $e");
     } finally {
@@ -932,7 +973,9 @@ bool _validateLocalMove(CardModel card) {
           ),
         );
       },
-      child: Stack(
+      child: VfxOverlay(
+        key: _vfxKey,
+        child: Stack(
           children: [ // Content Stack
             Positioned.fill(
               child: Opacity(
@@ -968,7 +1011,8 @@ bool _validateLocalMove(CardModel card) {
             Align(alignment: Alignment.topCenter, child: ConfettiWidget(confettiController: _confettiController, shouldLoop: false)),
           ],
         ),
-      );
+      ),
+    );
   }
 
   Widget _buildChatButton(ThemeModel theme) {
@@ -1077,25 +1121,11 @@ bool _validateLocalMove(CardModel card) {
                                   child: Column(
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
-                                      Container(
-                                        padding: const EdgeInsets.all(2),
-                                        decoration: BoxDecoration(
-                                           shape: BoxShape.circle, 
-                                           border: Border.all(
-                                             color: isSelected ? theme.accentColor : (isTurn ? Colors.green : Colors.white24), 
-                                             width: 2
-                                           )
-                                        ),
-                                        child: CircleAvatar(
-                                          radius: 14, 
-                                          backgroundColor: Colors.black38,
-                                          backgroundImage: player.avatar != null 
-                                             ? NetworkImage('${CustomAuthService().baseUrl}${player.avatar}')
-                                             : null,
-                                          child: player.avatar == null 
-                                             ? const Icon(Icons.person, size: 16, color: Colors.white70)
-                                             : null,
-                                        ),
+                                      CustomAvatar(
+                                        size: 32,
+                                        overrideAvatarUrl: player.avatar,
+                                        overrideFrameId: player.frameId,
+                                        showGlow: isTurn,
                                       ),
                                       Row(
                                          mainAxisSize: MainAxisSize.min,
@@ -1470,6 +1500,8 @@ Future<void> _handleGameOver(dynamic data) async {
     
     int coinsEarned = 0;
     int xpEarned = 0;
+    int mmrDelta = 0;
+    String newTier = ProgressionService().getRankTier();
 
     // 1. Handle Stats & Coins
     if (didIWin) {
@@ -1479,32 +1511,28 @@ Future<void> _handleGameOver(dynamic data) async {
       // Record win LOCALLY so Profile screen shows it
       await ProgressionService().recordGameResult(true);
       
-      // Update leaderboard stats for ALL game modes (solo, LAN, online)
-      // FIX: Only update here for offline. Online is handled by server.
+      // --- MMR Update (NEW) ---
+      // For Offline/LAN, we simulate the server's gain/loss
       if (!_isOnline) {
-         await VPSGameService().updateStats(wins: 1, isLan: _isLan);
+         int currentMMR = ProgressionService().getMMR();
+         mmrDelta = didIWin ? 25 : -15;
+         int newMMR = (currentMMR + mmrDelta).clamp(0, 9999);
+         // Local simulation of tier mapping (same as server)
+         newTier = _calculateLocalTier(newMMR);
+         await ProgressionService().updateMMRLocal(newMMR, newTier);
+         
+         await VPSGameService().updateStats(wins: didIWin ? 1 : 0, isLan: _isLan);
+      } else {
+         // Online stats are updated by server, but we should have received the 
+         // final updated values in the GAME_OVER message if possible.
+         // For now, we use a default delta for the UI if the server didn't provide one.
+         mmrDelta = data is Map ? (data['mmrDelta'] ?? (didIWin ? 25 : -15)) : (didIWin ? 25 : -15);
+         if (data is Map && data['newMMR'] != null) {
+            await ProgressionService().updateMMRLocal(data['newMMR'], data['newTier'] ?? 'Bronze I');
+            newTier = data['newTier'] ?? 'Bronze I';
+         }
       }
-      
-      if (_isOnline && _entryFee > 0) {
-         // Winner takes the WHOLE pot (based on starting count)
-         int winnerCount = _startingPlayerCount > 0 ? _startingPlayerCount : _players.length;
-         int winnings = _entryFee * winnerCount;
-         coinsEarned += winnings; // Add pot on top of base
-         _showAchievementSnackbar("Won pot of $winnings Coins!");
-      }
-      
-      await ProgressionService().addCoins(coinsEarned);
-      await ProgressionService().addXP(xpEarned);
-    } else {
-      coinsEarned = 25; // Consolation reward
-      xpEarned = 10;
-      await ProgressionService().recordGameResult(false);
-      
-      // Update stats for offline/LAN loss
-      if (!_isOnline) {
-         await VPSGameService().updateStats(wins: 0, isLan: _isLan);
-      }
-      
+
       await ProgressionService().addCoins(coinsEarned);
       await ProgressionService().addXP(xpEarned);
     }
@@ -1544,80 +1572,166 @@ Future<void> _handleGameOver(dynamic data) async {
     // 2. Show Dialog
     showDialog(
       context: context,
-      barrierDismissible: false, // Force user to click a button
-      builder: (context) => Dialog(
-        backgroundColor: Colors.transparent,
-        insetPadding: EdgeInsets.all(20),
-        child: Stack(
-          alignment: Alignment.topCenter,
-          clipBehavior: Clip.none,
-          children: [
-            // --- MAIN CARD ---
-            Container(
-              width: double.infinity,
-              height: 440, // Slightly taller
-              padding: EdgeInsets.fromLTRB(20, 60, 20, 20),
-              decoration: BoxDecoration(
-                 color: Color(0xFF1E293B),
-                 borderRadius: BorderRadius.circular(24),
-                 boxShadow: [
-                    BoxShadow(color: Colors.black45, blurRadius: 40, offset: Offset(0, 10))
-                 ],
-                 border: Border.all(
-                    color: didIWin ? Colors.amber.withOpacity(0.5) : Colors.white10,
-                    width: 2
-                 )
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                   Text(
-                     didIWin ? "VICTORY!" : "DEFEAT",
-                     style: TextStyle(
-                        fontSize: 36,
-                        fontWeight: FontWeight.w900,
-                        color: didIWin ? Colors.amber : Colors.grey[400],
+      barrierDismissible: false,
+      builder: (context) => BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+        child: Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Stack(
+            alignment: Alignment.topCenter,
+            clipBehavior: Clip.none,
+            children: [
+              // --- GLASS CARD ---
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(24, 64, 24, 24),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      const Color(0xFF1E293B).withOpacity(0.9),
+                      const Color(0xFF0F172A).withOpacity(0.95),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(32),
+                  boxShadow: [
+                    BoxShadow(
+                      color: didIWin 
+                        ? Colors.amber.withOpacity(0.15) 
+                        : Colors.black.withOpacity(0.5),
+                      blurRadius: 40,
+                      offset: const Offset(0, 16),
+                    )
+                  ],
+                  border: Border.all(
+                    color: didIWin 
+                      ? Colors.amber.withOpacity(0.3) 
+                      : Colors.white.withOpacity(0.1),
+                    width: 1.5,
+                  ),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ShaderMask(
+                      shaderCallback: (bounds) => LinearGradient(
+                        colors: didIWin 
+                          ? [Colors.amber, Colors.orangeAccent, Colors.yellow] 
+                          : [Colors.grey.shade300, Colors.grey.shade500],
+                      ).createShader(bounds),
+                      child: Text(
+                        didIWin ? "VICTORY" : "DEFEAT",
+                        style: const TextStyle(
+                          fontSize: 44,
+                          fontWeight: FontWeight.w900,
+                          color: Colors.white,
+                          letterSpacing: 4,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      didIWin ? "YOU DOMINATED THE TABLE" : "THE CARDS WEREN'T IN YOUR FAVOR",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.4),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
                         letterSpacing: 2,
-                        shadows: [
-                          if (didIWin) Shadow(color: Colors.amberAccent.withOpacity(0.5), blurRadius: 20)
-                        ]
-                     ),
-                   ),
-                   SizedBox(height: 10),
-                   Text(
-                     didIWin ? "YOU DOMINATED THE TABLE!" : "BETTER LUCK NEXT TIME.",
-                     style: TextStyle(color: Colors.white38, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.5),
-                   ),
-                   SizedBox(height: 30),
-                   
-                   // REWARDS
-                   Container(
-                      padding: EdgeInsets.all(20),
+                      ),
+                    ),
+                    const SizedBox(height: 32),
+                    
+                    // REWARDS SECTION
+                    Container(
+                      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
                       decoration: BoxDecoration(
-                         color: Colors.black45,
-                         borderRadius: BorderRadius.circular(20),
-                         border: Border.all(color: Colors.white10)
+                        color: Colors.white.withOpacity(0.03),
+                        borderRadius: BorderRadius.circular(24),
+                        border: Border.all(color: Colors.white.withOpacity(0.05)),
                       ),
                       child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        mainAxisAlignment: MainAxisAlignment.spaceAround,
                         children: [
-                           _buildRewardItem(Icons.emoji_events, "${didIWin ? 1 : 0}", "WINS"),
-                           _buildRewardItem(Icons.monetization_on, "$coinsEarned", "COINS"),
-                           _buildRewardItem(Icons.star, "$xpEarned", "XP"),
-                        ]
-                      )
-                   ),
-                   
+                          _buildRewardItem(Icons.emoji_events_outlined, "${didIWin ? 1 : 0}", "WINS"),
+                          _buildRewardItem(Icons.monetization_on_outlined, "$coinsEarned", "COINS"),
+                          _buildRewardItem(Icons.star_outline_rounded, "$xpEarned", "XP"),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // RANK PROGRESS (NEW)
+                    Container(
+                      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                      decoration: BoxDecoration(
+                        color: Colors.blueAccent.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: Colors.blueAccent.withOpacity(0.2)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.shield_rounded, color: Colors.blueAccent, size: 24),
+                          SizedBox(width: 12),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(newTier.toUpperCase(), style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                              Text("RANK PROGRESS", style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.bold)),
+                            ],
+                          ),
+                          Spacer(),
+                          Text(
+                            "${mmrDelta > 0 ? '+' : ''}$mmrDelta MMR",
+                            style: TextStyle(
+                              color: mmrDelta > 0 ? Colors.greenAccent : Colors.redAccent,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 14,
+                            )
+                          ),
+                        ],
+                      ),
+                    ),
+                    
                     if (didIWin) ...[
-                      SizedBox(height: 16),
+                      const SizedBox(height: 24),
                       StatefulBuilder(
                         builder: (context, setDialogState) {
                           bool rewarded = false;
-                          return Column(
-                            children: [
-                              if (!rewarded)
-                                Container(
+                          return AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 300),
+                            child: rewarded
+                              ? Container(
+                                  padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 24),
+                                  decoration: BoxDecoration(
+                                    color: Colors.greenAccent.withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(16),
+                                    border: Border.all(color: Colors.greenAccent.withOpacity(0.3)),
+                                  ),
+                                  child: const Text(
+                                    "✅ REWARDS DOUBLED!",
+                                    style: TextStyle(
+                                      color: Colors.greenAccent,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                )
+                              : Container(
                                   width: double.infinity,
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(16),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.amber.withOpacity(0.2),
+                                        blurRadius: 12,
+                                        offset: const Offset(0, 4),
+                                      )
+                                    ],
+                                  ),
                                   child: ElevatedButton.icon(
                                     onPressed: () {
                                       AdService().showRewardedAd(
@@ -1634,135 +1748,125 @@ Future<void> _handleGameOver(dynamic data) async {
                                         },
                                       );
                                     },
-                                    icon: Icon(Icons.play_circle_fill, color: Colors.amber),
-                                    label: Text("DOUBLE REWARDS", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1)),
+                                    icon: const Icon(Icons.bolt_rounded, color: Colors.black, size: 24),
+                                    label: const Text(
+                                      "DOUBLE REWARDS",
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w900,
+                                        letterSpacing: 1.5,
+                                        fontSize: 14,
+                                      ),
+                                    ),
                                     style: ElevatedButton.styleFrom(
-                                      backgroundColor: Colors.amber.withOpacity(0.15),
-                                      foregroundColor: Colors.amber,
-                                      side: BorderSide(color: Colors.amber.withOpacity(0.5)),
-                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                      padding: EdgeInsets.symmetric(vertical: 12),
+                                      backgroundColor: Colors.amber,
+                                      foregroundColor: Colors.black,
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                      padding: const EdgeInsets.symmetric(vertical: 16),
+                                      elevation: 0,
                                     ),
                                   ),
                                 ),
-                              if (rewarded)
-                                Text("✅ REWARDS DOUBLED!", style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 12)),
-                              
-                              SizedBox(height: 12),
-                              OutlinedButton.icon(
-                                onPressed: () {
-                                  CustomToast.show(context, "Link Copied to Clipboard! 🔗");
-                                },
-                                icon: Icon(Icons.share, size: 16),
-                                label: Text("SHARE VICTORY", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: Colors.blueAccent,
-                                  side: BorderSide(color: Colors.blueAccent.withOpacity(0.5)),
-                                  shape: StadiumBorder()
-                                ),
-                              ),
-                            ],
                           );
-                        }
+                        },
                       ),
                     ],
 
-                   Spacer(),
-                   
-                   if (widget.isTournament)
-                     Row(
-                       children: [
-                         Expanded(
-                           child: ElevatedButton.icon(
-                             onPressed: () {
-                               Navigator.pop(context); // Close dialog
-                               Navigator.pop(context, didIWin ? 'WON' : 'LOST'); // Return result
-                             },
-                             icon: Icon(Icons.arrow_forward),
-                             label: Text(didIWin ? "NEXT MATCH" : "CONTINUE"),
-                             style: ElevatedButton.styleFrom(
-                               backgroundColor: didIWin ? Colors.green : Colors.grey[700],
-                               padding: EdgeInsets.symmetric(vertical: 12),
-                               shape: StadiumBorder(),
-                             ),
-                           ),
-                         ),
-                       ],
-                     )
-                   else
-                     Row(
-                      children: [
-                        Expanded(
-                          child: ElevatedButton.icon(
-                          onPressed: () {
-                             Navigator.pop(context); // Close Dialog
-                             Navigator.pop(context); // Back to Home
-                          },
-                          icon: Icon(Icons.home),
-                          label: Text("HOME"),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.white10,
-                            padding: EdgeInsets.symmetric(vertical: 12),
-                            shape: StadiumBorder()
+                    const SizedBox(height: 32),
+                    
+                    if (widget.isTournament)
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          Navigator.pop(context, didIWin ? 'WON' : 'LOST');
+                        },
+                        icon: const Icon(Icons.arrow_forward_rounded),
+                        label: Text(didIWin ? "NEXT MATCH" : "CONTINUE"),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: didIWin ? Colors.greenAccent.shade700 : Colors.white10,
+                          foregroundColor: Colors.white,
+                          minimumSize: const Size(double.infinity, 56),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                        ),
+                      )
+                    else
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () {
+                                Navigator.pop(context);
+                                Navigator.pop(context);
+                              },
+                              icon: const Icon(Icons.home_rounded),
+                              label: const Text("HOME"),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.white.withOpacity(0.7),
+                                side: BorderSide(color: Colors.white.withOpacity(0.1)),
+                                padding: const EdgeInsets.symmetric(vertical: 16),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                              ),
+                            ),
                           ),
-                        )),
-                        SizedBox(width: 12),
-                        Expanded(
-                          child: ElevatedButton.icon(
-                          onPressed: () {
-                             Navigator.pop(context); // Close Dialog
-                             // Restart logic
-                             if (widget.isHost || _isOffline) {        
-                               _startGame();
-                               // Notify others? Usually room persists.
-                             } else {
-                               // Guest waiting for host
-                               CustomToast.show(context, "Waiting for Host to restart...");
-                             }
-                          },
-                          icon: Icon(Icons.refresh),
-                          label: Text("PLAY AGAIN"),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: didIWin ? Colors.green : Colors.grey[700],
-                            padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                            shape: StadiumBorder()
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: () {
+                                Navigator.pop(context);
+                                if (widget.isHost || _isOffline) {        
+                                  _startGame();
+                                } else {
+                                  CustomToast.show(context, "Waiting for Host to restart...");
+                                }
+                              },
+                              icon: const Icon(Icons.refresh_rounded),
+                              label: const Text("REPLAY"),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: didIWin ? const Color(0xFF00E5FF) : Colors.white12,
+                                foregroundColor: didIWin ? Colors.black : Colors.white,
+                                padding: const EdgeInsets.symmetric(vertical: 16),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                                elevation: 0,
+                              ),
+                            ),
                           ),
-                        )),
-                      ],
-                    )
-                ],
-              ),
-            ),
-            
-            // --- TOP ICON (Trophy vs Sad Face) ---
-            Positioned(
-              top: -40,
-              child: Container(
-                padding: EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: LinearGradient(
-                    colors: didIWin 
-                      ? [Colors.amber, Colors.orange] 
-                      : [Colors.grey[700]!, Colors.grey[900]!]
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: didIWin ? Colors.amber.withOpacity(0.4) : Colors.black45, 
-                      blurRadius: 15, 
-                      offset: Offset(0, 5)
-                    )
+                        ],
+                      ),
                   ],
-                  border: Border.all(color: Colors.white24, width: 4)
-                ),
-                child: Icon(
-                  didIWin ? Icons.emoji_events_rounded : Icons.sentiment_very_dissatisfied, 
-                  size: 40, 
-                  color: Colors.white
                 ),
               ),
-            ),
-          ],
+              
+              // --- FLOATING ICON ---
+              Positioned(
+                top: -32,
+                child: Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: didIWin 
+                        ? [Colors.amber, Colors.orangeAccent] 
+                        : [Colors.grey.shade700, Colors.grey.shade900],
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: didIWin ? Colors.amber.withOpacity(0.4) : Colors.black45, 
+                        blurRadius: 24, 
+                        offset: const Offset(0, 8),
+                      )
+                    ],
+                    border: Border.all(color: const Color(0xFF1E293B), width: 6),
+                  ),
+                  child: Icon(
+                    didIWin ? Icons.emoji_events_rounded : Icons.close_rounded, 
+                    size: 44, 
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1790,10 +1894,33 @@ Future<void> _handleGameOver(dynamic data) async {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, color: Colors.amber, size: 28),
-        SizedBox(height: 4),
-        Text(value, style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-        Text(label, style: TextStyle(color: Colors.white70, fontSize: 12)),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.05),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(icon, color: Colors.amber, size: 24),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          value,
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w900,
+            fontSize: 20,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.4),
+            fontSize: 10,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 1,
+          ),
+        ),
       ],
     );
   }
@@ -1947,60 +2074,44 @@ Future<void> _handleGameOver(dynamic data) async {
 
   // --- EMOTE LOGIC ---
   void _triggerEmote(int playerIndex, String emote) {
-      if (!_activeEmotes.containsKey(playerIndex)) _activeEmotes[playerIndex] = [];
+      final id = DateTime.now().microsecondsSinceEpoch.toString();
+      // Random X position across the screen, avoiding the very edges
+      final randomX = 40.0 + math.Random().nextDouble() * (MediaQuery.of(context).size.width - 80);
+      
       setState(() {
-         _activeEmotes[playerIndex]!.add(emote);
+         _risingEmotes.add({
+           'id': id,
+           'emoji': emote,
+           'x': randomX,
+         });
       });
-      SoundService.play('pop'); // Reuse a sound or add 'pop'
+      SoundService.play('pop');
   }
 
   Widget _buildEmoteLayer() {
      return IgnorePointer(
-       child: Stack(
-         children: [
-            // Opponents Emotes
-            Positioned(
-              top: 80,
-              left: 112, 
-              right: 16,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: opponents.map((player) {
-                   final emoteList = _activeEmotes[player.index] ?? [];
-                   return SizedBox(
-                     width: 80,
-                     child: Stack(
-                       alignment: Alignment.center,
-                       children: emoteList.map((e) => FlyingEmoji(
-                          emoji: e,
-                          onComplete: () {
-                             if (mounted) setState(() => _activeEmotes[player.index]?.remove(e));
-                          }
-                       )).toList(),
-                     ),
-                   );
-                }).toList(),
-              ),
-            ),
-            // My Emotes
-            Positioned(
-              bottom: 200,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: (_activeEmotes[_myPlayerId] ?? []).map((e) => FlyingEmoji(
-                    emoji: e,
-                    onComplete: () {
-                       if (mounted) setState(() => _activeEmotes[_myPlayerId]?.remove(e));
-                    }
-                  )).toList(),
-                ),
-              ),
-            ),
-         ],
-       )
+       child: SizedBox.expand(
+         child: Stack(
+           clipBehavior: Clip.none,
+           children: _risingEmotes.map((e) {
+             return Positioned(
+               left: e['x'],
+               bottom: 0, 
+               child: FlyingEmoji(
+                 key: ValueKey(e['id']),
+                 emoji: e['emoji'],
+                 onComplete: () {
+                   if (mounted) {
+                     setState(() {
+                       _risingEmotes.removeWhere((item) => item['id'] == e['id']);
+                     });
+                   }
+                 },
+               ),
+             );
+           }).toList(),
+         ),
+       ),
      );
   }
 
@@ -2448,18 +2559,33 @@ class FlyingEmoji extends StatefulWidget {
 class _FlyingEmojiState extends State<FlyingEmoji> with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<double> _opacity;
-  late Animation<double> _translate;
+  late Animation<double> _translateY;
+  late Animation<double> _sway;
+  late Animation<double> _scale;
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(vsync: this, duration: Duration(milliseconds: 1500));
-    _opacity = TweenSequence([
-      TweenSequenceItem(tween: Tween(begin: 0.0, end: 1.0), weight: 20),
-      TweenSequenceItem(tween: ConstantTween(1.0), weight: 60),
-      TweenSequenceItem(tween: Tween(begin: 1.0, end: 0.0), weight: 20),
+    _controller = AnimationController(vsync: this, duration: Duration(milliseconds: 3000));
+    
+    _opacity = TweenSequence<double>([
+      TweenSequenceItem<double>(tween: Tween<double>(begin: 0.0, end: 1.0), weight: 10),
+      TweenSequenceItem<double>(tween: ConstantTween<double>(1.0), weight: 70),
+      TweenSequenceItem<double>(tween: Tween<double>(begin: 1.0, end: 0.0), weight: 20),
     ]).animate(_controller);
-    _translate = Tween(begin: 0.0, end: -100.0).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
+
+    _translateY = Tween<double>(begin: 0.0, end: -1000.0).animate(CurvedAnimation(parent: _controller, curve: Curves.linear));
+    
+    _sway = TweenSequence<double>([
+      TweenSequenceItem<double>(tween: Tween<double>(begin: 0.0, end: 15.0).chain(CurveTween(curve: Curves.easeInOutSine)), weight: 25),
+      TweenSequenceItem<double>(tween: Tween<double>(begin: 15.0, end: -15.0).chain(CurveTween(curve: Curves.easeInOutSine)), weight: 50),
+      TweenSequenceItem<double>(tween: Tween<double>(begin: -15.0, end: 0.0).chain(CurveTween(curve: Curves.easeInOutSine)), weight: 25),
+    ]).animate(_controller);
+
+    _scale = TweenSequence<double>([
+      TweenSequenceItem<double>(tween: Tween<double>(begin: 0.5, end: 1.2).chain(CurveTween(curve: Curves.elasticOut)), weight: 20),
+      TweenSequenceItem<double>(tween: ConstantTween<double>(1.2), weight: 80),
+    ]).animate(_controller);
     
     _controller.forward().then((_) => widget.onComplete());
   }
@@ -2477,8 +2603,17 @@ class _FlyingEmojiState extends State<FlyingEmoji> with SingleTickerProviderStat
       builder: (c, w) => Opacity(
         opacity: _opacity.value,
         child: Transform.translate(
-          offset: Offset(0, _translate.value),
-          child: Text(widget.emoji, style: TextStyle(fontSize: 40)),
+          offset: Offset(_sway.value, _translateY.value),
+          child: Transform.scale(
+            scale: _scale.value,
+            child: Text(
+              widget.emoji, 
+              style: const TextStyle(
+                fontSize: 45,
+                shadows: [Shadow(color: Colors.black26, blurRadius: 10, offset: Offset(0, 4))],
+              )
+            ),
+          ),
         ),
       ),
     );
