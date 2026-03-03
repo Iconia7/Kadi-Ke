@@ -1094,6 +1094,24 @@ class MultiGameServer {
     'kadi_coins_5000': 5000,
   };
 
+  Future<Response> _handleBattlePassSeason(Request request) async {
+    try {
+      final seasonId = _dbService.getLatestSeasonId();
+      final season = _dbService.getBattlePassSeason(seasonId);
+      if (season == null) {
+        return Response.notFound(jsonEncode({'error': 'No active season'}), headers: _corsHeaders);
+      }
+      final tiers = _dbService.getBattlePassTiers(seasonId);
+      return Response.ok(
+        jsonEncode({'season': season, 'tiers': tiers}),
+        headers: _corsHeaders,
+      );
+    } catch (e) {
+      _log('Error in _handleBattlePassSeason: $e', level: 'ERROR');
+      return Response.internalServerError(body: jsonEncode({'error': 'Internal server error'}), headers: _corsHeaders);
+    }
+  }
+
   Future<Response> _handleIAPVerify(Request request) async {
     try {
       final token = request.headers['authorization']?.split(' ').last;
@@ -2375,6 +2393,10 @@ class MultiGameServer {
 
       // IAP Endpoint
       if (path == 'api/iap/verify') return _handleIAPVerify(request);
+
+      // Battle Pass Endpoint
+      if (path == 'api/battlepass/season') return _handleBattlePassSeason(request);
+
       if (path.startsWith('api/clans/chat_history')) {
         final token = request.headers['authorization']?.replaceFirst('Bearer ', '');
         final userId = _verifyJwt(token);

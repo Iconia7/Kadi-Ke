@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'dart:async';
 import '../services/battle_pass_service.dart';
 import '../services/theme_service.dart';
 import '../services/progression_service.dart';
@@ -14,11 +15,21 @@ class BattlePassScreen extends StatefulWidget {
 class _BattlePassScreenState extends State<BattlePassScreen> {
   final BattlePassService _bpService = BattlePassService();
   bool _isLoading = true;
+  late Timer _timer;
 
   @override
   void initState() {
     super.initState();
     _init();
+    _timer = Timer.periodic(const Duration(minutes: 1), (timer) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
   }
 
   Future<void> _init() async {
@@ -90,10 +101,13 @@ class _BattlePassScreenState extends State<BattlePassScreen> {
   Widget _buildHeader() {
     int level = _bpService.currentLevel;
     double progress = _bpService.progressToNextLevel;
+    int seasonId = _bpService.seasonId;
+    String countdown = _bpService.seasonCountdown;
 
     return Container(
       padding: EdgeInsets.symmetric(horizontal: 30),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -101,7 +115,7 @@ class _BattlePassScreenState extends State<BattlePassScreen> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text("SEASON 1", style: TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 2)),
+                  Text("SEASON $seasonId", style: TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 2)),
                   Text("KING OF KADI", style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900)),
                 ],
               ),
@@ -115,6 +129,25 @@ class _BattlePassScreenState extends State<BattlePassScreen> {
                 child: Text("$level", style: TextStyle(color: Colors.black, fontSize: 24, fontWeight: FontWeight.w900)),
               ),
             ],
+          ),
+          
+          // Season Countdown Badge
+          Container(
+            margin: const EdgeInsets.only(top: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: Colors.amber.withOpacity(0.2), width: 1),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.timer_outlined, color: Colors.amber, size: 12),
+                const SizedBox(width: 4),
+                Text(countdown, style: const TextStyle(color: Colors.amber, fontSize: 10, fontWeight: FontWeight.bold)),
+              ],
+            ),
           ),
           SizedBox(height: 20),
           ClipRRect(

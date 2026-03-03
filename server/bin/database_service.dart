@@ -157,7 +157,134 @@ class DatabaseService {
     try { _db.execute('ALTER TABLE users ADD COLUMN is_premium INTEGER DEFAULT 0'); } catch (_) {}
     try { _db.execute('ALTER TABLE users ADD COLUMN is_ultra INTEGER DEFAULT 0'); } catch (_) {}
     try { _db.execute('ALTER TABLE users ADD COLUMN selected_frame TEXT'); } catch (_) {}
+
+    // ---- Battle Pass Season Catalog ----
+    _db.execute('''
+      CREATE TABLE IF NOT EXISTS battle_pass_seasons (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        theme TEXT NOT NULL,
+        start_date TEXT NOT NULL,
+        end_date TEXT NOT NULL
+      )
+    ''');
+
+    _db.execute('''
+      CREATE TABLE IF NOT EXISTS battle_pass_tiers (
+        season_id INTEGER NOT NULL,
+        level INTEGER NOT NULL,
+        free_reward TEXT NOT NULL,
+        premium_reward TEXT NOT NULL,
+        xp_required INTEGER DEFAULT 1000,
+        free_type TEXT NOT NULL,
+        premium_type TEXT NOT NULL,
+        free_value INTEGER NOT NULL,
+        premium_value INTEGER NOT NULL,
+        PRIMARY KEY (season_id, level)
+      )
+    ''');
+
+    _seedSeason1IfNeeded();
   }
+
+  void _seedSeason1IfNeeded() {
+    final existing = _db.select('SELECT id FROM battle_pass_seasons WHERE id = 1');
+    if (existing.isNotEmpty) return;
+
+    final now = DateTime.now().toUtc();
+    final end = now.add(const Duration(days: 30));
+
+    _db.execute(
+      'INSERT INTO battle_pass_seasons (id, name, theme, start_date, end_date) VALUES (?, ?, ?, ?, ?)',
+      [1, 'King of Kadi', 'Season 1', now.toIso8601String(), end.toIso8601String()],
+    );
+
+    final tiers = [
+      [1, 'coins', 100, 'title', 1,  'Season 1 Founder'],
+      [2, 'coins', 100, 'coins', 500, '500 Coins'],
+      [3, 'coins', 100, 'xp',    500, '500 XP'],
+      [4, 'coins', 100, 'coins', 500, '500 Coins'],
+      [5, 'coins', 200, 'skin',  1,   'Obsidian Shard'],
+      [6, 'coins', 100, 'emote', 1,   'GG WP'],
+      [7, 'coins', 100, 'coins', 500, '500 Coins'],
+      [8, 'coins', 100, 'title', 1,   'Card Sharp'],
+      [9, 'coins', 100, 'coins', 1000,'1000 Coins'],
+      [10,'coins', 500, 'frame', 1,   'Neon Flare'],
+      [11,'coins', 100, 'xp',    500, '500 XP'],
+      [12,'coins', 100, 'title', 1,   'Duelist'],
+      [13,'coins', 100, 'coins', 500, '500 Coins'],
+      [14,'coins', 100, 'emote', 1,   'Thinking'],
+      [15,'coins', 300, 'skin',  1,   'Nebula Swirl'],
+      [16,'coins', 100, 'coins', 500, '500 Coins'],
+      [17,'coins', 100, 'title', 1,   'Strategist'],
+      [18,'coins', 100, 'xp',    500, '500 XP'],
+      [19,'coins', 100, 'coins', 1000,'1000 Coins'],
+      [20,'coins', 500, 'frame', 1,   'Galaxy Pulse'],
+      [21,'coins', 100, 'emote', 1,   'Salty'],
+      [22,'coins', 100, 'coins', 500, '500 Coins'],
+      [23,'coins', 100, 'title', 1,   'Kadi King'],
+      [24,'coins', 100, 'xp',    500, '500 XP'],
+      [25,'coins', 400, 'frame', 1,   'Royal Gold'],
+      [26,'coins', 100, 'coins', 500, '500 Coins'],
+      [27,'coins', 100, 'emote', 1,   'Mind Blown'],
+      [28,'coins', 100, 'xp',    500, '500 XP'],
+      [29,'coins', 100, 'title', 1,   'Untouchable'],
+      [30,'coins',1000, 'theme', 1,   'Galaxy'],
+    ];
+
+    for (var t in tiers) {
+      final level = t[0] as int;
+      final freeType = t[1] as String;
+      final freeVal = t[2] as int;
+      final premType = t[3] as String;
+      final premVal = t[4] as int;
+      final premName = t[5] as String;
+
+      final freeReward = freeType == 'coins' ? '${freeVal} Coins' : '${freeVal} ${freeType}';
+      final premiumReward = premType == 'coins' ? '${premVal} Coins' : '$premType: $premName';
+
+      _db.execute(
+        'INSERT INTO battle_pass_tiers VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [1, level, freeReward, premiumReward, 1000, freeType, premType, freeVal, premVal],
+      );
+    }
+
+    // Tiers 31-50 procedural
+    for (int i = 31; i <= 50; i++) {
+      final isSpecial = i % 5 == 0;
+      final isFinal = i == 50;
+      final freeVal = isFinal ? 2500 : (isSpecial ? 1000 : 200);
+      final premName = isFinal ? 'Hologram Chrome' : (i == 40 ? 'Obsidian Void' : (isSpecial ? 'Flex' : '1500 Coins'));
+      final premType = isFinal ? 'skin' : (i == 40 ? 'frame' : (isSpecial ? 'emote' : 'coins'));
+      final premVal = premType == 'coins' ? 1500 : 1;
+
+      _db.execute(
+        'INSERT INTO battle_pass_tiers VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [1, i, '${freeVal} Coins', premType == 'coins' ? '$premVal Coins' : '$premType: $premName',
+         1000, 'coins', premType, freeVal, premVal],
+      );
+    }
+  }
+
+  Map<String, dynamic>? getBattlePassSeason(int seasonId) {
+    final rows = _db.select('SELECT * FROM battle_pass_seasons WHERE id = ?', [seasonId]);
+    if (rows.isEmpty) return null;
+    return rows.first;
+  }
+
+  List<Map<String, dynamic>> getBattlePassTiers(int seasonId) {
+    return _db.select(
+      'SELECT * FROM battle_pass_tiers WHERE season_id = ? ORDER BY level ASC',
+      [seasonId],
+    ).map((r) => Map<String, dynamic>.from(r)).toList();
+  }
+
+  int getLatestSeasonId() {
+    final rows = _db.select('SELECT MAX(id) as maxId FROM battle_pass_seasons');
+    return (rows.first['maxId'] as int?) ?? 1;
+  }
+
+  // --- End battle pass helpers ---
 
   // --- Migration ---
   void migrateFromJSON(Map<String, dynamic> usersData) {
