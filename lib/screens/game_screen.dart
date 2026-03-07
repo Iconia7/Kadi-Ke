@@ -7,6 +7,7 @@ import 'dart:math' as math;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:confetti/confetti.dart';
 import 'package:in_app_update/in_app_update.dart'; 
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:card_game_ke/services/custom_auth_service.dart';
 import 'package:card_game_ke/services/vps_game_service.dart';
@@ -213,6 +214,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     _checkForUpdate();
     
     _initializeConnection();
+    _loadHintSettings();
     
     // Listen to Connection Status
     // Listen to Connection Status - VPS Service doesn't explicitly expose status stream yet
@@ -225,6 +227,15 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     _pulseController.repeat(reverse: true);
   }
 
+  Future<void> _loadHintSettings() async {
+     SharedPreferences prefs = await SharedPreferences.getInstance();
+     if (mounted) {
+       setState(() {
+         _hintsEnabled = prefs.getBool('hints_enabled') ?? true;
+       });
+     }
+  }
+
   // --- INTENSE MODE STATE ---
   bool _isIntenseMode = false;
   CardModel? _lastPlayedCard; // Track for Achievements
@@ -234,6 +245,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
   DateTime? _gameStartTime;
   bool _initialized = false;
+  bool _hintsEnabled = true;
 
   void _updateIntenseMode() {
      bool intense = false;
@@ -702,63 +714,97 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     }
   }
 
-bool _validateLocalMove(CardModel card) {
-    if (_topDiscardCard == null) return true;
+// Returns null if valid, or an error string if invalid
+  String? _validateLocalMove(CardModel card) {
+    if (_topDiscardCard == null) return null;
     
     // 1. Question Mode (Highest Priority: Strict Answer mode)
     if (_waitingForAnswer) {
        // Chain Q/8
        if (card.rank == 'queen' || card.rank == '8') {
-           return card.suit == _topDiscardCard!.suit || card.rank == _topDiscardCard!.rank;
+           if (card.suit == _topDiscardCard!.suit || card.rank == _topDiscardCard!.rank) return null;
+           return "Must chain with another ${card.rank.toUpperCase()} or match suit.";
        }
        // Answer (Must be non-power card matching suit)
        if (['4','5','6','7','9','10'].contains(card.rank)) {
-           return card.suit == _topDiscardCard!.suit;
+           if (card.suit == _topDiscardCard!.suit) return null;
+           return "Must answer with a non-power card of ${_topDiscardCard!.suit}.";
        }
-       return false; // NO BOMBS ALLOWED
+       return "Cannot play power cards while waiting for an answer."; // NO BOMBS ALLOWED
     }
 
     // 2. Bomb Override (Bomb can be played on ANY suit/rank/constraint/lock)
-    if (['2', '3', 'joker'].contains(card.rank)) return true;
+    if (['2', '3', 'joker'].contains(card.rank)) return null;
 
     // 3. Joker Constraint (Priority if not bomb)
     if (_jokerColorConstraint != null) {
       String cardColor = (card.suit == 'hearts' || card.suit == 'diamonds' || card.suit == 'red') ? 'red' : 'black';
-      return cardColor == _jokerColorConstraint;
+      if (cardColor == _jokerColorConstraint) return null;
+      return "Joker constraint active. Play a $_jokerColorConstraint card.";
     }
 
     // 4. Bomb Stack Defense
     if (_currentBombStack > 0) {
-      if (card.rank == 'ace') return true; 
-      if (card.rank == 'king') return true; 
-      if (card.rank == 'jack') return true; 
-      return false; 
+      if (card.rank == 'ace') return null; 
+      if (card.rank == 'king') return null; 
+      if (card.rank == 'jack') return null; 
+      return "Bomb active! Play an Ace, King, Jack, or another Bomb."; 
     }
 
     // 4. Ace Counter-Play
-    if (card.rank == 'ace') return true;
+    if (card.rank == 'ace') return null;
 
     // 5. Forced Suit/Rank (The Lock)
     if (_forcedRank != null && _forcedSuit != null) {
-       return card.rank == _forcedRank && card.suit == _forcedSuit;
+       if (card.rank == _forcedRank && card.suit == _forcedSuit) return null;
+       return "Locked to ${_forcedRank?.toUpperCase()} of ${_forcedSuit?.toUpperCase()}";
     }
-    if (_forcedRank != null) return card.rank == _forcedRank;
-    if (_forcedSuit != null) return card.suit == _forcedSuit;
+    if (_forcedRank != null) {
+       if (card.rank == _forcedRank) return null;
+       return "Locked to rank ${_forcedRank?.toUpperCase()}";
+    }
+    if (_forcedSuit != null) {
+       if (card.suit == _forcedSuit) return null;
+       return "Locked to suit ${_forcedSuit?.toUpperCase()}";
+    }
 
     // 6. Standard Play
-    if (card.suit == _topDiscardCard!.suit) return true;
-    if (card.rank == _topDiscardCard!.rank) return true;
+    if (card.suit == _topDiscardCard!.suit) return null;
+    if (card.rank == _topDiscardCard!.rank) return null;
     
-    return false;
+    return "Must match suit (${_topDiscardCard!.suit}) or rank (${_topDiscardCard!.rank}).";
+  }
+  
+  void _suggestHint() {
+    if (!_isMyTurn || _isGoFish) return;
+    
+    // Find the first valid card
+    CardModel? suggestedCard;
+    for (var card in _myHand) {
+       if (_validateLocalMove(card) == null) {
+          suggestedCard = card;
+          break;
+       }
+    }
+    
+    if (suggestedCard != null) {
+        String cardName = "${suggestedCard.rank.toUpperCase()} of ${suggestedCard.suit.toUpperCase()}";
+        CustomToast.show(context, "Hint: Try playing the $cardName");
+        HapticFeedback.lightImpact();
+    } else {
+        CustomToast.show(context, "Hint: No valid plays. You should pick a card.");
+        HapticFeedback.lightImpact();
+    }
   }
 
   void _playCardKadi(int index) async {
     if (_isAnimatingCard) return; 
     CardModel card = _myHand[index];
 
-    if (!_validateLocalMove(card)) {
+    String? validationError = _validateLocalMove(card);
+    if (validationError != null) {
        SoundService.play('error');
-       CustomToast.show(context, "Invalid move! Check Kadi rules.", isError: true);
+       CustomToast.show(context, validationError, isError: true);
        return;
     }
 
@@ -1334,7 +1380,7 @@ bool _validateLocalMove(CardModel card) {
                                // 3. Server/Engine Action (Immediate Broadcast)
                                if (_isOffline) {
                                   _localEngine?.sayNikoKadi();
-                                } else {
+                                 } else {
                                   VPSGameService().sendAction('SAY_NIKO_KADI', {
                                     'senderName': _myName,
                                   });
@@ -1352,6 +1398,21 @@ bool _validateLocalMove(CardModel card) {
                             child: Text("NIKO KADI", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                           ),
                         ),
+                        if (_hintsEnabled) ...[
+                          SizedBox(width: 8),
+                          GestureDetector(
+                            onTap: _suggestHint,
+                            child: Container(
+                              padding: EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: Colors.amber.withOpacity(0.2),
+                                shape: BoxShape.circle,
+                                border: Border.all(color: Colors.amber.withOpacity(0.5)),
+                              ),
+                              child: Icon(Icons.lightbulb, color: Colors.amber, size: 24),
+                            ),
+                          ),
+                        ],
                       ] else ...[
                         if (_selectedRankToAsk != null && _selectedOpponentIndex != null) ...[
                           Builder(builder: (context) {
@@ -1406,7 +1467,14 @@ bool _validateLocalMove(CardModel card) {
                           opacity: _isMyTurn ? 1.0 : 0.5,
                           child: Transform.translate(
                             offset: Offset(0, isSelected ? -20 : 0),
-                            child: PlayingCardWidget(suit: card.suit, rank: card.rank, width: 90, height: 130),
+                            child: PlayingCardWidget(
+                              suit: card.suit, 
+                              rank: card.rank, 
+                              width: 90, 
+                              height: 130,
+                              isValid: _isMyTurn && !_isGoFish ? _validateLocalMove(card) == null : false,
+                              hintsEnabled: _hintsEnabled,
+                            ),
                           ),
                         ),
                       ),

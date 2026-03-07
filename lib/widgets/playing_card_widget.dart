@@ -8,6 +8,8 @@ class PlayingCardWidget extends StatelessWidget {
   final bool isFaceDown;
   final double width;
   final double height;
+  final bool isValid;
+  final bool hintsEnabled;
 
   const PlayingCardWidget({
     required this.suit,
@@ -15,6 +17,8 @@ class PlayingCardWidget extends StatelessWidget {
     this.isFaceDown = false,
     this.width = 80, 
     this.height = 120,
+    this.isValid = false,
+    this.hintsEnabled = false,
   });
 
   String _getImagePath() {
@@ -41,12 +45,22 @@ class PlayingCardWidget extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(10.0),
+        border: hintsEnabled && isValid 
+            ? Border.all(color: Colors.amber, width: 3.0) 
+            : null,
         boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.5),
-            blurRadius: 6,
-            offset: Offset(0, 4),
-          ),
+          if (hintsEnabled && isValid)
+            BoxShadow(
+              color: Colors.amber.withOpacity(0.8),
+              blurRadius: 12,
+              spreadRadius: 2,
+            )
+          else
+            BoxShadow(
+              color: Colors.black.withOpacity(0.5),
+              blurRadius: 6,
+              offset: const Offset(0, 4),
+            ),
         ],
       ),
       child: ClipRRect(

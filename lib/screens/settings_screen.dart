@@ -27,6 +27,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _notifTournaments = false;
   bool _notifStreaks = true;
   
+  // Game Preferences
+  bool _hintsEnabled = true;
+  
   final TextEditingController _nameController = TextEditingController();
   bool _isEditingName = false;
   bool _isSaving = false;
@@ -38,7 +41,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     _isMuted = SoundService.isMuted;
     _notificationsEnabled = ProgressionService().areNotificationsEnabled();
+    _loadPreferences();
     _loadCurrentName();
+  }
+
+  Future<void> _loadPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (mounted) {
+      setState(() {
+        _hintsEnabled = prefs.getBool('hints_enabled') ?? true;
+        
+        _notifChallenges = prefs.getBool('notif_pref_challenges') ?? true;
+        _notifFriendActivity = prefs.getBool('notif_pref_friend_activity') ?? true;
+        _notifGameInvites = prefs.getBool('notif_pref_game_invites') ?? true;
+        _notifTournaments = prefs.getBool('notif_pref_tournaments') ?? false;
+        _notifStreaks = prefs.getBool('notif_pref_streaks') ?? true;
+      });
+    }
   }
 
   Future<void> _loadCurrentName() async {
@@ -132,6 +151,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
               (val) {
                 setState(() => _isMuted = val);
                 SoundService.toggleMute(val);
+              }
+            ),
+            const Divider(height: 1, color: Colors.white10),
+            _buildSwitchTile(
+              "Show Helpful Hints", 
+              _hintsEnabled, 
+              Icons.lightbulb_outline,
+              (val) async {
+                setState(() => _hintsEnabled = val);
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setBool('hints_enabled', val);
               }
             ),
             const Divider(height: 1, color: Colors.white10),
