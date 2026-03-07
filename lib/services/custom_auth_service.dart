@@ -188,6 +188,7 @@ class CustomAuthService {
         }
 
         _userId = data['userId'];
+        _username = data['username'];
         _token = data['token'];
         await ProgressionService().syncFromCloud(
           data['coins'] ?? 0,
@@ -278,7 +279,10 @@ class CustomAuthService {
   }
 
   Future<void> updateProfile(String newUsername) async {
-    if (_username == null) throw Exception('Not logged in');
+    if (_token == null) throw Exception('Not logged in');
+    
+    // We remove the `_username == null` check because users stuck as "Guest Player" 
+    // might have a null username locally, but we still want them to be able to set it.
     
     try {
       final response = await http.post(

@@ -258,14 +258,18 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildStakeOption(String title, int fee) {
+  Widget _buildStakeOption(String title, int fee, {bool isLan = false}) {
     return SimpleDialogOption(
        onPressed: () {
           Navigator.pop(context);
-          if (_selectedGameMode == 'gofish') {
-             _createOnlineRoom(fee, {}); // No rules for Go Fish
+          if (isLan) {
+             _createLANRoom(fee);
           } else {
-             _showRulesConfigDialog(fee); // Kadi Rules
+             if (_selectedGameMode == 'gofish') {
+                _createOnlineRoom(fee, {}); // No rules for Go Fish
+             } else {
+                _showRulesConfigDialog(fee); // Kadi Rules
+             }
           }
        },
        child: Padding(
@@ -597,6 +601,32 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   void _startHosting() async {
     Navigator.pop(context);
     
+    // show Betting Dialog FIRST before hosting LAN game
+    showDialog(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: Text("Select LAN Stakes", style: TextStyle(color: Colors.amber)),
+        backgroundColor: Color(0xFF1E293B),
+        children: [
+          _buildStakeOption("Casual (Free)", 0, isLan: true),
+          _buildStakeOption("High Stakes (100 Coins)", 100, isLan: true),
+          _buildStakeOption("Pro Table (500 Coins)", 500, isLan: true),
+        ],
+      )
+    );
+  }
+
+  void _createLANRoom(int fee) async {
+    if (fee > 0) {
+       // Check balance
+       int balance = ProgressionService().getCoins();
+       if (balance < fee) {
+          CustomToast.show(context, "Not enough coins! Need $fee.", isError: true);
+          return;
+       }
+       ProgressionService().spendCoins(fee); // Pay Entry
+    }
+
     // Get IP for LAN invite
     String myIp = await _getIpAddress();
     
@@ -608,6 +638,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         isHost: true, 
         hostAddress: 'localhost',
         gameType: _selectedGameMode,
+        initialEntryFee: fee,
       )
     )).then((_) => _refreshCoins());
   }

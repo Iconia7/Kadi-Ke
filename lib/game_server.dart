@@ -31,6 +31,10 @@ class GameServer {
   List<CardModel> _discardPile = [];
   String? _jokerColorConstraint; 
   int _cardsPlayedThisTurn = 0;
+  
+  // --- BETTING ---
+  int _entryFee = 0;
+  int _startingPlayerCount = 0;
 
   Future<void> start() async {
     if (_server != null) {
@@ -56,6 +60,8 @@ class GameServer {
         if (data['type'] == 'START_GAME' && playerIndex == 0) {
           // Allow 1 player for testing/debugging
           if (_clients.length >= 1) {
+             _entryFee = data['entryFee'] ?? 0;
+             _startingPlayerCount = _clients.length;
              _startGame(data['decks'] ?? 1, data['gameType'] ?? 'kadi');
           } else {
              _sendToPlayer(webSocket, "CHAT", {"sender": "System", "message": "Waiting for players..."});
@@ -342,7 +348,16 @@ void _playNextLanSong() {
          }
 
          _isGameRunning = false;
-         _broadcast("GAME_OVER", "Player ${playerIndex + 1} Wins!");
+         
+         int pot = _entryFee * _startingPlayerCount;
+         if (pot == 0) pot = 100; // Stand in for regular win coins
+
+         _broadcast("GAME_OVER", {
+            "winnerId": playerIndex.toString(),
+            "winnerName": "Player ${playerIndex + 1}",
+            "reason": "REGULAR_WIN",
+            "pot": pot
+         });
          return; 
       }
     }
@@ -557,13 +572,21 @@ void _playNextLanSong() {
      
      _broadcast("GO_FISH_STATE", {'books': _books});
      
-     // WIN CONDITION
      int totalBooks = _books.fold(0, (a, b) => a + b);
      if (totalBooks == 13 || (_deckService.remainingCards == 0 && _playerHands.every((h) => h.isEmpty))) {
          int maxBooks = _books.reduce(max);
          List<int> winners = [];
          for(int i=0; i<_books.length; i++) if(_books[i] == maxBooks) winners.add(i);
-         _broadcast("GAME_OVER", "Player ${winners.first + 1} Wins!");
+         
+         int pot = _entryFee * _startingPlayerCount;
+         if (pot == 0) pot = 100;
+         
+         _broadcast("GAME_OVER", {
+            "winnerId": winners.first.toString(),
+            "winnerName": "Player ${winners.first + 1}",
+            "reason": "REGULAR_WIN",
+            "pot": pot
+         });
          _isGameRunning = false;
      }
   }

@@ -139,6 +139,7 @@ class GameRoom {
   bool isGameStarted = false;
   int currentPlayerIndex = 0;
   int entryFee = 0; // Added for Betting
+  int startingPlayerCount = 0; // NEW: Track for pot calculation
 
   // MUSIC STATE
   List<Map<String, dynamic>> musicQueue = [];
@@ -154,6 +155,7 @@ class GameRoom {
   String? forcedSuit;
   String? forcedRank;
   String? jokerColorConstraint;
+  int pendingSkips = 0;
 
   // HOUSE RULES
   Map<String, dynamic> rules = {
@@ -184,7 +186,8 @@ class GameRoom {
       'jokerColorConstraint': jokerColorConstraint,
       'direction': direction,
       'forcedSuit': forcedSuit,
-      'forcedRank': forcedRank,
+      'pendingSkips': pendingSkips,
+      'startingPlayerCount': startingPlayerCount,
       // Go Fish
       'books': players.map((p) => p.books).toList(),
       'cardsPlayedThisTurn': players[currentPlayerIndex].cardsPlayedThisTurn,
@@ -910,22 +913,28 @@ class MultiGameServer {
               headers: _corsHeaders);
         }
 
+        // Determine how many games this represents (min 1)
+        int gamesToLog = winsToAdd > 0 ? winsToAdd : 1;
+
         // Increment Games Played
-        _dbService.incrementGamesPlayed(user['id']);
+        _dbService.incrementGamesPlayed(user['id'], amount: gamesToLog);
 
         int currentWins = int.tryParse(user['wins']?.toString() ?? "0") ?? 0;
         int newWins = currentWins + winsToAdd;
         
-        int coinsEarned = winsToAdd > 0 ? 100 : 25;
+        int singleWinCoins = winsToAdd > 0 ? 100 : 25;
+        int coinsEarned = singleWinCoins * gamesToLog;
         // NOTE: If game had an entryFee, the client could pass it here to allocate the whole pot,
         // but for now, we just enforce the base offline rewards.
 
-        _dbService.updateUser(user['id'], {'wins': newWins});
+        // Use the new incrementWins to properly add the wins rather than just setting them based on potentially stale local state
+        _dbService.incrementWins(user['id'], amount: winsToAdd);
         _dbService.incrementCoins(user['id'], coinsEarned);
 
         // --- MMR & Rank Logic ---
         int currentMMR = int.tryParse(user['mmr']?.toString() ?? "1000") ?? 1000;
-        int mmrDelta = winsToAdd > 0 ? 25 : -15; // Base gain/loss
+        int singleMMRDelta = winsToAdd > 0 ? 25 : -15; // Base gain/loss
+        int mmrDelta = singleMMRDelta * gamesToLog;
         int newMMR = (currentMMR + mmrDelta).clamp(0, 9999);
 
         String newTier = _calculateRankTier(newMMR);
@@ -2268,18 +2277,40 @@ class MultiGameServer {
         }, onDone: () {
           if (currentRoomCode != null && _rooms.containsKey(currentRoomCode)) {
             GameRoom room = _rooms[currentRoomCode]!;
-            // Remove player
-            room.players.removeWhere((p) => p.id == playerId);
+            
+            int leaverIdx = room.players.indexWhere((p) => p.id == playerId);
+            if (leaverIdx != -1) {
+              String leaverName = _onlineUsers[playerId] ?? "A player";
+              room.players.removeAt(leaverIdx);
 
-            // If room is empty, delete it
-            if (room.players.isEmpty) {
-              _rooms.remove(currentRoomCode);
-              _log("Room $currentRoomCode deleted (Empty).");
-            } else {
-              // Notify others that player left
-              _broadcastPlayerInfo(room);
-              _log(
-                  "Player left room $currentRoomCode. Rem: ${room.players.length}");
+              // If room is empty, delete it
+              if (room.players.isEmpty) {
+                _rooms.remove(currentRoomCode);
+                _log("Room $currentRoomCode deleted (Empty).");
+              } else {
+                // If game is in progress, adjust the turn index
+                if (room.isGameStarted) {
+                  if (leaverIdx < room.currentPlayerIndex) {
+                    room.currentPlayerIndex--;
+                  } else if (leaverIdx == room.currentPlayerIndex) {
+                    // Turn was on the leaver. Current index now points to the "next" player.
+                    // Just ensure it's within bounds.
+                    room.currentPlayerIndex %= room.players.length;
+                  }
+                }
+
+                // Notify others
+                room.broadcast("CHAT", {"sender": "System", "message": "$leaverName has disconnected."});
+                _broadcastPlayerInfo(room);
+                room.broadcast("TURN_UPDATE", room.getGameState());
+
+                _log("Player $playerId left room $currentRoomCode. Rem: ${room.players.length}");
+
+                // NEW: Last Man Standing Logic
+                if (room.isGameStarted && room.players.length == 1) {
+                  _handleLastManStanding(room, room.players.first);
+                }
+              }
             }
           }
 
@@ -2666,6 +2697,7 @@ class MultiGameServer {
     room.deckService.shuffle();
     room.currentPlayerIndex = 0;
     room.isGameStarted = true;
+    room.startingPlayerCount = room.players.length; // NEW
 
     // KADI SETUP
     if (room.gameType == 'kadi') {
@@ -2798,12 +2830,17 @@ class MultiGameServer {
       Player winner = room.players
           .reduce((curr, next) => curr.books > next.books ? curr : next);
       room.isGameStarted = false;
-      room.broadcast(
-          "GAME_OVER", "${winner.name} Wins with ${winner.books} books!");
-      _log("Game Over in room ${room.code}. Winner: ${winner.name}");
-
+      
       // UPDATE STATS
-      _handleWin(room, winner);
+      int pot = _handleWin(room, winner);
+
+      room.broadcast("GAME_OVER", {
+        "winnerId": winner.id,
+        "winnerName": winner.name,
+        "reason": "REGULAR_WIN",
+        "pot": pot
+      });
+      _log("Game Over in room ${room.code}. Winner: ${winner.name}");
     }
   }
 
@@ -2926,7 +2963,7 @@ class MultiGameServer {
 
     if (card.rank == 'queen') {
       if (room.rules['queenAction'] == 'skip') {
-        skip = (room.bombStack > 0) ? 0 : 1;
+        if (room.bombStack == 0) room.pendingSkips++;
       } else {
         room.waitingForAnswer = true;
         turnEnds = false;
@@ -2936,12 +2973,18 @@ class MultiGameServer {
       turnEnds = false;
     } else if (room.waitingForAnswer) {
       room.waitingForAnswer = false;
-    } else if (card.rank == 'king')
+    } else if (card.rank == 'king') {
       room.direction *= -1;
-    else if (card.rank == 'jack') skip = (room.bombStack > 0) ? 0 : 1;
+      if (room.players.length == 2) {
+        // In 1v1, Reverse acts as a Skip so you get another turn
+        room.pendingSkips++;
+      }
+    } else if (card.rank == 'jack') {
+      if (room.bombStack == 0) room.pendingSkips++;
+    }
 
     // Multi-drop Check (allow dropping duplicates or bombs)
-    if (turnEnds && skip == 0 && player.hand.isNotEmpty) {
+    if (turnEnds && player.hand.isNotEmpty) {
       bool canMultiDrop = player.hand.any((c) => c.rank == card.rank);
       bool isBombChain = isBomb &&
           player.hand.any((c) => ['2', '3', 'joker'].contains(c.rank));
@@ -2995,9 +3038,14 @@ class MultiGameServer {
       }
 
       room.isGameStarted = false;
-      room.broadcast("GAME_OVER", "${player.name} Wins!");
+      int pot = _handleWin(room, player);
+      room.broadcast("GAME_OVER", {
+        "winnerId": player.id,
+        "winnerName": player.name,
+        "reason": "REGULAR_WIN",
+        "pot": pot
+      });
       _log("Game Over in room ${room.code}. Winner: ${player.name}");
-      _handleWin(room, player);
       return;
     }
 
@@ -3154,10 +3202,12 @@ class MultiGameServer {
   // ==========================================
 
   void _advanceTurn(GameRoom room, {int skip = 0}) {
-    int step = (room.gameType == 'kadi' ? room.direction : 1) * (1 + skip);
+    int totalSkip = skip + room.pendingSkips;
+    int step = (room.gameType == 'kadi' ? room.direction : 1) * (1 + totalSkip);
 
     // Reset current player stats before moving
     room.players[room.currentPlayerIndex].cardsPlayedThisTurn = 0;
+    room.pendingSkips = 0; // Reset after consumption
 
     room.currentPlayerIndex =
         (room.currentPlayerIndex + step) % room.players.length;
@@ -3291,7 +3341,7 @@ class MultiGameServer {
   //            WIN HANDLING
   // ==========================================
 
-  void _handleWin(GameRoom room, Player winner) {
+  int _handleWin(GameRoom room, Player winner) {
     // 1. Update DB
     for (var p in room.players) {
       if (!p.id.startsWith("bot_")) { // Ignore bots
@@ -3305,8 +3355,9 @@ class MultiGameServer {
     int coins = 100;
     // Pot Logic
     if (room.entryFee > 0) {
-      coins = room.entryFee * room.players.length;
-      // Or specific pot logic
+      // Use startingPlayerCount so the pot isn't reduced if people leave mid-game
+      coins = room.entryFee * room.startingPlayerCount;
+      if (coins == 0) coins = 100; // Fallback
     }
 
     _dbService.incrementCoins(winner.id, coins);
@@ -3319,6 +3370,45 @@ class MultiGameServer {
       "type": "STATS_UPDATE",
       "data": {"wins": 1, "coins": coins}
     }));
+
+    return coins;
+  }
+
+  void _handleLastManStanding(GameRoom room, Player survivor) {
+    if (!room.isGameStarted) return;
+    
+    _log("Victory by Default in room ${room.code} for ${survivor.name}");
+    
+    // Calculate Pot based on starting players
+    int pot = room.entryFee * room.startingPlayerCount;
+    if (pot == 0) pot = 100; // Default win reward
+
+    // Award survivor
+    _dbService.incrementWins(survivor.id);
+    _dbService.incrementGamesPlayed(survivor.id);
+    _dbService.incrementCoins(survivor.id, pot);
+    _dbService.addClanPoints(survivor.id, 3);
+
+    room.broadcast("CHAT", {
+      "sender": "System", 
+      "message": "Opponents disconnected. ${survivor.name} wins the pot of $pot coins! 🏆"
+    });
+
+    room.broadcast("GAME_OVER", {
+      "winnerId": survivor.id,
+      "winnerName": survivor.name,
+      "reason": "DISCONNECT_WIN",
+      "pot": pot
+    });
+
+    survivor.socket.sink.add(jsonEncode({
+      "type": "STATS_UPDATE",
+      "data": {"wins": 1, "coins": pot}
+    }));
+
+    // Cleanup
+    room.isGameStarted = false;
+    _rooms.remove(room.code);
   }
 
   // ==========================================

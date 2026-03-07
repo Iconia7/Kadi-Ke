@@ -424,12 +424,12 @@ class DatabaseService {
     return users;
   }
 
-  void incrementWins(String userId) {
-    _db.execute('UPDATE users SET wins = wins + 1 WHERE id = ?', [userId]);
+  void incrementWins(String userId, {int amount = 1}) {
+    _db.execute('UPDATE users SET wins = COALESCE(wins, 0) + ? WHERE id = ?', [amount, userId]);
   }
 
-  void incrementGamesPlayed(String userId) {
-    _db.execute('UPDATE users SET games_played = games_played + 1 WHERE id = ?', [userId]);
+  void incrementGamesPlayed(String userId, {int amount = 1}) {
+    _db.execute('UPDATE users SET games_played = COALESCE(games_played, 0) + ? WHERE id = ?', [amount, userId]);
   }
 
   void updateMMR(String userId, int mmrDelta, String newTier) {

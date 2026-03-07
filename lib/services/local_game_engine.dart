@@ -184,6 +184,7 @@ class LocalGameEngine {
   String? _forcedRank; // For 'Ace' requests
   String? _jokerColorConstraint; // 'red' or 'black'
   int _cardsPlayedThisTurn = 0; // NEW: Multi-drop state
+  int _pendingSkips = 0; // NEW: Stacking skips (Jacks/Kings)
   List<bool> _hasSaidMap = []; 
   List<CardModel> _discardPile = [];
   
@@ -225,6 +226,7 @@ void start(int aiCount, String difficulty, {int decks = 1, Map<String, dynamic>?
 
     _bombStack = 0;
     _currentPlayerIndex = 0; 
+    _pendingSkips = 0;
     _advanceTurn(reset: true); 
   }
 
@@ -286,11 +288,13 @@ void start(int aiCount, String difficulty, {int decks = 1, Map<String, dynamic>?
     if (_isGameOver) return;
     if (reset) {
       _currentPlayerIndex = 0;
+      _pendingSkips = 0;
     } else {
       int totalPlayers = _bots.length + 1;
-      int steps = 1 + skip;
+      int steps = 1 + skip + _pendingSkips;
       
       _cardsPlayedThisTurn = 0; // Reset for next/current player
+      _pendingSkips = 0; // Reset after consumption
       
       _currentPlayerIndex = (_currentPlayerIndex + (_direction * steps)) % totalPlayers;
       if (_currentPlayerIndex < 0) _currentPlayerIndex += totalPlayers;
@@ -508,19 +512,22 @@ void start(int aiCount, String difficulty, {int decks = 1, Map<String, dynamic>?
     // 3. King (Reverse/Return)
     else if (card.rank == 'king') {
        _direction *= -1; 
+       int totalPlayers = _bots.length + 1;
+       if (totalPlayers == 2 && _bombStack == 0) {
+          // In 1v1, Reverse acts as a Skip so you get another turn (if no bomb)
+          _pendingSkips++;
+       }
        if (_bombStack > 0) _broadcast("CHAT", {"sender": "System", "message": "Bomb Returned!"});
     }
     // 4. Jack (Skip/Pass)
     else if (card.rank == 'jack') {
-       if (_bombStack > 0) skip = 0; 
-       else {
-          int totalPlayers = _bots.length + 1;
-          if (totalPlayers > 2) skip = 1;
+       if (_bombStack == 0) {
+          _pendingSkips++;
        }
     }
     
-    // 5. Multi-drop (Standard & Bombs)
-    if (turnEnds && skip == 0 && hand.isNotEmpty) {
+    // 5. Multi-drop (Standard & Bombs & Jacks & Kings)
+    if (turnEnds && hand.isNotEmpty) {
        bool canMultiDrop = hand.any((c) => c.rank == card.rank);
        bool isBombChain = isBomb && hand.any((c) => ['2', '3', 'joker'].contains(c.rank));
        

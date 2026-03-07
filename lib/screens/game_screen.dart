@@ -460,8 +460,9 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
                       _buildRuleSection("🛡️ Defense & Pass", 
                         "• Ace: Blocks the bomb (Resets to 0).\n"
-                        "• King: Reverses bomb to previous player.\n"
+                        "• King: Reverses bomb to previous player. In 1v1, it acts as a Skip.\n"
                         "• Jack: Passes bomb to next player (Jump over).\n"
+                        "• Stacking: Playing multiple Jacks or Kings skips multiple players!\n"
                         "• Loki Block: Playing two ACES in one turn clears all constraints!"),
 
                       _buildRuleSection("❓ Questions (Q & 8)", 
@@ -591,8 +592,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         _entryFee = fee;
         
         // Deduct Entry Fee if not Host (Host paid in Home Screen)
-        // Only if I'm online and haven't paid yet
-        if (_entryFee > 0 && !_hasPaidEntry && !widget.isHost && _isOnline) {
+        // Only if haven't paid yet (works for both Online and LAN)
+        if (_entryFee > 0 && !_hasPaidEntry && !widget.isHost) {
              _payEntryFee();
         }
         if (widget.isHost) _hasPaidEntry = true;
@@ -859,18 +860,22 @@ bool _validateLocalMove(CardModel card) {
     
     bool canContinue = false;
     
-    // STARTING A CHAIN (Q/8)
+    // 1. STARTING A CHAIN (Q/8)
     if (['queen','8'].contains(card.rank)) {
        canContinue = _myHand.any((c) => c != card && (c.rank == card.rank || c.suit == card.suit)); 
     }
-    // ANSWERING A QUESTION
+    // 2. ANSWERING A QUESTION
     else if (wasAnswering) {
        // Multi-drop answers must be SAME RANK.
        canContinue = _myHand.any((c) => c != card && c.rank == card.rank);
     }
+    // 3. MULTI-DROP JACKS/KINGS (NEW)
+    else if (['jack', 'king'].contains(card.rank)) {
+       canContinue = _myHand.any((c) => c != card && c.rank == card.rank);
+    }
 
-    // Only auto-pass if: this was a Q/8 or answer play, we can't continue, AND it wasn't the last card
-    if (!wasLastCard && (wasAnswering || ['queen','8'].contains(card.rank)) && !canContinue) {
+    // Only auto-pass if: this was a Q/8, answer, or Jack/King play, we can't continue, AND it wasn't the last card
+    if (!wasLastCard && (wasAnswering || ['queen','8', 'jack', 'king'].contains(card.rank)) && !canContinue) {
        Future.delayed(Duration(milliseconds: 600), () {
           if (mounted && _isMyTurn) _passTurn();
        });
@@ -935,7 +940,12 @@ bool _validateLocalMove(CardModel card) {
       VPSGameService().sendAction("START_GAME", {"decks": decks, "gameType": widget.gameType});
     } 
     else if (!_isOnline) {
-      _channel?.sink.add(jsonEncode({"type": "START_GAME", "decks": decks, "gameType": widget.gameType}));
+      _channel?.sink.add(jsonEncode({
+        "type": "START_GAME", 
+        "decks": decks, 
+        "gameType": widget.gameType,
+        "entryFee": _entryFee
+      }));
     }
     
     SoundService.play('deal');
@@ -1495,7 +1505,11 @@ Future<void> _handleGameOver(dynamic data) async {
     if (data is String) {
        didIWin = data.contains("You") || data.contains(_myName);
     } else if (data is Map) {
-       didIWin = data['winner'] == _myPlayerId;
+       if (data['winnerId'] != null) {
+          didIWin = data['winnerId'] == CustomAuthService().userId;
+       } else {
+          didIWin = data['winner'] == _myPlayerId;
+       }
     }
     
     int coinsEarned = 0;
@@ -1505,7 +1519,7 @@ Future<void> _handleGameOver(dynamic data) async {
 
     // 1. Handle Stats & Coins
     if (didIWin) {
-      coinsEarned = 100; // Base win reward
+      coinsEarned = (data is Map && data['pot'] != null) ? data['pot'] : 100;
       xpEarned = 50;
       
       // Record win LOCALLY so Profile screen shows it
@@ -1633,7 +1647,9 @@ Future<void> _handleGameOver(dynamic data) async {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      didIWin ? "YOU DOMINATED THE TABLE" : "THE CARDS WEREN'T IN YOUR FAVOR",
+                      (data is Map && data['reason'] == 'DISCONNECT_WIN')
+                          ? "ALL OPPONENTS DISCONNECTED"
+                          : (didIWin ? "YOU DOMINATED THE TABLE" : "THE CARDS WEREN'T IN YOUR FAVOR"),
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         color: Colors.white.withOpacity(0.4),

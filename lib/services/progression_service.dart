@@ -1,8 +1,10 @@
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
+import 'vps_game_service.dart';
 import '../models/challenge_model.dart';
 import 'app_config.dart';
 import 'battle_pass_service.dart';
+import 'custom_auth_service.dart';
 import 'dart:convert';
 import 'dart:math';
 
@@ -67,6 +69,14 @@ class ProgressionService {
       await _prefs.setStringList(_getKey(_unlockedFramesKey), ['default']);
       await _prefs.setString(_getKey(_selectedFrameKey), 'default');
     }
+    
+    // Proactively fetch and sync from cloud on startup to handle any offline discrepancies
+    if (userId != null && userId.isNotEmpty && userId != "unknown") {
+      // Delay slightly to ensure services are fully initialized
+      Future.delayed(const Duration(seconds: 2), () {
+        CustomAuthService().fetchCloudWallet();
+      });
+    }
   }
 
   // Helper to generate user-specific keys
@@ -74,11 +84,28 @@ class ProgressionService {
 
   // --- CLOUD WALLET SYNC ---
   Future<void> syncFromCloud(int coins, int wins, int gamesPlayed, {int xp = 0, int mmr = 1000, String rankTier = 'Bronze I', bool isPremium = false, bool isUltra = false, String? frameId}) async {
-    await _prefs.setInt(_getKey(_coinsKey), coins);
-    await _prefs.setInt(_getKey(_totalWinsKey), wins);
-    await _prefs.setInt(_getKey(_totalGamesKey), gamesPlayed);
-    await _prefs.setInt(_getKey(_mmrKey), mmr);
-    await _prefs.setString(_getKey(_rankTierKey), rankTier);
+    // Only update stats from server if they are higher than local (protection against overwriting offline progress)
+    final localWins = getTotalWins();
+    if (wins > localWins) {
+      await _prefs.setInt(_getKey(_totalWinsKey), wins);
+    }
+
+    final localGames = getTotalGames();
+    if (gamesPlayed > localGames) {
+      await _prefs.setInt(_getKey(_totalGamesKey), gamesPlayed);
+    }
+
+    final localCoins = getCoins();
+    if (coins > localCoins) {
+      await _prefs.setInt(_getKey(_coinsKey), coins);
+    }
+
+    final localMMR = getMMR();
+    if (mmr > localMMR) {
+      await _prefs.setInt(_getKey(_mmrKey), mmr);
+      await _prefs.setString(_getKey(_rankTierKey), rankTier);
+    }
+
     await _prefs.setBool(_getKey(_isPremiumKey), isPremium);
     await _prefs.setBool(_getKey(_isUltraKey), isUltra);
 
@@ -95,6 +122,16 @@ class ProgressionService {
     final localXP = getXP();
     if (xp > localXP) {
       await _prefs.setInt(_getKey(_totalXpKey), xp);
+    }
+    
+    // Check if we need to push local offline wins to the server
+    final currentLocalWins = getTotalWins();
+    if (currentLocalWins > wins) {
+      final diff = currentLocalWins - wins;
+      print("ProgressionService: Found $diff unsynced offline wins. Pushing to server...");
+      // Assuming VPSGameService exists and handles this correctly
+      // We do this without await so it doesn't block the sync process
+      VPSGameService().updateStats(wins: diff, isLan: false);
     }
   }
 
