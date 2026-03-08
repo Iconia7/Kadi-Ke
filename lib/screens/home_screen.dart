@@ -1273,148 +1273,155 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     const SizedBox(height: 10),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 10),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                  // Header Actions (Challenges & Pass)
-                  Flexible(
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _buildTopAction(
-                          "CHALLENGES", 
-                          Icons.military_tech, 
-                          Colors.amber, 
-                          () => showDialog(context: context, builder: (c) => const ChallengeDialog()),
-                          showDot: ProgressionService().hasUnclaimedChallenges(),
-                        ),
-                        const SizedBox(width: 8),
-                        _buildTopAction(
-                          "KADI PASS", 
-                          Icons.flash_on, 
-                          Colors.purpleAccent, 
-                          () => Navigator.push(context, MaterialPageRoute(builder: (_) => BattlePassScreen())),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  Row(
-                    children: [
-                      // Coins Display
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: Colors.black38,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: Colors.white10),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Text("🪙", style: TextStyle(fontSize: 14)),
-                            const SizedBox(width: 4),
-                            Text(
-                              "$_coins",
-                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      // Friends Button
-                      FutureBuilder<List<Friend>>(
-                        future: FriendService().getOnlineFriends(),
-                        builder: (context, snapshot) {
-                          final onlineCount = snapshot.data?.length ?? 0;
-                          return GestureDetector(
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(builder: (context) => FriendsScreen()),
-                              );
-                            },
-                            child: Stack(
-                              clipBehavior: Clip.none,
-                              children: [
-                                  Container(
-                                  padding: const EdgeInsets.all(6),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.1),
-                                    shape: BoxShape.circle,
-                                    border: Border.all(color: Colors.white24),
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          return SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            clipBehavior: Clip.none,
+                            child: ConstrainedBox(
+                              constraints: BoxConstraints(minWidth: constraints.maxWidth),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  // Challenges
+                                  _buildTopAction(
+                                    "CHALLENGES", 
+                                    Icons.military_tech, 
+                                    Colors.amber, 
+                                    () => showDialog(context: context, builder: (c) => const ChallengeDialog()),
+                                    showDot: ProgressionService().hasUnclaimedChallenges(),
                                   ),
-                                  child: const Icon(Icons.people_outline, color: Colors.white, size: 16),
-                                ),
-                                if (onlineCount > 0)
-                                  Positioned(
-                                    right: -2,
-                                    top: -2,
-                                    child: Container(
-                                      padding: EdgeInsets.all(3),
-                                      decoration: BoxDecoration(
-                                        color: Colors.green,
-                                        shape: BoxShape.circle,
-                                        border: Border.all(color: Color(0xFF1E293B), width: 1.5),
-                                      ),
-                                      constraints: BoxConstraints(minWidth: 16, minHeight: 16),
-                                      child: Center(
-                                        child: Text(
-                                          '$onlineCount',
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 8,
-                                            fontWeight: FontWeight.bold,
-                                          ),
+                                  const SizedBox(width: 8),
+                                  
+                                  // Kadi Pass
+                                  _buildTopAction(
+                                    "PASS", // Shortened from "KADI PASS"
+                                    Icons.flash_on, 
+                                    Colors.purpleAccent, 
+                                    () => Navigator.push(context, MaterialPageRoute(builder: (_) => BattlePassScreen())),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  
+                                  // Coins Display
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: Colors.black38,
+                                      borderRadius: BorderRadius.circular(20),
+                                      border: Border.all(color: Colors.amber.withOpacity(0.3)),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Text("🪙", style: TextStyle(fontSize: 14)),
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          "$_coins",
+                                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14, letterSpacing: 0.5),
                                         ),
-                                      ),
+                                      ],
                                     ),
                                   ),
-                              ],
+                                  const SizedBox(width: 8),
+
+                                  // Friends Button
+                                  FutureBuilder<List<Friend>>(
+                                    future: FriendService().getOnlineFriends(),
+                                    builder: (context, snapshot) {
+                                      final onlineCount = snapshot.data?.length ?? 0;
+                                      return GestureDetector(
+                                        onTap: () {
+                                          Navigator.push(
+                                            context,
+                                            MaterialPageRoute(builder: (context) => FriendsScreen()),
+                                          );
+                                        },
+                                        child: Stack(
+                                          clipBehavior: Clip.none,
+                                          children: [
+                                              Container(
+                                              padding: const EdgeInsets.all(6),
+                                              decoration: BoxDecoration(
+                                                color: Colors.white.withOpacity(0.1),
+                                                shape: BoxShape.circle,
+                                                border: Border.all(color: Colors.white24),
+                                              ),
+                                              child: const Icon(Icons.people_outline, color: Colors.white, size: 16),
+                                            ),
+                                            if (onlineCount > 0)
+                                              Positioned(
+                                                right: -2,
+                                                top: -2,
+                                                child: Container(
+                                                  padding: EdgeInsets.all(3),
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.green,
+                                                    shape: BoxShape.circle,
+                                                    border: Border.all(color: Color(0xFF1E293B), width: 1.5),
+                                                  ),
+                                                  constraints: BoxConstraints(minWidth: 16, minHeight: 16),
+                                                  child: Center(
+                                                    child: Text(
+                                                      '$onlineCount',
+                                                      style: TextStyle(
+                                                        color: Colors.white,
+                                                        fontSize: 8,
+                                                        fontWeight: FontWeight.bold,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                          ],
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                  const SizedBox(width: 8),
+
+                                  // Tutorial Button
+                                  GestureDetector(
+                                    onTap: () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(builder: (context) => TutorialScreen()),
+                                      );
+                                    },
+                                    child: Container(
+                                      padding: const EdgeInsets.all(6),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white.withOpacity(0.1),
+                                        shape: BoxShape.circle,
+                                        border: Border.all(color: Colors.white24),
+                                      ),
+                                      child: const Icon(Icons.help_outline, color: Colors.white, size: 16),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+
+                                  // Settings Button
+                                  GestureDetector(
+                                    onTap: () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(builder: (context) => SettingsScreen()),
+                                      );
+                                    },
+                                    child: Container(
+                                      padding: const EdgeInsets.all(6),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white.withOpacity(0.1),
+                                        shape: BoxShape.circle,
+                                        border: Border.all(color: Colors.white24),
+                                      ),
+                                      child: const Icon(Icons.settings, color: Colors.white, size: 16),
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           );
                         },
-                      ),
-                      const SizedBox(width: 6),
-                      // Tutorial Button
-                      GestureDetector(
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (context) => TutorialScreen()),
-                          );
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.1),
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white24),
-                          ),
-                          child: const Icon(Icons.help_outline, color: Colors.white, size: 16),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      // Settings Button
-                      GestureDetector(
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (context) => SettingsScreen()),
-                          );
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.1),
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white24),
-                          ),
-                          child: const Icon(Icons.settings, color: Colors.white, size: 16),
-                        ),
-                      ),
-                    ],)
-                        ],
                       ),
                     ),
                     const SizedBox(height: 10),
