@@ -1300,7 +1300,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                     Colors.purpleAccent, 
                                     () => Navigator.push(context, MaterialPageRoute(builder: (_) => BattlePassScreen())),
                                   ),
-                                  const SizedBox(width: 8),
+                                  const SizedBox(width: 16),
                                   
                                   // Coins Display
                                   Container(
@@ -1322,7 +1322,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                       ],
                                     ),
                                   ),
-                                  const SizedBox(width: 8),
+                                  const SizedBox(width: 4),
 
                                   // Friends Button
                                   FutureBuilder<List<Friend>>(
@@ -1377,7 +1377,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                       );
                                     },
                                   ),
-                                  const SizedBox(width: 8),
+                                  const SizedBox(width: 4),
 
                                   // Tutorial Button
                                   GestureDetector(
@@ -1397,7 +1397,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                       child: const Icon(Icons.help_outline, color: Colors.white, size: 16),
                                     ),
                                   ),
-                                  const SizedBox(width: 8),
+                                  const SizedBox(width: 4),
 
                                   // Settings Button
                                   GestureDetector(

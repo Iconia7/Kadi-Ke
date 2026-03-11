@@ -164,7 +164,10 @@ class ProgressionService {
   Future<bool> spendCoins(int amount) async {
     int current = getCoins();
     if (current >= amount) {
-      await _prefs.setInt(_getKey(_coinsKey), current - amount);
+      final newCoins = current - amount;
+      await _prefs.setInt(_getKey(_coinsKey), newCoins);
+      // Push to server in background
+      _pushCoinsToServer(newCoins);
       return true;
     }
     return false;
